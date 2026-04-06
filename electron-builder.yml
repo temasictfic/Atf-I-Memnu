@@ -13,7 +13,7 @@ extraResources:
     filter:
       - '**/*'
 win:
-  icon: resources/icon.ico
+  icon: icon.ico
   target:
     - target: nsis
       arch:
@@ -22,6 +22,9 @@ win:
       arch:
         - x64
 nsis:
+  installerIcon: icon.ico
+  uninstallerIcon: icon.ico
+  installerHeaderIcon: icon.ico
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
