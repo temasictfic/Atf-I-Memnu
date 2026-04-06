@@ -100,7 +100,7 @@ export default function ParsingPage() {
   const [manualCounter, setManualCounter] = useState(0);
 
   // Refs for interaction state (not reactive, no re-render needed)
-  const viewerRef = useRef<HTMLElement>(null);
+  const viewerRef = useRef<HTMLDivElement>(null);
   const loadedPdfIdRef = useRef<string | null>(null);
   const suppressPageClickRef = useRef(false);
   const dragIntentRef = useRef<{
@@ -183,13 +183,17 @@ export default function ParsingPage() {
   // ResizeObserver
   useEffect(() => {
     const el = viewerRef.current;
-    if (!el) return;
+    if (!el) {
+      setContainerWidth(0);
+      return;
+    }
+    setContainerWidth(el.clientWidth);
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) setContainerWidth(entry.contentRect.width);
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [selectedPdfId, pages.length, loadingPages]);
 
   // Load pages when selected PDF changes
   useEffect(() => {
@@ -376,7 +380,7 @@ export default function ParsingPage() {
     if (!el) return;
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [onWheel]);
+  }, [onWheel, selectedPdfId, pages.length, loadingPages]);
 
   // Apply scroll correction after scale changes to keep zoom anchored
   useLayoutEffect(() => {
@@ -810,7 +814,7 @@ export default function ParsingPage() {
       </aside>
 
       {/* Center Panel: PDF Viewer */}
-      <section className={styles["viewer-panel"]} ref={viewerRef}>
+      <section className={styles["viewer-panel"]}>
         {!selectedPdfId ? (
           <div className={styles["viewer-empty"]}>
             <div className={styles["viewer-empty-icon"]}>&#x25E7;</div>
@@ -911,6 +915,7 @@ export default function ParsingPage() {
             {/* Continuous document view */}
             <div
               className={styles["viewer-content"]}
+              ref={viewerRef}
               role="button"
               tabIndex={0}
               aria-label="Document view (press Enter or Space to clear selection)"
@@ -1020,15 +1025,15 @@ export default function ParsingPage() {
                   </div>
                 ))}
               </div>
-            </div>
 
-            {/* Draw preview rectangle */}
-            {drawingState && (
-              <div
-                className={styles["draw-preview"]}
-                style={drawPreviewStyle()}
-              />
-            )}
+              {/* Draw preview rectangle */}
+              {drawingState && (
+                <div
+                  className={styles["draw-preview"]}
+                  style={drawPreviewStyle()}
+                />
+              )}
+            </div>
           </>
         ) : (
           <div className={styles["viewer-empty"]}>
