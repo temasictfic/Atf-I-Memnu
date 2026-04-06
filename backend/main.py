@@ -52,7 +52,7 @@ if __name__ == "__main__":
         port=args.port,
         reload=False,
         log_level="info",
-        ws="wsproto",
+        ws="websockets",
     )
     server_state.uvicorn_server = uvicorn.Server(config)
     server_state.uvicorn_server.run()
