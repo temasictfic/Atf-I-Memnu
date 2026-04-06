@@ -67,9 +67,11 @@ function buildDbSearchUrl(db: string, text: string): string {
 }
 
 const statusOrder: Record<string, number> = { green: 0, yellow: 1, red: 2, black: 3, in_progress: 4, pending: 5 }
+type CardSortMode = 'default' | 'status' | 'ref' | 'enabled'
 
 export default function VerificationPage() {
   const verifyCenterRef = useRef<HTMLElement | null>(null)
+  const cardListRef = useRef<HTMLDivElement | null>(null)
   const allPdfs = usePdfStore(s => s.pdfs)
   const selectedPdfId = usePdfStore(s => s.selectedPdfId)
   const selectPdf = usePdfStore(s => s.selectPdf)
@@ -305,6 +307,7 @@ export default function VerificationPage() {
   const browserWebviewRef = useRef<any>(null)
   const [browserCanGoBack, setBrowserCanGoBack] = useState(false)
   const [browserCanGoForward, setBrowserCanGoForward] = useState(false)
+  const preOverlaySortRef = useRef<{ key: CardSortMode; asc: boolean } | null>(null)
 
   const selectedSearchText = useMemo(() => {
     if (!selectedSourceId) return ''
@@ -312,26 +315,122 @@ export default function VerificationPage() {
     return text.trim()
   }, [selectedSourceId, verifyTexts, currentSource])
 
-  function openScholarOverlay() {
-    setBrowserOverlayTitle('Google Scholar')
-    if (!selectedSearchText) {
-      setBrowserOverlayUrl('https://scholar.google.com/')
-      setBrowserOverlayOpen(true)
+  function getOverlayMaxHeight(): number {
+    const minHeight = 220
+    const defaultTopGap = 120
+    const centerEl = verifyCenterRef.current
+    const panelHeight = centerEl?.clientHeight ?? window.innerHeight
+
+    if (!centerEl || !selectedSourceId) {
+      return Math.max(minHeight, panelHeight - defaultTopGap)
+    }
+
+    const cardEl = cardRefs.current[selectedSourceId]
+    if (!cardEl) {
+      return Math.max(minHeight, panelHeight - defaultTopGap)
+    }
+
+    const panelRect = centerEl.getBoundingClientRect()
+    const cardRect = cardEl.getBoundingClientRect()
+    const topGap = Math.max(defaultTopGap, cardRect.bottom - panelRect.top + 8)
+    return Math.max(minHeight, panelHeight - topGap)
+  }
+
+  const selectedCardIndex = useMemo(
+    () => (selectedSourceId ? sortedSourceCards.findIndex(c => c.source.id === selectedSourceId) : -1),
+    [selectedSourceId, sortedSourceCards],
+  )
+
+  const scrollSelectedCardToTop = useCallback((behavior: ScrollBehavior = 'auto') => {
+    if (!selectedSourceId) return
+    const listEl = cardListRef.current
+    const cardEl = cardRefs.current[selectedSourceId]
+    if (!cardEl) return
+
+    if (!listEl || !listEl.contains(cardEl)) {
+      cardEl.scrollIntoView({ behavior, block: 'start', inline: 'nearest' })
       return
     }
-    setBrowserOverlayUrl(`https://scholar.google.com/scholar?q=${encodeURIComponent(selectedSearchText)}`)
-    setBrowserOverlayOpen(true)
+
+    const nextTop = Math.max(0, cardEl.offsetTop - listEl.offsetTop - 2)
+    listEl.scrollTo({ top: nextTop, behavior })
+  }, [selectedSourceId])
+
+  function alignOverlayToSelectedCard() {
+    if (!selectedSourceId) return
+    scrollSelectedCardToTop('auto')
+
+    window.requestAnimationFrame(() => {
+      setBrowserOverlayHeight(getOverlayMaxHeight())
+    })
+  }
+
+  function shouldUseTemporaryRefSortForBottomCard(): boolean {
+    if (selectedCardIndex < 0) return false
+    const total = sortedSourceCards.length
+    if (total <= 0) return false
+    return selectedCardIndex >= Math.max(0, total - 5)
+  }
+
+  function applyTemporaryRefSortIfNeeded(): boolean {
+    if (!shouldUseTemporaryRefSortForBottomCard()) return false
+    if (preOverlaySortRef.current) return true
+
+    preOverlaySortRef.current = {
+      key: cardSortKey as CardSortMode,
+      asc: cardSortAsc,
+    }
+
+    useVerificationStore.setState({
+      cardSortKey: 'ref',
+      cardSortAsc: false,
+    })
+
+    return true
+  }
+
+  function restorePreOverlaySortIfNeeded() {
+    const snapshot = preOverlaySortRef.current
+    if (!snapshot) return
+    preOverlaySortRef.current = null
+    useVerificationStore.setState({
+      cardSortKey: snapshot.key,
+      cardSortAsc: snapshot.asc,
+    })
+  }
+
+  function openOverlayWithTitleAndUrl(title: string, url: string) {
+    setBrowserOverlayTitle(title)
+
+    const tempSorted = applyTemporaryRefSortIfNeeded()
+    const finishOpen = () => {
+      alignOverlayToSelectedCard()
+      setBrowserOverlayUrl(url)
+      setBrowserOverlayOpen(true)
+    }
+
+    if (tempSorted) {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(finishOpen)
+      })
+      return
+    }
+
+    finishOpen()
+  }
+
+  function openScholarOverlay() {
+    const url = selectedSearchText
+      ? `https://scholar.google.com/scholar?q=${encodeURIComponent(selectedSearchText)}`
+      : 'https://scholar.google.com/'
+    openOverlayWithTitleAndUrl('Google Scholar', url)
   }
 
   function openGoogleOverlay() {
-    setBrowserOverlayTitle('Google Search')
-    if (!selectedSearchText) {
-      setBrowserOverlayUrl('https://www.google.com/')
-      setBrowserOverlayOpen(true)
-      return
-    }
-    setBrowserOverlayUrl(googleSearchUrl(selectedSearchText))
-    setBrowserOverlayOpen(true)
+    const url = selectedSearchText
+      ? googleSearchUrl(selectedSearchText)
+      : 'https://www.google.com/'
+    openOverlayWithTitleAndUrl('Google Search', url)
   }
 
   function syncBrowserNavState() {
@@ -384,9 +483,7 @@ export default function VerificationPage() {
 
   function clampOverlayHeight(nextHeight: number): number {
     const minHeight = 220
-    const topGap = 120
-    const panelHeight = verifyCenterRef.current?.clientHeight ?? window.innerHeight
-    const maxHeight = Math.max(minHeight, panelHeight - topGap)
+    const maxHeight = getOverlayMaxHeight()
     return Math.min(maxHeight, Math.max(minHeight, nextHeight))
   }
 
@@ -398,14 +495,24 @@ export default function VerificationPage() {
 
   useEffect(() => {
     if (!browserOverlayOpen) return
-    setBrowserOverlayHeight((h) => clampOverlayHeight(h))
-  }, [browserOverlayOpen])
+    alignOverlayToSelectedCard()
+  }, [browserOverlayOpen, selectedSourceId])
 
   useEffect(() => {
     if (!browserOverlayOpen) return
     const onResize = () => setBrowserOverlayHeight((h) => clampOverlayHeight(h))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
+  }, [browserOverlayOpen])
+
+  useEffect(() => {
+    if (!browserOverlayOpen) return
+    if (!selectedSourceId) setBrowserOverlayOpen(false)
+  }, [browserOverlayOpen, selectedSourceId])
+
+  useEffect(() => {
+    if (browserOverlayOpen) return
+    restorePreOverlaySortIfNeeded()
   }, [browserOverlayOpen])
 
   useEffect(() => {
@@ -432,7 +539,7 @@ export default function VerificationPage() {
       view.removeEventListener('did-navigate-in-page', onNav)
       view.removeEventListener('did-stop-loading', onNav)
     }
-  }, [browserOverlayOpen, browserOverlayUrl])
+  }, [browserOverlayOpen, browserOverlayUrl, selectedSourceId])
 
   useEffect(() => {
     if (!overlayResizing) return
@@ -579,7 +686,7 @@ export default function VerificationPage() {
             </div>
 
             {/* Source cards */}
-            <div className={styles['card-list']}>
+            <div className={styles['card-list']} ref={cardListRef}>
               {sortedSourceCards.map((card, idx) => {
                 const isSelected = selectedSourceId === card.source.id
                 const cardClass = [
@@ -717,32 +824,32 @@ export default function VerificationPage() {
                 )
               })}
             </div>
-          </>
-        )}
 
-        {browserOverlayOpen && (
-          <div className={styles['scholar-overlay']} style={{ height: `${browserOverlayHeight}px` }}>
-            <div className={styles['scholar-overlay-resizer']} onMouseDown={startOverlayResize} title="Drag to resize">
-              <span className={styles['scholar-overlay-resizer-line']} />
-            </div>
-            <div className={styles['scholar-overlay-header']}>
-              <span className={styles['scholar-overlay-title']}>{browserOverlayTitle}</span>
-              <div className={styles['scholar-overlay-actions']}>
-                <button className={styles['action-btn']} onClick={goBrowserBack} disabled={!browserCanGoBack} title="Go back">Back</button>
-                <button className={styles['action-btn']} onClick={goBrowserForward} disabled={!browserCanGoForward} title="Go forward">Forward</button>
-                <button className={styles['action-btn']} onClick={reloadBrowserView} title="Reload page">Reload</button>
-                <button className={styles['action-btn']} onClick={() => openExternal(browserOverlayUrl)} title="Open in external browser">Open</button>
-                <button className={styles['action-btn']} onClick={() => setBrowserOverlayOpen(false)} title="Close browser panel">Close</button>
+            {browserOverlayOpen && (
+              <div className={styles['scholar-overlay']} style={{ height: `${browserOverlayHeight}px` }}>
+                <div className={styles['scholar-overlay-resizer']} onMouseDown={startOverlayResize} title="Drag to resize">
+                  <span className={styles['scholar-overlay-resizer-line']} />
+                </div>
+                <div className={styles['scholar-overlay-header']}>
+                  <span className={styles['scholar-overlay-title']}>{browserOverlayTitle}</span>
+                  <div className={styles['scholar-overlay-actions']}>
+                    <button className={styles['action-btn']} onClick={goBrowserBack} disabled={!browserCanGoBack} title="Go back">Back</button>
+                    <button className={styles['action-btn']} onClick={goBrowserForward} disabled={!browserCanGoForward} title="Go forward">Forward</button>
+                    <button className={styles['action-btn']} onClick={reloadBrowserView} title="Reload page">Reload</button>
+                    <button className={styles['action-btn']} onClick={() => openExternal(browserOverlayUrl)} title="Open in external browser">Open</button>
+                    <button className={styles['action-btn']} onClick={() => setBrowserOverlayOpen(false)} title="Close browser panel">Close</button>
+                  </div>
+                </div>
+                <webview
+                  ref={browserWebviewRef}
+                  className={styles['scholar-overlay-webview']}
+                  src={browserOverlayUrl}
+                  partition="persist:scholar-panel"
+                  allowpopups
+                />
               </div>
-            </div>
-            <webview
-              ref={browserWebviewRef}
-              className={styles['scholar-overlay-webview']}
-              src={browserOverlayUrl}
-              partition="persist:scholar-panel"
-              allowpopups
-            />
-          </div>
+            )}
+          </>
         )}
       </section>
 
