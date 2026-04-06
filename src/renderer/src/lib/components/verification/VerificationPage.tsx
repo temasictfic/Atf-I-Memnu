@@ -36,13 +36,13 @@ function statusLabel(result: VerificationResult | undefined): string {
 }
 
 function dbScoreIcon(score: number): string {
-  if (score >= 0.75) return '\u2713'
+  if (score >= 0.65) return '\u2713'
   if (score >= 0.5) return '~'
   return '\u2715'
 }
 
 function dbScoreColor(score: number): string {
-  if (score >= 0.75) return '#22c55e'
+  if (score >= 0.65) return '#22c55e'
   if (score >= 0.5) return '#eab308'
   return '#ef4444'
 }

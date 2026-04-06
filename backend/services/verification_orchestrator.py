@@ -247,7 +247,7 @@ async def _verify_source(
 
         # Check if we have a green match already
         best_score = max((m.score for m in all_matches), default=0)
-        if best_score >= 0.75:
+        if best_score >= 0.65:
             return
 
         # Phase 2: Tier 2 Meta-search fallback (DuckDuckGo)

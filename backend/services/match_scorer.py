@@ -122,7 +122,7 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
 
 def determine_status(score: float) -> str:
     """Determine verification status from match score."""
-    if score >= 0.75:
+    if score >= 0.65:
         return "green"
     elif score >= 0.50:
         return "yellow"

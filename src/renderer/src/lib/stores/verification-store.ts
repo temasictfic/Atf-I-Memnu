@@ -209,7 +209,7 @@ function flushPdfVerifyLog(pdfId: string): void {
       const isFound = dbCheck.dbStatus === 'found' && dbCheck.match
       const score = isFound ? ((dbCheck.match as Record<string, unknown>).score as number) ?? 0 : 0
       const matchLabel = isFound
-        ? (score >= 0.75 ? 'Match' : 'Partial Match')
+        ? (score >= 0.65 ? 'Match' : 'Partial Match')
         : (dbCheck.dbStatus === 'not_found' ? 'Not Found' : '')
 
       const dbColor = '#38bdf8'
