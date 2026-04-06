@@ -1,4 +1,5 @@
 import type { WsEvent } from './types'
+import { getBackendWsUrl } from './backend-endpoint'
 
 type WsHandler = (data: Record<string, unknown>) => void
 
@@ -8,7 +9,7 @@ class WebSocketClient {
   private reconnectDelay = 1000
   private maxReconnectDelay = 30000
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private url = 'ws://localhost:18765/api/ws'
+  private url = ''
   private _connected = false
 
   get connected(): boolean {
@@ -16,9 +17,14 @@ class WebSocketClient {
   }
 
   connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) return
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return
 
+    void this.connectInternal()
+  }
+
+  private async connectInternal(): Promise<void> {
     try {
+      this.url = await getBackendWsUrl()
       this.ws = new WebSocket(this.url)
 
       this.ws.onopen = () => {

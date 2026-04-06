@@ -1,6 +1,7 @@
-const BASE_URL = 'http://localhost:18765'
+import { getBackendBaseUrl, getBackendBaseUrlSync } from './backend-endpoint'
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const baseUrl = await getBackendBaseUrl()
   const opts: RequestInit = {
     method,
     headers: { 'Content-Type': 'application/json' }
@@ -8,7 +9,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (body !== undefined) {
     opts.body = JSON.stringify(body)
   }
-  const res = await fetch(`${BASE_URL}${path}`, opts)
+  const res = await fetch(`${baseUrl}${path}`, opts)
   if (!res.ok) {
     const errorText = await res.text()
     throw new Error(`API error ${res.status}: ${errorText}`)
@@ -17,7 +18,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export function pageImageUrl(pdfId: string, pageNum: number): string {
-  return `${BASE_URL}/api/parse/page-image/${pdfId}/${pageNum}`
+  const baseUrl = getBackendBaseUrlSync()
+  if (!baseUrl) return ''
+  return `${baseUrl}/api/parse/page-image/${pdfId}/${pageNum}`
 }
 
 export const api = {

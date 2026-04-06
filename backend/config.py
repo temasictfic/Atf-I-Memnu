@@ -17,7 +17,7 @@ def _default_output_dir() -> str:
 
 
 class Settings(BaseSettings):
-    port: int = 18765
+    port: int = 0
     host: str = "0.0.0.0"
     output_dir: str = _default_output_dir()
     kaynaklar_dir: str = ""

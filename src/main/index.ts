@@ -3,7 +3,7 @@ import { mkdirSync } from 'fs'
 import { join } from 'path'
 import { autoUpdater } from 'electron-updater'
 import type { ProgressInfo, UpdateInfo } from 'builder-util-runtime'
-import { startPythonBackend, stopPythonBackend } from './python-bridge'
+import { startPythonBackend, stopPythonBackend, getPythonBackendPort } from './python-bridge'
 
 const isDev = !app.isPackaged
 
@@ -121,7 +121,11 @@ ipcMain.handle('shell:openCacheFolder', async () => {
 })
 
 ipcMain.handle('backend:getPort', () => {
-  return 18765
+  const port = getPythonBackendPort()
+  if (port === null) {
+    throw new Error('Backend port is not available yet')
+  }
+  return port
 })
 
 ipcMain.on('update:download', () => {
