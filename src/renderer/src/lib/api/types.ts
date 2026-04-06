@@ -106,7 +106,7 @@ export interface LogEntry {
 }
 
 // Verification progress tracking
-export type DbCheckStatus = 'checking' | 'found' | 'not_found' | 'timeout' | 'error' | 'captcha' | 'blocked'
+export type DbCheckStatus = 'checking' | 'found' | 'not_found' | 'timeout' | 'error'
 
 export interface DbCheckEntry {
   name: string

@@ -17,7 +17,6 @@ from services.search_settings import (
     get_search_timeout_seconds,
 )
 from services.source_extractor import extract_source_fields
-from verifiers.base import CaptchaError, BlockedError
 
 
 # --- Cancellation registry ---
@@ -345,31 +344,6 @@ async def _run_tier1_apis(
 
                 if result and result.score > 0:
                     matches.append(result)
-
-            except CaptchaError:
-                searched.append(name)
-                await manager.send_log("warning", f"{name} blocked by CAPTCHA",
-                                      pdf_id=pdf_id, source_id=source_id, database=name)
-                await manager.broadcast("verify_db_checked", {
-                    "pdf_id": pdf_id,
-                    "source_id": source_id,
-                    "database": name,
-                    "found": False,
-                    "db_status": "captcha",
-                    "search_url": fallback_url,
-                })
-            except BlockedError:
-                searched.append(name)
-                await manager.send_log("warning", f"{name} access blocked",
-                                      pdf_id=pdf_id, source_id=source_id, database=name)
-                await manager.broadcast("verify_db_checked", {
-                    "pdf_id": pdf_id,
-                    "source_id": source_id,
-                    "database": name,
-                    "found": False,
-                    "db_status": "blocked",
-                    "search_url": fallback_url,
-                })
             except asyncio.TimeoutError:
                 searched.append(name)
                 await manager.send_log("warning", f"{name} timed out",

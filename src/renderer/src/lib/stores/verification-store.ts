@@ -203,7 +203,7 @@ function flushPdfVerifyLog(pdfId: string): void {
       // Build summary for the database group label
       const queryLabels: Record<string, string> = {
         found: 'successful', not_found: 'successful', timeout: 'failed (timeout)',
-        error: 'failed', captcha: 'captcha', blocked: 'blocked',
+        error: 'failed',
       }
       const queryLabel = queryLabels[dbCheck.dbStatus] ?? dbCheck.dbStatus
       const isFound = dbCheck.dbStatus === 'found' && dbCheck.match
@@ -215,7 +215,7 @@ function flushPdfVerifyLog(pdfId: string): void {
       const dbColor = '#38bdf8'
       const queryColors: Record<string, string> = {
         found: '#22c55e', not_found: '#22c55e', timeout: '#ef4444',
-        error: '#ef4444', captcha: '#f97316', blocked: '#f97316',
+        error: '#ef4444',
       }
       const qColor = queryColors[dbCheck.dbStatus] ?? '#a8a29e'
       const matchColors: Record<string, string> = { Match: '#22c55e', 'Partial Match': '#eab308', 'Not Found': '#111827' }

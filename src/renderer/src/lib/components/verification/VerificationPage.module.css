@@ -419,7 +419,6 @@
 .dot-not_found { background: #a8a29e; }
 .dot-timeout { background: #f97316; }
 .dot-error { background: #ef4444; }
-.dot-captcha { background: #eab308; }
 .dot-current { background: #3b82f6; animation: pulse 1s infinite; }
 @keyframes pulse {
   0%, 100% { opacity: 1; }
