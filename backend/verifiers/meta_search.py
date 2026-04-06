@@ -12,6 +12,7 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
 from services.search_settings import get_client_timeout
+from utils.text_cleaning import clean_reference_text
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -20,10 +21,7 @@ _HEADERS = {
 
 def _clean_query(raw_text: str) -> str:
     """Clean raw citation text for use as a search query."""
-    cleaned = re.sub(r"^\s*\[?\d{1,3}\]?[.\)]\s*", "", raw_text).strip()
-    # Remove URLs and DOIs from query
-    cleaned = re.sub(r"https?://\S+", "", cleaned)
-    cleaned = re.sub(r"doi[:\s]*10\.\S+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = clean_reference_text(raw_text)
     return cleaned[:300]
 
 

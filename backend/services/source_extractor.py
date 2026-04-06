@@ -9,6 +9,7 @@ import re
 
 from models.source import ParsedSource
 from services.citation_format_detector import CitationFormat, detect_format
+from utils.text_cleaning import strip_reference_noise
 from utils.doi_extractor import extract_doi, extract_arxiv_id
 
 
@@ -23,9 +24,8 @@ def extract_source_fields(raw_text: str) -> ParsedSource:
     """Parse raw reference text into structured fields using rule-based, format-aware extraction."""
     result = ParsedSource(raw_text=raw_text)
 
-    # Strip reference number prefix: [1], [1]., 1., 1)
-    text = re.sub(r"^\s*\[\d{1,3}\][.\s]*", "", raw_text).strip()
-    text = re.sub(r"^\s*\d{1,3}[.\)]\s*", "", text).strip()
+    # Strip leading numbering and access-date noise before parsing fields.
+    text = strip_reference_noise(raw_text)
 
     # Extract DOI (consolidated via utils)
     result.doi = extract_doi(text)

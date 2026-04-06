@@ -4,6 +4,21 @@ import re
 import unicodedata
 
 
+# Matches exactly the reference-number prefixes used by reference detection.
+REF_NUMBER_PREFIX_PATTERNS = [
+    re.compile(r"^\s*\[(\d{1,3})\]\s*"),   # [1] Text...
+    re.compile(r"^\s*(\d{1,3})\.\s+"),     # 1. Text...
+    re.compile(r"^\s*(\d{1,3})\)\s+"),     # 1) Text...
+    re.compile(r"^\s*(\d{1,3})-\s*"),      # 1- Text...
+]
+
+# Access-date footers/noise frequently seen in references.
+ACCESS_DATE_PATTERNS = [
+    r"(?i)[,;]?\s*son\s+eri[şs]im\s+tarihi\s*:?\s*\d{1,2}\s+[A-Za-zÇĞİÖŞÜçğıöşü]+\s+\d{4}\.?",
+    r"(?i)[,;]?\s*eri[şs]im\s+tarihi\s*:?\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\.?",
+]
+
+
 def normalize_text(text: str) -> str:
     """Normalize Unicode text for comparison."""
     text = unicodedata.normalize("NFKD", text)
@@ -11,16 +26,31 @@ def normalize_text(text: str) -> str:
     return text
 
 
+def strip_reference_noise(text: str) -> str:
+    """Remove leading reference numbering and access-date fragments."""
+    cleaned = text or ""
+
+    for pattern in REF_NUMBER_PREFIX_PATTERNS:
+        next_cleaned = pattern.sub("", cleaned, count=1)
+        if next_cleaned != cleaned:
+            cleaned = next_cleaned
+            break
+
+    for pattern in ACCESS_DATE_PATTERNS:
+        cleaned = re.sub(pattern, " ", cleaned)
+
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 def clean_reference_text(text: str) -> str:
     """Clean a reference text for search queries."""
-    # Remove reference number prefix
-    text = re.sub(r"^\s*\[?\d{1,3}\]?[.\)]\s*", "", text)
+    text = strip_reference_noise(text)
     # Remove URLs
     text = re.sub(r"https?://\S+", "", text)
     # Remove DOIs
+    text = re.sub(r"doi[:\s]*10\.\S+", "", text, flags=re.IGNORECASE)
     text = re.sub(r"10\.\d{4,9}/\S+", "", text)
-    # Remove access dates in Turkish
-    text = re.sub(r"Erişim\s+Tarihi[:\s]*\d{1,2}[./]\d{1,2}[./]\d{2,4}", "", text, flags=re.IGNORECASE)
     # Normalize whitespace
     text = re.sub(r"\s+", " ", text).strip()
     return text

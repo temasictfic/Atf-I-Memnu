@@ -3,6 +3,7 @@ import { usePdfStore } from '../../stores/pdf-store'
 import { useSourcesStore, loadSources as loadSourcesFn } from '../../stores/sources-store'
 import { useVerificationStore } from '../../stores/verification-store'
 import type { VerificationResult, MatchResult, DbCheckEntry } from '../../api/types'
+import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../../utils/reference-text'
 import styles from './VerificationPage.module.css'
 
 const ALL_DATABASES = [
@@ -48,12 +49,15 @@ function dbScoreColor(score: number): string {
 }
 
 function googleSearchUrl(text: string): string {
-  return `https://www.google.com/search?q=${encodeURIComponent(text)}`
+  const cleaned = sanitizeReferenceTextForSearch(text)
+  return `https://www.google.com/search?q=${encodeURIComponent(cleaned)}`
 }
 
 function buildDbSearchUrl(db: string, text: string): string {
-  const q = encodeURIComponent(text)
-  const qPlus = encodeURIComponent(text).replace(/%20/g, '+')
+  const cleaned = sanitizeReferenceTextForSearch(text)
+  if (!cleaned) return ''
+  const q = encodeURIComponent(cleaned)
+  const qPlus = q.replace(/%20/g, '+')
   const urls: Record<string, string> = {
     'Crossref': `https://search.crossref.org/search/works?q=${qPlus}&from_ui=yes`,
     'OpenAlex': `https://openalex.org/works?search=${q}`,
@@ -311,7 +315,7 @@ export default function VerificationPage() {
   const selectedSearchText = useMemo(() => {
     if (!selectedSourceId) return ''
     const text = verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
-    return text.trim()
+    return sanitizeReferenceTextForSearch(text)
   }, [selectedSourceId, verifyTexts, currentSource])
 
   function getOverlayMaxHeight(): number {
@@ -745,7 +749,7 @@ export default function VerificationPage() {
                           className={styles['copy-btn']}
                           onClick={(e) => {
                             e.stopPropagation()
-                            const text = verifyTexts[card.source.id] ?? card.source.text
+                            const text = verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)
                             navigator.clipboard.writeText(text)
                           }}
                           title="Copy text"
@@ -775,7 +779,7 @@ export default function VerificationPage() {
                       {/* Textarea */}
                       <textarea
                         className={styles['card-textarea']}
-                        value={verifyTexts[card.source.id] ?? card.source.text}
+                        value={verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)}
                         onInput={(e) => {
                           const el = e.target as HTMLTextAreaElement
                           setVerifyText(card.source.id, el.value)
@@ -1005,7 +1009,7 @@ export default function VerificationPage() {
                         const match = r.all_results.find((m: MatchResult) => m.database === db)
                         const searched = r.databases_searched.includes(db)
                         const dbCheck = selectedProgress?.checkedDbs.find(d => d.name === db)
-                        const sourceText = verifyTexts[selectedSourceId] ?? ''
+                        const sourceText = verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
                         const linkUrl = buildDbSearchUrl(db, sourceText) || match?.search_url || dbCheck?.searchUrl
                         return (
                           <div key={db} className={styles['db-row']}>

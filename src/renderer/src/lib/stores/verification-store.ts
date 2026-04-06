@@ -5,6 +5,7 @@ import type {
 } from '../api/types'
 import { api } from '../api/rest-client'
 import { wsClient } from '../api/ws-client'
+import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../utils/reference-text'
 import { usePdfStore } from './pdf-store'
 
 type CardSortKey = 'default' | 'status' | 'ref' | 'enabled'
@@ -329,20 +330,21 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const currentSourceIds = new Set(sources.map(s => s.id))
 
       for (const source of sources) {
+        const cleanedSourceText = sanitizeReferenceText(source.text)
         const prevOriginal = originals[source.id]
         const currentText = texts[source.id]
 
         if (prevOriginal === undefined) {
           // New source — initialize both
-          texts[source.id] = source.text
+          texts[source.id] = cleanedSourceText
         } else if (currentText === prevOriginal) {
           // User hasn't edited — sync from parsing page
-          texts[source.id] = source.text
+          texts[source.id] = cleanedSourceText
         }
         // else: user has edited (currentText !== prevOriginal) — keep user's edit
 
         // Always update original to latest parsing text
-        originals[source.id] = source.text
+        originals[source.id] = cleanedSourceText
 
         if (!(source.id in enabled)) enabled[source.id] = true
       }
@@ -374,7 +376,8 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           const cleaned: Record<string, VerificationResult> = {}
           for (const source of sources) {
             const prevOrig = state.sourceOriginalTexts[source.id]
-            if (pdfResults[source.id] && prevOrig === source.text) {
+            const cleanedSourceText = sanitizeReferenceText(source.text)
+            if (pdfResults[source.id] && prevOrig === cleanedSourceText) {
               cleaned[source.id] = pdfResults[source.id]
             }
           }
@@ -422,7 +425,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const { verifyTexts, enabledSources, sourceOrder } = get()
       const texts: Record<string, string> = {}
       for (const [sourceId, text] of Object.entries(verifyTexts)) {
-        texts[sourceId] = text
+        texts[sourceId] = sanitizeReferenceTextForSearch(text)
       }
       const excludedIds = Object.entries(enabledSources)
         .filter(([, enabled]) => !enabled)
@@ -505,7 +508,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           [sourceId]: { currentDb: null, checkedDbs: [] },
         },
       }))
-      await api.verifySource(pdfId, sourceId, text)
+      await api.verifySource(pdfId, sourceId, sanitizeReferenceTextForSearch(text ?? ''))
     } catch (e) {
       console.error('Failed to verify source:', e)
     }

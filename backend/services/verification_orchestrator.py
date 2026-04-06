@@ -2,7 +2,6 @@
 
 import asyncio
 import inspect
-import re
 from typing import Any
 from urllib.parse import quote, quote_plus
 
@@ -17,6 +16,7 @@ from services.search_settings import (
     get_search_timeout_seconds,
 )
 from services.source_extractor import extract_source_fields
+from utils.text_cleaning import clean_reference_text, strip_reference_noise
 
 
 # --- Cancellation registry ---
@@ -189,10 +189,12 @@ async def _verify_source(
         status="in_progress",
     )
 
+    source_text = strip_reference_noise(source.text)
+
     await manager.broadcast("verify_started", {
         "pdf_id": pdf_id,
         "source_id": source_id,
-        "source_text": source.text[:200],
+        "source_text": source_text[:200],
     })
 
     all_matches: list[MatchResult] = []
@@ -208,7 +210,7 @@ async def _verify_source(
         api_semaphore = asyncio.Semaphore(get_max_concurrent_apis())
 
         # Parse source text into structured fields
-        parsed = extract_source_fields(source.text)
+        parsed = extract_source_fields(source_text)
 
         if parsed.doi:
             await manager.send_log("info", f"DOI found: {parsed.doi}", pdf_id=pdf_id, source_id=source_id)
@@ -224,12 +226,9 @@ async def _verify_source(
                 pdf_id=pdf_id,
                 source_id=source_id,
             )
-            # Use cleaned raw text as title for broader search queries
-            cleaned = re.sub(r"^\s*\[?\d{1,3}\]?[.\)]\s*", "", source.text).strip()
-            # Remove URLs and DOIs from the search query
-            cleaned = re.sub(r"https?://\S+", "", cleaned)
-            cleaned = re.sub(r"doi[:\s]*10\.\S+", "", cleaned, flags=re.IGNORECASE)
-            parsed.title = cleaned[:200].strip()
+            # Use aggressively cleaned raw text for broader fallback queries.
+            cleaned_query = clean_reference_text(source_text)
+            parsed.title = cleaned_query[:200].strip()
 
         # Phase 1: Tier 1 APIs (parallel)
         tier1_results = await _run_tier1_apis(
@@ -452,7 +451,7 @@ async def verify_pdf_sources_filtered(
     modified = []
     for s in filtered:
         if s.id in custom_texts:
-            modified.append(s.model_copy(update={"text": custom_texts[s.id]}))
+            modified.append(s.model_copy(update={"text": strip_reference_noise(custom_texts[s.id])}))
         else:
             modified.append(s)
 

@@ -168,7 +168,7 @@ async def reverify_source(pdf_id: str, source_id: str, request: VerifySourceRequ
     from services.verification_orchestrator import verify_single_source, _register_task
 
     # Use updated text if provided
-    text = request.text if request.text else source.text
+    text = request.text if request.text is not None else source.text
     task = asyncio.create_task(verify_single_source(pdf_id, source_id, text, verify_results))
     _register_task(source_id, task)
     return {"success": True}
