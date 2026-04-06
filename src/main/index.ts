@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { mkdirSync } from 'fs'
 import { join } from 'path'
 import { autoUpdater } from 'electron-updater'
 import type { ProgressInfo, UpdateInfo } from 'builder-util-runtime'
@@ -9,12 +9,8 @@ const isDev = !app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
 let updaterConfigured = false
-
-interface UpdaterState {
-  startupUpdateCheckCompleted?: boolean
-}
-
-const UPDATE_STATE_FILE = 'updater-state.json'
+let startupUpdateCheckAttempted = false
+let startupUpdateCheckSucceeded = false
 const IGNORED_UPDATE_ERRORS: RegExp[] = [
   /no published versions on github/i,
   /cannot find.*latest\.yml/i,
@@ -22,49 +18,17 @@ const IGNORED_UPDATE_ERRORS: RegExp[] = [
   /status code 404/i,
 ]
 
-function getUpdaterStatePath(): string {
-  return join(app.getPath('userData'), UPDATE_STATE_FILE)
-}
-
-function readUpdaterState(): UpdaterState {
-  const statePath = getUpdaterStatePath()
-  if (!existsSync(statePath)) {
-    return {}
-  }
-
-  try {
-    const raw = readFileSync(statePath, 'utf8')
-    const parsed = JSON.parse(raw) as UpdaterState
-    if (!parsed || typeof parsed !== 'object') {
-      return {}
-    }
-    return parsed
-  } catch {
-    return {}
-  }
-}
-
-function writeUpdaterState(state: UpdaterState): void {
-  const statePath = getUpdaterStatePath()
-  try {
-    writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf8')
-  } catch (error) {
-    console.warn('[Updater] Failed to persist updater state:', error)
-  }
-}
-
 function shouldRunStartupUpdateCheck(): boolean {
   if (isDev) {
     return false
   }
 
-  const state = readUpdaterState()
-  if (state.startupUpdateCheckCompleted) {
+  // Run at most once per app process lifetime.
+  if (startupUpdateCheckAttempted || startupUpdateCheckSucceeded) {
     return false
   }
 
-  state.startupUpdateCheckCompleted = true
-  writeUpdaterState(state)
+  startupUpdateCheckAttempted = true
   return true
 }
 
@@ -133,10 +97,14 @@ function createWindow(): void {
       configureAutoUpdater()
       if (shouldRunStartupUpdateCheck()) {
         setTimeout(() => {
-          autoUpdater.checkForUpdates().catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : String(error)
-            console.warn('[Updater] Startup check failed:', message)
-          })
+          autoUpdater.checkForUpdates()
+            .then(() => {
+              startupUpdateCheckSucceeded = true
+            })
+            .catch((error: unknown) => {
+              const message = error instanceof Error ? error.message : String(error)
+              console.warn('[Updater] Startup check failed:', message)
+            })
         }, 5000)
       }
     }
@@ -151,6 +119,27 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+}
+
+let backendStartupPromise: Promise<void> | null = null
+
+function ensureBackendStarted(): void {
+  if (backendStartupPromise) {
+    return
+  }
+
+  backendStartupPromise = startPythonBackend()
+    .then(() => {
+      console.log('[Backend] Startup completed')
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error('[Backend] Startup failed:', message)
+      dialog.showErrorBox(
+        'Backend Startup Failed',
+        `The backend service failed to start.\n\n${message}\n\nPlease reinstall or run the installer again.`
+      )
+    })
 }
 
 // IPC Handlers
@@ -213,13 +202,14 @@ ipcMain.on('update:install', () => {
 // App lifecycle
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
-  await startPythonBackend()
   createWindow()
+  ensureBackendStarted()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
     }
+    ensureBackendStarted()
   })
 })
 

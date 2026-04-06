@@ -72,6 +72,7 @@ export async function startPythonBackend(): Promise<void> {
   backendPort = await findAvailablePort()
   const backendPath = getBackendPath()
   const launch = getBackendLaunchCommand(backendPort)
+  const backendExecutablePath = launch.command
   const outputDir = join(app.getPath('userData'), 'output')
   const packagedKaynaklarDir = join(process.resourcesPath, 'kaynaklar')
   const devKaynaklarDir = join(__dirname, '../../kaynaklar')
@@ -97,6 +98,10 @@ export async function startPythonBackend(): Promise<void> {
     env: envVars
   })
 
+  pythonProcess.on('error', (error) => {
+    console.error('[Python SPAWN ERROR]', error)
+  })
+
   pythonProcess.stdout?.on('data', (data: Buffer) => {
     console.log(`[Python STDOUT] ${data.toString().trim()}`)
   })
@@ -113,6 +118,11 @@ export async function startPythonBackend(): Promise<void> {
 
   // Wait for backend to be healthy
   await waitForHealth(backendPort)
+
+  // Health can be green while process exits immediately afterward.
+  if (!pythonProcess || backendPort === null) {
+    throw new Error(`Backend process exited during startup: ${backendExecutablePath}`)
+  }
 }
 
 async function waitForHealth(port: number): Promise<void> {
@@ -128,7 +138,7 @@ async function waitForHealth(port: number): Promise<void> {
     }
     await new Promise(resolve => setTimeout(resolve, HEALTH_CHECK_INTERVAL))
   }
-  console.error('Python backend failed to start within timeout')
+  throw new Error(`Python backend failed health check within timeout on port ${port}`)
 }
 
 export function getPythonBackendPort(): number | null {

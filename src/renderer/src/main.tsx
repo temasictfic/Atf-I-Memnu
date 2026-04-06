@@ -3,9 +3,8 @@ import App from './App'
 import './app.css'
 import { initializeBackendEndpoint } from './lib/api/backend-endpoint'
 
-async function bootstrap(): Promise<void> {
-	await initializeBackendEndpoint()
-	createRoot(document.getElementById('app')!).render(<App />)
-}
+createRoot(document.getElementById('app')!).render(<App />)
 
-void bootstrap()
+void initializeBackendEndpoint().catch((error) => {
+  console.error('[Startup] Backend initialization failed:', error)
+})
