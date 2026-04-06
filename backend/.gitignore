@@ -9,4 +9,3 @@ playwright-browsers/
 
 # Virtual environments
 .venv
-*backend.spec
