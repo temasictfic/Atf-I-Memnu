@@ -1,6 +1,6 @@
 {
   "name": "atfi-memnu-app",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Citation Search and Verification App",
   "author": "temasictfic",
   "main": "./out/main/index.js",
