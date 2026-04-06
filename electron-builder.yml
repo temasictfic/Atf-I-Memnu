@@ -1,5 +1,5 @@
 appId: com.atfimemnu.app
-productName: Atf-ı Memnu
+productName: Atf-I Memnu
 directories:
   output: dist
   buildResources: resources
@@ -13,6 +13,7 @@ extraResources:
     filter:
       - '**/*'
 win:
+  icon: resources/icon.ico
   target:
     - target: nsis
       arch:
@@ -27,4 +28,4 @@ nsis:
 publish:
   provider: github
   owner: temasictfic
-  repo: ATF-I-MEMNU
+  repo: Atf-I-Memnu
