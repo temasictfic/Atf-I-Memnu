@@ -32,3 +32,4 @@ publish:
   provider: github
   owner: temasictfic
   repo: Atf-I-Memnu
+  releaseType: release

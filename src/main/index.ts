@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron'
-import { mkdirSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { autoUpdater } from 'electron-updater'
 import type { ProgressInfo, UpdateInfo } from 'builder-util-runtime'
@@ -9,6 +9,68 @@ const isDev = !app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
 let updaterConfigured = false
+
+interface UpdaterState {
+  startupUpdateCheckCompleted?: boolean
+}
+
+const UPDATE_STATE_FILE = 'updater-state.json'
+const IGNORED_UPDATE_ERRORS: RegExp[] = [
+  /no published versions on github/i,
+  /cannot find.*latest\.yml/i,
+  /http error: 404/i,
+  /status code 404/i,
+]
+
+function getUpdaterStatePath(): string {
+  return join(app.getPath('userData'), UPDATE_STATE_FILE)
+}
+
+function readUpdaterState(): UpdaterState {
+  const statePath = getUpdaterStatePath()
+  if (!existsSync(statePath)) {
+    return {}
+  }
+
+  try {
+    const raw = readFileSync(statePath, 'utf8')
+    const parsed = JSON.parse(raw) as UpdaterState
+    if (!parsed || typeof parsed !== 'object') {
+      return {}
+    }
+    return parsed
+  } catch {
+    return {}
+  }
+}
+
+function writeUpdaterState(state: UpdaterState): void {
+  const statePath = getUpdaterStatePath()
+  try {
+    writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf8')
+  } catch (error) {
+    console.warn('[Updater] Failed to persist updater state:', error)
+  }
+}
+
+function shouldRunStartupUpdateCheck(): boolean {
+  if (isDev) {
+    return false
+  }
+
+  const state = readUpdaterState()
+  if (state.startupUpdateCheckCompleted) {
+    return false
+  }
+
+  state.startupUpdateCheckCompleted = true
+  writeUpdaterState(state)
+  return true
+}
+
+function shouldForwardUpdateError(message: string): boolean {
+  return !IGNORED_UPDATE_ERRORS.some(pattern => pattern.test(message))
+}
 
 function configureAutoUpdater(): void {
   if (isDev || updaterConfigured) return
@@ -35,7 +97,12 @@ function configureAutoUpdater(): void {
   })
 
   autoUpdater.on('error', (err: Error) => {
-    mainWindow?.webContents.send('update:error', err.message)
+    const message = err?.message || 'Unknown update error'
+    console.warn('[Updater] Error:', message)
+    if (!shouldForwardUpdateError(message)) {
+      return
+    }
+    mainWindow?.webContents.send('update:error', message)
   })
 }
 
@@ -64,9 +131,14 @@ function createWindow(): void {
 
     if (!isDev) {
       configureAutoUpdater()
-      setTimeout(() => {
-        autoUpdater.checkForUpdates().catch(() => {})
-      }, 5000)
+      if (shouldRunStartupUpdateCheck()) {
+        setTimeout(() => {
+          autoUpdater.checkForUpdates().catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error)
+            console.warn('[Updater] Startup check failed:', message)
+          })
+        }, 5000)
+      }
     }
   })
 

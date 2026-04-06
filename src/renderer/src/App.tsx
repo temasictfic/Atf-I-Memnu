@@ -68,14 +68,13 @@ export default function App() {
 
           {/* Status */}
           <div className={styles['header-status']}>
+            <UpdateNotification />
             <div className={styles['status-icon-ring']}>
               <img src={iconUrl} alt="App icon" className={styles['status-icon']} />
             </div>
           </div>
         </div>
       </header>
-
-      <UpdateNotification />
 
       {/* Main Content */}
       <main className={styles['main-content']}>

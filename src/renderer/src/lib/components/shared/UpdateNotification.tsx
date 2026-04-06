@@ -5,43 +5,22 @@ type UpdateStage = 'hidden' | 'available' | 'downloading' | 'ready' | 'error'
 
 interface UpdateAvailablePayload {
   version: string
-  releaseNotes?: unknown
 }
 
 interface UpdateProgressPayload {
   percent: number
 }
 
-function formatReleaseNotes(notes: unknown): string {
-  if (!notes) return ''
-  if (typeof notes === 'string') return notes
-  if (Array.isArray(notes)) {
-    const textItems = notes
-      .map(item => {
-        if (typeof item === 'string') return item
-        if (item && typeof item === 'object' && 'note' in item) {
-          return String((item as { note?: unknown }).note ?? '')
-        }
-        return ''
-      })
-      .filter(Boolean)
-    return textItems.join('\n')
-  }
-  return String(notes)
-}
-
 export default function UpdateNotification() {
   const [stage, setStage] = useState<UpdateStage>('hidden')
   const [visible, setVisible] = useState(false)
   const [version, setVersion] = useState('')
-  const [releaseNotes, setReleaseNotes] = useState('')
   const [progressPercent, setProgressPercent] = useState(0)
   const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => {
     const offAvailable = window.electronAPI.onUpdateAvailable((info: UpdateAvailablePayload) => {
       setVersion(info.version)
-      setReleaseNotes(formatReleaseNotes(info.releaseNotes))
       setProgressPercent(0)
       setErrorMessage('')
       setStage('available')
@@ -74,14 +53,68 @@ export default function UpdateNotification() {
     }
   }, [])
 
-  const progressWidth = useMemo(() => `${progressPercent.toFixed(1)}%`, [progressPercent])
+  const message = useMemo(() => {
+    if (stage === 'available') {
+      return version ? `v${version} is available.` : 'A new version is available.'
+    }
+    if (stage === 'downloading') {
+      return `Downloading update: ${progressPercent.toFixed(1)}%`
+    }
+    if (stage === 'ready') {
+      return 'Update is ready to install.'
+    }
+    if (stage === 'error') {
+      return errorMessage || 'Update failed.'
+    }
+    return ''
+  }, [errorMessage, progressPercent, stage, version])
 
   if (!visible || stage === 'hidden') {
     return null
   }
 
   return (
-    <aside className={styles['update-card']}>
+    <aside className={styles['update-card']} role="status" aria-live="polite">
+      <span className={`${styles['status-dot']} ${styles[`dot-${stage}`]}`} aria-hidden="true" />
+      <p className={styles['message']}>{message}</p>
+
+      {stage === 'available' && (
+        <button
+          type="button"
+          className={styles['primary-btn']}
+          onClick={() => {
+            setStage('downloading')
+            window.electronAPI.downloadUpdate()
+          }}
+        >
+          Download
+        </button>
+      )}
+
+      {stage === 'ready' && (
+        <button
+          type="button"
+          className={styles['primary-btn']}
+          onClick={() => window.electronAPI.installUpdate()}
+        >
+          Restart
+        </button>
+      )}
+
+      {stage === 'error' && (
+        <button
+          type="button"
+          className={styles['secondary-btn']}
+          onClick={() => {
+            setErrorMessage('')
+            setVisible(false)
+            setStage('hidden')
+          }}
+        >
+          Dismiss
+        </button>
+      )}
+
       <button
         type="button"
         className={styles['close-btn']}
@@ -90,70 +123,6 @@ export default function UpdateNotification() {
       >
         ×
       </button>
-
-      <div className={styles['title-row']}>
-        <h4 className={styles['title']}>Update Available</h4>
-        {version && <span className={styles['version-tag']}>v{version}</span>}
-      </div>
-
-      {stage === 'available' && (
-        <>
-          <p className={styles['body']}>
-            A new version is available. Download now and restart when ready.
-          </p>
-          {releaseNotes && <pre className={styles['release-notes']}>{releaseNotes}</pre>}
-          <button
-            type="button"
-            className={styles['primary-btn']}
-            onClick={() => {
-              setStage('downloading')
-              window.electronAPI.downloadUpdate()
-            }}
-          >
-            Download
-          </button>
-        </>
-      )}
-
-      {stage === 'downloading' && (
-        <>
-          <p className={styles['body']}>Downloading update...</p>
-          <div className={styles['progress-track']}>
-            <div className={styles['progress-fill']} style={{ width: progressWidth }} />
-          </div>
-          <p className={styles['progress-text']}>{progressPercent.toFixed(1)}%</p>
-        </>
-      )}
-
-      {stage === 'ready' && (
-        <>
-          <p className={styles['body']}>Update downloaded. Restart the app to install it.</p>
-          <button
-            type="button"
-            className={styles['primary-btn']}
-            onClick={() => window.electronAPI.installUpdate()}
-          >
-            Restart
-          </button>
-        </>
-      )}
-
-      {stage === 'error' && (
-        <>
-          <p className={styles['body']}>Update error: {errorMessage}</p>
-          <button
-            type="button"
-            className={styles['secondary-btn']}
-            onClick={() => {
-              setErrorMessage('')
-              setStage('available')
-              window.electronAPI.downloadUpdate()
-            }}
-          >
-            Retry Download
-          </button>
-        </>
-      )}
     </aside>
   )
 }

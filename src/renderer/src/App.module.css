@@ -102,6 +102,7 @@
 .header-status {
   display: flex;
   align-items: center;
+  gap: 10px;
   min-width: 200px;
   justify-content: flex-end;
 }
