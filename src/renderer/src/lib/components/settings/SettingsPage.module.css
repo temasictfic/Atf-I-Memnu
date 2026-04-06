@@ -20,6 +20,33 @@
   color: #292524;
   margin: 0;
 }
+.header-icon-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #d6d3d1;
+  background: white;
+  color: #57534e;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.header-icon-button:hover {
+  color: #111827;
+  border-color: #a8a29e;
+  background: #f5f5f4;
+}
+.header-icon-button:focus-visible {
+  outline: 2px solid #d97706;
+  outline-offset: 2px;
+}
+.header-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
 .save-toast {
   position: sticky;
   top: 0;

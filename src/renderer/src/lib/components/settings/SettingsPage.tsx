@@ -12,6 +12,8 @@ const defaultDatabaseIds = new Set([
   'duckduckgo',
 ])
 
+const GITHUB_REPO_URL = 'https://github.com/temasictfic/Atf-I-Memnu'
+
 export default function SettingsPage() {
   const settings = useSettingsStore(s => s.settings)
   const saveStatus = useSettingsStore(s => s.saveStatus)
@@ -33,6 +35,10 @@ export default function SettingsPage() {
     }
   }
 
+  const handleOpenGithubRepo = () => {
+    window.open(GITHUB_REPO_URL, '_blank', 'noopener,noreferrer')
+  }
+
   return (
     <div className={styles['settings-page']}>
       <div className={styles['settings-container']}>
@@ -46,6 +52,17 @@ export default function SettingsPage() {
 
         <div className={styles['settings-header']}>
           <h1 className={styles['settings-title']}>Settings</h1>
+          <button
+            type="button"
+            className={styles['header-icon-button']}
+            onClick={handleOpenGithubRepo}
+            title="Open GitHub Repository"
+            aria-label="Open GitHub Repository"
+          >
+            <svg viewBox="0 0 24 24" className={styles['header-icon']} aria-hidden="true">
+              <path d="M12 1.5a10.5 10.5 0 0 0-3.32 20.47c.52.09.7-.22.7-.5v-1.93c-2.85.62-3.45-1.2-3.45-1.2-.46-1.18-1.12-1.5-1.12-1.5-.92-.63.07-.62.07-.62 1.02.07 1.56 1.04 1.56 1.04.9 1.54 2.36 1.1 2.94.84.09-.66.35-1.1.64-1.36-2.27-.26-4.66-1.14-4.66-5.05 0-1.12.4-2.03 1.04-2.75-.1-.26-.45-1.32.1-2.75 0 0 .86-.28 2.8 1.05a9.82 9.82 0 0 1 5.1 0c1.95-1.33 2.8-1.05 2.8-1.05.55 1.43.2 2.5.1 2.75.65.72 1.04 1.63 1.04 2.75 0 3.92-2.4 4.78-4.68 5.03.36.32.68.94.68 1.9v2.82c0 .28.18.59.7.5A10.5 10.5 0 0 0 12 1.5Z" />
+            </svg>
+          </button>
         </div>
 
         {/* Databases Section */}
