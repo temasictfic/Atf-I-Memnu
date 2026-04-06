@@ -1,0 +1,41 @@
+name: Build and Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install Python 3.12 via uv
+        run: uv python install 3.12
+        working-directory: backend
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Sync backend environment
+        run: uv sync
+        working-directory: backend
+
+      - name: Build backend executable
+        run: npm run build:backend
+
+      - name: Build app and publish release artifacts
+        run: npm run build && npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
