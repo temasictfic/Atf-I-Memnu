@@ -300,7 +300,6 @@ export default function VerificationPage() {
 
   const [browserOverlayOpen, setBrowserOverlayOpen] = useState(false)
   const [browserOverlayUrl, setBrowserOverlayUrl] = useState('https://www.google.com/')
-  const [browserOverlayTitle, setBrowserOverlayTitle] = useState('Google Search')
   const [browserOverlayHeight, setBrowserOverlayHeight] = useState(360)
   const [overlayResizing, setOverlayResizing] = useState(false)
   const overlayResizeStartRef = useRef<{ y: number; height: number } | null>(null)
@@ -399,9 +398,7 @@ export default function VerificationPage() {
     })
   }
 
-  function openOverlayWithTitleAndUrl(title: string, url: string) {
-    setBrowserOverlayTitle(title)
-
+  function openOverlayWithUrl(url: string) {
     const tempSorted = applyTemporaryRefSortIfNeeded()
     const finishOpen = () => {
       alignOverlayToSelectedCard()
@@ -423,14 +420,18 @@ export default function VerificationPage() {
     const url = selectedSearchText
       ? `https://scholar.google.com/scholar?q=${encodeURIComponent(selectedSearchText)}`
       : 'https://scholar.google.com/'
-    openOverlayWithTitleAndUrl('Google Scholar', url)
+    openOverlayWithUrl(url)
   }
 
   function openGoogleOverlay() {
     const url = selectedSearchText
       ? googleSearchUrl(selectedSearchText)
       : 'https://www.google.com/'
-    openOverlayWithTitleAndUrl('Google Search', url)
+    openOverlayWithUrl(url)
+  }
+
+  function closeBrowserOverlay() {
+    setBrowserOverlayOpen(false)
   }
 
   function syncBrowserNavState() {
@@ -568,7 +569,7 @@ export default function VerificationPage() {
   return (
     <div className={styles['verify-page']}>
       {/* Left Panel: PDF List */}
-      <aside className={styles['verify-left']}>
+      <aside className={styles['verify-left']} onMouseDownCapture={() => browserOverlayOpen && closeBrowserOverlay()}>
         <div className={styles['panel-header']}>
           <h2 className={styles['panel-title']}>Verification</h2>
           <button className={styles['start-btn']} onClick={handleStartOrCancel} disabled={pdfs.length === 0}>
@@ -831,13 +832,65 @@ export default function VerificationPage() {
                   <span className={styles['scholar-overlay-resizer-line']} />
                 </div>
                 <div className={styles['scholar-overlay-header']}>
-                  <span className={styles['scholar-overlay-title']}>{browserOverlayTitle}</span>
+                  <div className={styles['scholar-overlay-nav-actions']}>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
+                      onClick={goBrowserBack}
+                      disabled={!browserCanGoBack}
+                      title="Go back"
+                      aria-label="Go back"
+                    >
+                      <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M10.5 3.5L5.5 8l5 4.5" />
+                      </svg>
+                    </button>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
+                      onClick={goBrowserForward}
+                      disabled={!browserCanGoForward}
+                      title="Go forward"
+                      aria-label="Go forward"
+                    >
+                      <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M5.5 3.5L10.5 8l-5 4.5" />
+                      </svg>
+                    </button>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
+                      onClick={reloadBrowserView}
+                      title="Reload page"
+                      aria-label="Reload page"
+                    >
+                      <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M13 4.5v3h-3" />
+                        <path d="M12.4 7.5A5 5 0 103.8 11" />
+                      </svg>
+                    </button>
+                  </div>
                   <div className={styles['scholar-overlay-actions']}>
-                    <button className={styles['action-btn']} onClick={goBrowserBack} disabled={!browserCanGoBack} title="Go back">Back</button>
-                    <button className={styles['action-btn']} onClick={goBrowserForward} disabled={!browserCanGoForward} title="Go forward">Forward</button>
-                    <button className={styles['action-btn']} onClick={reloadBrowserView} title="Reload page">Reload</button>
-                    <button className={styles['action-btn']} onClick={() => openExternal(browserOverlayUrl)} title="Open in external browser">Open</button>
-                    <button className={styles['action-btn']} onClick={() => setBrowserOverlayOpen(false)} title="Close browser panel">Close</button>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
+                      onClick={() => openExternal(browserOverlayUrl)}
+                      title="Open in external browser"
+                      aria-label="Open in external browser"
+                    >
+                      <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M9 3.5h3.5V7" />
+                        <path d="M12.5 3.5L7 9" />
+                        <path d="M12 8.8V12a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1h3.2" />
+                      </svg>
+                    </button>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
+                      onClick={closeBrowserOverlay}
+                      title="Close browser panel"
+                      aria-label="Close browser panel"
+                    >
+                      <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M4.5 4.5l7 7" />
+                        <path d="M11.5 4.5l-7 7" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
                 <webview
@@ -854,7 +907,7 @@ export default function VerificationPage() {
       </section>
 
       {/* Right Panel: Source Detail */}
-      <aside className={styles['verify-right']}>
+      <aside className={styles['verify-right']} onMouseDownCapture={() => browserOverlayOpen && closeBrowserOverlay()}>
         <div className={styles['detail-body']}>
           {selectedSourceId ? (() => {
             const r = currentResult

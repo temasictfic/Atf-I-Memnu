@@ -239,18 +239,30 @@
   background: #fafaf9;
 }
 
-.scholar-overlay-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: #44403c;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+.scholar-overlay-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .scholar-overlay-actions {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.overlay-icon-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.overlay-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .scholar-overlay-webview {
