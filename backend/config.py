@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     kaynaklar_dir: str = ""
 
     # Search
-    search_timeout: int = 10
+    search_timeout: int = 20
     max_concurrent_apis: int = 5
     max_concurrent_sources_per_pdf: int = 3
 
