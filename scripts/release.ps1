@@ -133,6 +133,9 @@ try {
   Write-Host "Tag: $tagName"
   if ($SkipPush) {
     Write-Host "Push skipped (--SkipPush)."
+    Write-Host "Run these commands to trigger release workflow manually:"
+    Write-Host "  git push origin $branch"
+    Write-Host "  git push origin $tagName"
   } else {
     Write-Host "Pushed branch '$branch' and tag '$tagName' to origin."
     Write-Host "GitHub Actions release workflow should start from the new tag."
