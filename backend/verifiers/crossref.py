@@ -12,7 +12,7 @@ from services.search_settings import get_client_timeout
 
 CROSSREF_API = "https://api.crossref.org/works"
 HEADERS = {
-    "User-Agent": "AtfiMemnu/1.0 (Academic Source Verification; mailto:atfimemnu@example.com)"
+    "User-Agent": "AtfiMemnu/1.0 (Citation Search and Verification; mailto:atfimemnu@example.com)"
 }
 
 

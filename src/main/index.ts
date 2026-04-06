@@ -45,7 +45,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1000,
     minHeight: 700,
-    title: 'Atf-ı Memnu - Academic Source Verification',
+    title: 'Atf-ı Memnu - A citation search engine that looks for citations...',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
