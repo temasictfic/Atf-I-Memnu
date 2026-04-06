@@ -1,0 +1,35 @@
+{
+  "name": "atfi-memnu-app",
+  "version": "1.0.0",
+  "description": "Academic Source Verification App",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "build:backend": "powershell -ExecutionPolicy Bypass -File ./scripts/build-backend.ps1",
+    "pack": "npm run build:backend && npm run build && electron-builder --dir",
+    "dist:win": "npm run build:backend && npm run build && electron-builder --win",
+    "preview": "electron-vite preview",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zustand": "^5.0.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.2",
+    "autoprefixer": "^10.4.27",
+    "electron": "^41.1.1",
+    "electron-builder": "^26.8.2",
+    "electron-vite": "^5.0.0",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^6.0.2",
+    "vite": "^7.3.1"
+  }
+}
