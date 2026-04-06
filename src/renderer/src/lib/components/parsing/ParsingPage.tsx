@@ -672,6 +672,7 @@ export default function ParsingPage() {
         : null,
     [sources, selectedSourceId],
   );
+  const selectedSourceStatus = selectedSource?.status ?? null;
 
   const HANDLES = ["n", "s", "w", "e", "nw", "ne", "sw", "se"] as const;
 
@@ -824,54 +825,86 @@ export default function ParsingPage() {
           <>
             {/* Zoom toolbar */}
             <div className={styles["zoom-toolbar"]}>
-              <div className={styles["zoom-controls"]}>
+              <div className={styles["toolbar-group-left"]}>
                 <button
                   className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
-                  onClick={zoomFit}
-                  title="Fit to width"
+                  onClick={handleRevert}
+                  disabled={!canRevertCurrent}
+                  title="Undo"
                 >
-                  Fit
+                  &#x21B6; Undo
                 </button>
                 <button
-                  className={styles["zoom-btn"]}
-                  onClick={zoomOut}
-                  title="Zoom out"
+                  className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                  onClick={handleRevertToOriginal}
+                  disabled={!sources.length}
+                  title="Reset"
                 >
-                  -
+                  &#x21BA; Reset
                 </button>
-                <span className={styles["zoom-pct"]}>{zoomPercent}%</span>
-                <button
-                  className={styles["zoom-btn"]}
-                  onClick={zoomIn}
-                  title="Zoom in"
-                >
-                  +
-                </button>
-                <div className={styles["hints-trigger"]}>
-                  <span className={styles["hints-icon"]}>i</span>
-                  <div className={styles["hints-popup"]}>
-                    <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Left click</span>
-                      <span className={styles["hint-desc"]}>Select / Move</span>
-                    </div>
-                    <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Right click</span>
-                      <span className={styles["hint-desc"]}>Draw new</span>
-                    </div>
-                    <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Del</span>
-                      <span className={styles["hint-desc"]}>Remove source</span>
-                    </div>
-                    <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Ctrl + Z</span>
-                      <span className={styles["hint-desc"]}>Undo</span>
-                    </div>
-                    <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Ctrl + Scroll</span>
-                      <span className={styles["hint-desc"]}>Zoom</span>
+              </div>
+
+              <div className={styles["toolbar-group-center"]}>
+                <div className={styles["zoom-controls"]}>
+                  <button
+                    className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                    onClick={zoomFit}
+                    title="Fit to width"
+                  >
+                    Fit
+                  </button>
+                  <button
+                    className={styles["zoom-btn"]}
+                    onClick={zoomOut}
+                    title="Zoom out"
+                  >
+                    -
+                  </button>
+                  <span className={styles["zoom-pct"]}>{zoomPercent}%</span>
+                  <button
+                    className={styles["zoom-btn"]}
+                    onClick={zoomIn}
+                    title="Zoom in"
+                  >
+                    +
+                  </button>
+                  <div className={styles["hints-trigger"]}>
+                    <span className={styles["hints-icon"]}>i</span>
+                    <div className={styles["hints-popup"]}>
+                      <div className={styles["hint-row"]}>
+                        <span className={styles["hint-keys"]}>Left click</span>
+                        <span className={styles["hint-desc"]}>Select / Move</span>
+                      </div>
+                      <div className={styles["hint-row"]}>
+                        <span className={styles["hint-keys"]}>Right click</span>
+                        <span className={styles["hint-desc"]}>Draw new</span>
+                      </div>
+                      <div className={styles["hint-row"]}>
+                        <span className={styles["hint-keys"]}>Del</span>
+                        <span className={styles["hint-desc"]}>Remove source</span>
+                      </div>
+                      <div className={styles["hint-row"]}>
+                        <span className={styles["hint-keys"]}>Ctrl + Z</span>
+                        <span className={styles["hint-desc"]}>Undo</span>
+                      </div>
+                      <div className={styles["hint-row"]}>
+                        <span className={styles["hint-keys"]}>Ctrl + Scroll</span>
+                        <span className={styles["hint-desc"]}>Zoom</span>
+                      </div>
                     </div>
                   </div>
                 </div>
+              </div>
+
+              <div className={styles["toolbar-group-right"]}>
+                <span className={styles["count-badge"]}>{sources.length} sources</span>
+                <button
+                  className={`${styles["toolbar-approve-btn"]} ${isApproved ? styles["toolbar-approved"] : ""}`}
+                  onClick={handleApprove}
+                  disabled={!sources.length}
+                >
+                  {isApproved ? "Approved" : "Approve"}
+                </button>
               </div>
             </div>
 
@@ -1009,50 +1042,25 @@ export default function ParsingPage() {
         {selectedPdf ? (
           <>
             <div className={styles["panel-header"]}>
-              <h2 className={styles["panel-title"]}>Sources</h2>
-              <span className={styles["count-badge"]}>
-                {sources.length} detected
-              </span>
+              <div className={styles["source-detail-heading"]}>
+                <h2 className={styles["panel-title"]}>Source Detail</h2>
+                {selectedSourceStatus && (
+                  <div className={styles["source-status-tags"]}>
+                    <span
+                      className={`${styles["source-status-tag"]} ${styles["source-status-tag-active"]}`}
+                    >
+                      {selectedSourceStatus}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className={styles["actions-content"]}>
-              <div className={styles["action-buttons"]}>
-                <button
-                  className={`${styles["btn-action"]} ${isApproved ? styles["btn-approved"] : styles["btn-approve"]}`}
-                  onClick={handleApprove}
-                  disabled={!sources.length}
-                >
-                  {isApproved ? (
-                    <>
-                      <span>&#x2713;</span> Approved
-                    </>
-                  ) : (
-                    <>
-                      <span>&#x2713;</span> Approve Pdf
-                    </>
-                  )}
-                </button>
-                <button
-                  className={`${styles["btn-action"]} ${styles["btn-revert"]}`}
-                  onClick={handleRevert}
-                  disabled={!canRevertCurrent}
-                >
-                  &#x21B6; Undo
-                </button>
-                <button
-                  className={`${styles["btn-action"]} ${styles["btn-revert-all"]}`}
-                  onClick={handleRevertToOriginal}
-                >
-                  &#x21BA; Reset to Original
-                </button>
-              </div>
-
               {selectedSource && (
-                <>
-                  <div className={styles["detail-separator"]} />
-                  <h3 className={styles["section-title"]}>Source Detail</h3>
-                  <div className={styles["source-detail"]}>
-                    <div className={styles["detail-row"]}>
+                <div className={styles["source-detail"]}>
+                  <div className={styles["detail-meta-row"]}>
+                    <div className={styles["detail-meta-group"]}>
                       <span className={styles["detail-label"]}>Ref #</span>
                       <span className={styles["detail-value"]}>
                         {selectedSource.ref_number != null
@@ -1060,36 +1068,33 @@ export default function ParsingPage() {
                           : "-"}
                       </span>
                     </div>
-                    <div className={styles["detail-row"]}>
+                    <div className={styles["detail-meta-group"]}>
                       <span className={styles["detail-label"]}>Page</span>
                       <span className={styles["detail-value"]}>
                         {selectedSource.bbox.page + 1}
                       </span>
                     </div>
-                    <div className={styles["detail-row"]}>
-                      <span className={styles["detail-label"]}>Status</span>
-                      <span
-                        className={`${styles["detail-value"]} ${styles["detail-status"]}`}
-                      >
-                        {selectedSource.status}
-                      </span>
-                    </div>
-                    <div className={styles["detail-text-section"]}>
-                      <span className={styles["detail-label"]}>Text</span>
-                      <div className={styles["detail-text-display"]}>
-                        {selectedSource.text || "(no text detected)"}
-                      </div>
-                    </div>
-                    <div className={styles["detail-actions"]}>
-                      <button
-                        className={`${styles["btn-action"]} ${styles["btn-detail-remove"]}`}
-                        onClick={() => handleRemoveSource(selectedSource.id)}
-                      >
-                        &#x2715; Remove Source
-                      </button>
-                    </div>
+                    <button
+                      className={styles["detail-remove-icon"]}
+                      onClick={() => handleRemoveSource(selectedSource.id)}
+                      title="Remove source"
+                      aria-label="Remove source"
+                    >
+                      &#x2715;
+                    </button>
                   </div>
-                </>
+                  <div className={styles["detail-text-display"]}>
+                    {selectedSource.text || "(no text detected)"}
+                  </div>
+                </div>
+              )}
+
+              {!selectedSource && (
+                <div className={styles["actions-empty"]}>
+                  <p className={styles["actions-empty-text"]}>
+                    Select a source box to see details
+                  </p>
+                </div>
               )}
             </div>
           </>

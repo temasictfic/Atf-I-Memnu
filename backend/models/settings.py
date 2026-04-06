@@ -29,7 +29,7 @@ class AppSettings(BaseModel):
                 DatabaseConfig(id="semantic_scholar", name="Semantic Scholar", tier=1, type="api"),
                 DatabaseConfig(id="europe_pmc", name="Europe PMC", tier=1, type="api"),
                 DatabaseConfig(id="trdizin", name="TRDizin", tier=1, type="api"),
-                DatabaseConfig(id="duckduckgo", name="DuckDuckGo", tier=2, type="api"),
+                DatabaseConfig(id="duckduckgo", name="DuckDuckGo", enabled=False, tier=2, type="api"),
             ],
             search_timeout=app_config.search_timeout,
             max_concurrent_apis=app_config.max_concurrent_apis,

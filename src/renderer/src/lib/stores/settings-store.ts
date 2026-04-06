@@ -9,7 +9,7 @@ const defaultDatabases: DatabaseConfig[] = [
   { id: 'semantic_scholar', name: 'Semantic Scholar', enabled: true, tier: 1, type: 'api' },
   { id: 'europe_pmc', name: 'Europe PMC', enabled: true, tier: 1, type: 'api' },
   { id: 'trdizin', name: 'TRDizin', enabled: true, tier: 1, type: 'api' },
-  { id: 'duckduckgo', name: 'DuckDuckGo', enabled: true, tier: 2, type: 'api' },
+  { id: 'duckduckgo', name: 'DuckDuckGo', enabled: false, tier: 2, type: 'api' },
 ]
 
 interface SettingsState {
