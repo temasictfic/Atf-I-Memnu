@@ -1,0 +1,58 @@
+import { contextBridge, ipcRenderer } from 'electron'
+
+interface UpdateAvailablePayload {
+  version: string
+  releaseNotes?: unknown
+}
+
+interface UpdateProgressPayload {
+  percent: number
+}
+
+const electronAPI = {
+  selectDirectory: (): Promise<string | null> => {
+    return ipcRenderer.invoke('dialog:selectDirectory')
+  },
+  selectPdfs: (defaultPath?: string): Promise<string[]> => {
+    return ipcRenderer.invoke('dialog:selectPdfs', defaultPath)
+  },
+  openExternal: (url: string): Promise<void> => {
+    return ipcRenderer.invoke('shell:openExternal', url)
+  },
+  openCacheFolder: (): Promise<{ ok: boolean; path: string; error: string | null }> => {
+    return ipcRenderer.invoke('shell:openCacheFolder')
+  },
+  getBackendPort: (): Promise<number> => {
+    return ipcRenderer.invoke('backend:getPort')
+  },
+  onUpdateAvailable: (cb: (info: UpdateAvailablePayload) => void): (() => void) => {
+    const listener = (_event: unknown, info: UpdateAvailablePayload) => cb(info)
+    ipcRenderer.on('update:available', listener)
+    return () => ipcRenderer.removeListener('update:available', listener)
+  },
+  onUpdateProgress: (cb: (progress: UpdateProgressPayload) => void): (() => void) => {
+    const listener = (_event: unknown, progress: UpdateProgressPayload) => cb(progress)
+    ipcRenderer.on('update:progress', listener)
+    return () => ipcRenderer.removeListener('update:progress', listener)
+  },
+  onUpdateDownloaded: (cb: () => void): (() => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('update:downloaded', listener)
+    return () => ipcRenderer.removeListener('update:downloaded', listener)
+  },
+  onUpdateError: (cb: (message: string) => void): (() => void) => {
+    const listener = (_event: unknown, message: string) => cb(message)
+    ipcRenderer.on('update:error', listener)
+    return () => ipcRenderer.removeListener('update:error', listener)
+  },
+  downloadUpdate: (): void => {
+    ipcRenderer.send('update:download')
+  },
+  installUpdate: (): void => {
+    ipcRenderer.send('update:install')
+  }
+}
+
+contextBridge.exposeInMainWorld('electronAPI', electronAPI)
+
+export type ElectronAPI = typeof electronAPI
