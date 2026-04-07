@@ -79,13 +79,5 @@ npm run build
 
 This uses `electron-builder` to package the React frontend, the Electron main process, and the bundled Python backend into a standalone windows executable.
 
-## Download Page (GitHub Pages)
-
-This repository now includes a GitHub Pages download site in `docs/` that automatically fetches the **latest release** and shows all release assets with direct download buttons.
-
-- Expected URL: `https://temasictfic.github.io/Atf-I-Memnu/`
-- Source files: `docs/index.html`, `docs/styles.css`, `docs/app.js`
-- Deployment workflow: `.github/workflows/pages.yml`
-
 ## License
 
