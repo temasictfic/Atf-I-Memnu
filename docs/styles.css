@@ -118,6 +118,34 @@ h1 {
   line-height: 1.55;
 }
 
+.download-guide {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.guide-card {
+  border: 1px solid rgba(122, 69, 7, 0.16);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.guide-card h3 {
+  margin: 0;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  color: #5b3311;
+  font-size: 15px;
+}
+
+.guide-card p {
+  margin: 6px 0 0;
+  color: #7f4c1e;
+  line-height: 1.45;
+  font-size: 13px;
+}
+
 .meta-row {
   margin-top: 16px;
   display: flex;
@@ -209,6 +237,30 @@ h1 {
   color: #4a290c;
 }
 
+.asset-kind {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-radius: 999px;
+  padding: 3px 8px;
+  vertical-align: middle;
+}
+
+.asset-kind-setup {
+  color: #5d350d;
+  background: rgba(251, 191, 36, 0.25);
+  border: 1px solid rgba(180, 83, 9, 0.22);
+}
+
+.asset-kind-portable {
+  color: #7a4507;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(180, 83, 9, 0.18);
+}
+
 .asset-meta {
   margin-top: 2px;
   font-size: 12px;
@@ -238,6 +290,12 @@ h1 {
 .notes-wrap {
   border-top: 1px solid rgba(122, 69, 7, 0.14);
   padding-top: 14px;
+}
+
+.asset-filter-info {
+  margin: 4px 0 0;
+  color: #7f4c1e;
+  font-size: 12px;
 }
 
 .notes {
@@ -291,6 +349,10 @@ h1 {
   .release-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .download-guide {
+    grid-template-columns: 1fr;
   }
 
   .asset {

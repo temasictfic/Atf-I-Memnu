@@ -3,6 +3,8 @@ const fallbackRepo = {
   repo: "Atf-I-Memnu"
 };
 
+const technicalAssetPatterns = [/\.blockmap$/i, /^latest.*\.ya?ml$/i];
+
 function inferRepoFromLocation() {
   const host = window.location.hostname;
   const pathParts = window.location.pathname.split("/").filter(Boolean);
@@ -50,14 +52,39 @@ function formatDate(value) {
   });
 }
 
+function isTechnicalAsset(name) {
+  const safeName = name || "";
+  return technicalAssetPatterns.some((pattern) => pattern.test(safeName));
+}
+
+function classifyAssetKind(name) {
+  const safeName = (name || "").toLowerCase();
+  if (safeName.includes("setup")) {
+    return "setup";
+  }
+  if (safeName.includes("portable")) {
+    return "portable";
+  }
+  return "other";
+}
+
 function createAssetElement(asset) {
   const row = document.createElement("article");
   row.className = "asset";
+
+  const kind = classifyAssetKind(asset.name);
 
   const info = document.createElement("div");
   const name = document.createElement("div");
   name.className = "asset-name";
   name.textContent = asset.name || "Unnamed asset";
+
+  if (kind !== "other") {
+    const badge = document.createElement("span");
+    badge.className = `asset-kind asset-kind-${kind}`;
+    badge.textContent = kind === "setup" ? "Setup" : "Portable";
+    name.append(" ", badge);
+  }
 
   const meta = document.createElement("div");
   meta.className = "asset-meta";
@@ -70,7 +97,13 @@ function createAssetElement(asset) {
   action.href = asset.browser_download_url;
   action.target = "_blank";
   action.rel = "noreferrer";
-  action.textContent = "Download";
+  if (kind === "setup") {
+    action.textContent = "Download Setup";
+  } else if (kind === "portable") {
+    action.textContent = "Download Portable";
+  } else {
+    action.textContent = "Download";
+  }
 
   row.append(info, action);
   return row;
@@ -84,6 +117,7 @@ async function loadLatestRelease() {
   const releaseRoot = document.getElementById("releaseRoot");
   const repoTag = document.getElementById("repoTag");
   const allReleasesLink = document.getElementById("allReleasesLink");
+  const assetFilterInfo = document.getElementById("assetFilterInfo");
 
   repoTag.textContent = `Repository: ${repoInfo.owner}/${repoInfo.repo}`;
   allReleasesLink.href = `https://github.com/${repoInfo.owner}/${repoInfo.repo}/releases`;
@@ -101,6 +135,8 @@ async function loadLatestRelease() {
 
     const release = await response.json();
     const assets = Array.isArray(release.assets) ? release.assets : [];
+    const visibleAssets = assets.filter((asset) => !isTechnicalAsset(asset.name));
+    const hiddenAssetCount = assets.length - visibleAssets.length;
 
     document.getElementById("releaseTitle").textContent = release.name || release.tag_name || "Latest release";
     document.getElementById("releaseDate").textContent = `Published ${formatDate(release.published_at)}`;
@@ -114,13 +150,32 @@ async function loadLatestRelease() {
     const assetList = document.getElementById("assetList");
     assetList.innerHTML = "";
 
-    if (assets.length === 0) {
+    if (hiddenAssetCount > 0) {
+      assetFilterInfo.hidden = false;
+      assetFilterInfo.textContent = `${hiddenAssetCount} technical updater file(s) hidden (latest*.yml / *.blockmap).`;
+    } else {
+      assetFilterInfo.hidden = true;
+      assetFilterInfo.textContent = "";
+    }
+
+    if (visibleAssets.length === 0) {
       const empty = document.createElement("p");
       empty.className = "asset-meta";
-      empty.textContent = "No binary assets were attached to this release.";
+      empty.textContent = "No downloadable binary assets were attached to this release.";
       assetList.append(empty);
     } else {
-      const sortedAssets = [...assets].sort((a, b) => (b.download_count ?? 0) - (a.download_count ?? 0));
+      const sortedAssets = [...visibleAssets].sort((a, b) => {
+        const rank = {
+          setup: 0,
+          portable: 1,
+          other: 2
+        };
+        const rankDiff = rank[classifyAssetKind(a.name)] - rank[classifyAssetKind(b.name)];
+        if (rankDiff !== 0) {
+          return rankDiff;
+        }
+        return (b.download_count ?? 0) - (a.download_count ?? 0);
+      });
       sortedAssets.forEach((asset) => {
         assetList.append(createAssetElement(asset));
       });
