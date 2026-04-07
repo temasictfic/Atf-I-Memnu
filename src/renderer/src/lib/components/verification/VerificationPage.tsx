@@ -277,6 +277,14 @@ export default function VerificationPage() {
     }
   }
 
+  async function handleVerifyNonFoundPdf(pdfId: string) {
+    if (isPdfVerifying(pdfId)) return
+    await loadSourcesFn(pdfId)
+    const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+    useVerificationStore.getState().initSourceVerifyState(pdfId, src)
+    await useVerificationStore.getState().startVerificationNonFoundForPdf(pdfId)
+  }
+
   async function handleReverifyOrCancelSource() {
     if (!effectivePdfId || !selectedSourceId) return
     if (currentResult?.status === 'in_progress') {
@@ -612,6 +620,16 @@ export default function VerificationPage() {
               const summary = summaries[pdf.id]
               const pdfVerifying = isPdfVerifying(pdf.id)
               const hasPdfResults = Object.keys(resultsByPdf[pdf.id] ?? {}).length > 0
+              const sourceIds = (sourceOrder[pdf.id] ?? []).length > 0
+                ? (sourceOrder[pdf.id] ?? [])
+                : Object.keys(resultsByPdf[pdf.id] ?? {})
+              const canVerifyNonFound = !pdfVerifying && (
+                sourceIds.length === 0
+                || sourceIds.some(sourceId => {
+                  if (enabledSources[sourceId] === false) return false
+                  return resultsByPdf[pdf.id]?.[sourceId]?.status !== 'green'
+                })
+              )
               return (
                 <div
                   key={pdf.id}
@@ -639,6 +657,12 @@ export default function VerificationPage() {
                       <span className={`${styles['vc']} ${styles['vc-yellow']}`}>{summary.yellow}</span>
                       <span className={`${styles['vc']} ${styles['vc-red']}`}>{summary.red}</span>
                       <span className={`${styles['vc']} ${styles['vc-black']}`}>{summary.black ?? 0}</span>
+                      <button
+                        className={`${styles['vi-verify-btn']} ${styles['vi-verify-nonfound-btn']} ${styles['vi-verify-nonfound-inline']}`}
+                        onClick={(e) => { e.stopPropagation(); handleVerifyNonFoundPdf(pdf.id) }}
+                        title="Verify only non-Found sources"
+                        disabled={!canVerifyNonFound}
+                      >NF</button>
                     </div>
                   )}
                 </div>
