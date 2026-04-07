@@ -14,11 +14,23 @@ function Invoke-Git {
     [string[]]$Args
   )
 
-  $output = & git @Args 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    throw "git $($Args -join ' ') failed.`n$output"
+  # Some git subcommands write progress/info to stderr even on success.
+  # Temporarily relaxing ErrorActionPreference avoids false failures.
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $output = & git @Args 2>&1
+    $exitCode = $LASTEXITCODE
   }
-  return @($output)
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  $outputText = @($output | ForEach-Object { [string]$_ })
+  if ($exitCode -ne 0) {
+    throw "git $($Args -join ' ') failed.`n$($outputText -join "`n")"
+  }
+  return $outputText
 }
 
 function Invoke-NpmVersion {
@@ -27,11 +39,21 @@ function Invoke-NpmVersion {
     [string]$RequestedVersion
   )
 
-  $output = & npm version $RequestedVersion --no-git-tag-version 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    throw "npm version $RequestedVersion failed.`n$output"
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $output = & npm version $RequestedVersion --no-git-tag-version 2>&1
+    $exitCode = $LASTEXITCODE
   }
-  return @($output)
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  $outputText = @($output | ForEach-Object { [string]$_ })
+  if ($exitCode -ne 0) {
+    throw "npm version $RequestedVersion failed.`n$($outputText -join "`n")"
+  }
+  return $outputText
 }
 
 function Get-NonEmptyLines {
