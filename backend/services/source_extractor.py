@@ -184,6 +184,12 @@ def _find_author_boundary_ieee(text: str) -> int:
     Authors have initials first (G. Liu), and the transition to title
     is marked by a quoted string.
     """
+    # Book/editor references often mark the transition with "Ed.," or "Eds.,"
+    # and do not quote titles (e.g., "A. Author, Eds., Book Title...").
+    editor_boundary = re.search(r",\s*(?:Ed\.|Eds\.|Editor|Editors),\s+", text, re.IGNORECASE)
+    if editor_boundary:
+        return editor_boundary.end()
+
     # Look for the start of a quoted title
     quote_match = re.search(r'[,\s]+["\u201C]', text)
     if quote_match:
@@ -215,12 +221,13 @@ def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]
     Returns (year, start_pos, end_pos) in the original text.
     """
     # Rule 5 (Definite): Parenthesized year takes absolute priority.
-    # If found, ignore all other 4-digit numbers.
-    paren_year = re.search(r"\((\d{4})[a-z]?\)", text)
-    if paren_year:
-        year_val = int(paren_year.group(1))
+    # Also handle variants like: (2013, 22 Aralik) or (2013, Dec 22).
+    # We return the full parenthesized span so title extraction starts AFTER it.
+    paren_year_with_tail = re.search(r"\((\d{4})[a-z]?(?:\s*,[^)]*)?\)", text, re.IGNORECASE)
+    if paren_year_with_tail:
+        year_val = int(paren_year_with_tail.group(1))
         if 1900 <= year_val <= 2099:
-            return year_val, paren_year.start(), paren_year.end()
+            return year_val, paren_year_with_tail.start(), paren_year_with_tail.end()
 
     # Rule 3 (Definite): Year after &, and, ve, et al.
     conj_year = re.search(
@@ -526,6 +533,9 @@ def _parse_ieee_authors(text: str) -> list[str]:
     while i < len(parts):
         part = parts[i].strip()
         if not part:
+            i += 1
+            continue
+        if re.fullmatch(r"(?i)(?:ed\.?|eds\.?|editor|editors)", part):
             i += 1
             continue
         # IEEE author: "G. Liu" or "K. Y. Lee" — initials + last name

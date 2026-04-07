@@ -1,5 +1,6 @@
 """Crossref API verifier - DOI lookup and bibliographic search."""
 
+import re
 from typing import Any
 from urllib.parse import quote, quote_plus
 
@@ -55,24 +56,31 @@ async def search(source: ParsedSource) -> MatchResult | None:
     #    Title-only queries produce better results; author/journal/year filters
     #    help Crossref disambiguate without polluting the primary search.
     query = source.title or ""
-    if not query:
+    bibliographic_query = (source.raw_text or "").strip() or query
+    if not bibliographic_query:
         return None
 
     params: dict[str, str] = {
-        "query.bibliographic": query,
+        "query.bibliographic": bibliographic_query,
         "rows": "5",
     }
+    if query:
+        params["query.title"] = query
 
-    # Add author disambiguation: last names of the first two authors.
-    if source.authors:
-        last_names = [a.split(",")[0].strip() for a in source.authors[:2]]
-        author_query = " ".join(n for n in last_names if n)
-        if author_query:
-            params["query.author"] = author_query
+    # Add author disambiguation only when parsing is strong and citation
+    # doesn't look editor-led (Ed./Eds.), where Crossref author filtering
+    # can suppress the correct book-level record.
+    author_query = _build_author_query(source.authors)
+    if (
+        author_query
+        and source.parse_confidence >= 0.7
+        and not _looks_like_editor_reference(source.raw_text)
+    ):
+        params["query.author"] = author_query
 
     # Add container-title to separate editions published by different houses
     # under slightly different encyclopedia/journal titles.
-    if source.journal:
+    if source.journal and _is_specific_container_title(source.journal):
         params["query.container-title"] = source.journal
 
     # Year-range filter (±1 year) excludes papers from other editions whose
@@ -85,14 +93,43 @@ async def search(source: ParsedSource) -> MatchResult | None:
 
     try:
         async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            best = await _fetch_best_match(session, params, source)
+            variants: list[dict[str, str]] = [params]
+            if "query.container-title" in params:
+                variants.append({k: v for k, v in params.items() if k != "query.container-title"})
+            if "query.author" in params:
+                variants.append({k: v for k, v in params.items() if k != "query.author"})
+            if "filter" in params:
+                variants.append({k: v for k, v in params.items() if k != "filter"})
+            if "query.author" in params and "filter" in params:
+                variants.append({
+                    k: v for k, v in params.items()
+                    if k not in {"query.author", "filter"}
+                })
+            if "query.container-title" in params and "filter" in params:
+                variants.append({
+                    k: v for k, v in params.items()
+                    if k not in {"query.container-title", "filter"}
+                })
+            if "query.container-title" in params and "query.author" in params:
+                variants.append({
+                    k: v for k, v in params.items()
+                    if k not in {"query.container-title", "query.author"}
+                })
+            if (
+                "query.container-title" in params
+                and "query.author" in params
+                and "filter" in params
+            ):
+                variants.append({
+                    k: v for k, v in params.items()
+                    if k not in {"query.container-title", "query.author", "filter"}
+                })
 
-            # If the year filter produced no usable results (e.g. the parsed
-            # year was wrong), retry without it so we don't silently miss the
-            # correct paper.
-            if best is None and "filter" in params:
-                params_no_filter = {k: v for k, v in params.items() if k != "filter"}
-                best = await _fetch_best_match(session, params_no_filter, source)
+            best: MatchResult | None = None
+            for variant in variants:
+                result = await _fetch_best_match(session, variant, source)
+                if result and (best is None or result.score > best.score):
+                    best = result
 
             return best
     except Exception:
@@ -157,3 +194,80 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
     }
 
     return score_match(source, candidate)
+
+
+def _build_author_query(authors: list[str]) -> str:
+    """Build a Crossref-friendly author query from parsed authors."""
+    if not authors:
+        return ""
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for author in authors:
+        family = _extract_family_name(author)
+        if not family:
+            continue
+        key = family.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(family)
+        if len(names) >= 2:
+            break
+
+    return " ".join(names)
+
+
+def _extract_family_name(author: str) -> str:
+    """Extract a likely family name from an author token."""
+    raw = (author or "").strip().strip(",.")
+    if not raw:
+        return ""
+    if raw.lower() in {"ed", "eds", "editor", "editors"}:
+        return ""
+
+    if "," in raw:
+        candidate = raw.split(",", 1)[0].strip()
+    else:
+        # Initials-first style: "A. Bajaj" -> "Bajaj"
+        initials_first = re.match(r"^(?:[A-Z]\.?(?:\s+|$))+([A-Z][A-Za-z'\-]+)$", raw)
+        if initials_first:
+            candidate = initials_first.group(1).strip()
+        else:
+            parts = [p for p in re.split(r"\s+", raw) if p]
+            candidate = parts[-1] if parts else ""
+
+    candidate = re.sub(r"[^A-Za-z\-']", "", candidate).strip("-'")
+    if len(candidate) < 2:
+        return ""
+    return candidate
+
+
+def _looks_like_editor_reference(raw_text: str) -> bool:
+    """Detect book/editor citations where author filtering is unreliable."""
+    text = (raw_text or "").lower()
+    return bool(re.search(r"\b(?:ed\.|eds\.|editor|editors)\b", text))
+
+
+def _is_specific_container_title(journal: str) -> bool:
+    """Return False for short/generic container titles that over-filter results."""
+    value = (journal or "").strip()
+    if not value:
+        return False
+
+    normalized = re.sub(r"[^a-z]", "", value.lower())
+    if len(normalized) < 6:
+        return False
+
+    generic = {
+        "proc",
+        "proceedings",
+        "conference",
+        "conf",
+        "journal",
+        "book",
+    }
+    if normalized in generic:
+        return False
+
+    return True

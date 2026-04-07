@@ -5,7 +5,7 @@ import type {
 } from '../api/types'
 import { api } from '../api/rest-client'
 import { wsClient } from '../api/ws-client'
-import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../utils/reference-text'
+import { sanitizeReferenceText } from '../utils/reference-text'
 import { usePdfStore } from './pdf-store'
 
 type CardSortKey = 'default' | 'status' | 'ref' | 'enabled'
@@ -35,6 +35,7 @@ interface VerificationState {
   togglePdfSort: (key: PdfSortKey) => void
   initSourceVerifyState: (pdfId: string, sources: SourceRectangle[]) => void
   startVerification: (pdfIds: string[]) => Promise<void>
+  startVerificationNonFoundForPdf: (pdfId: string) => Promise<void>
   reverifySource: (pdfId: string, sourceId: string, text?: string) => Promise<void>
   reverifyPdf: (pdfId: string) => Promise<void>
   overrideStatus: (pdfId: string, sourceId: string, status: 'green' | 'yellow' | 'red' | 'black') => Promise<void>
@@ -425,7 +426,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const { verifyTexts, enabledSources, sourceOrder } = get()
       const texts: Record<string, string> = {}
       for (const [sourceId, text] of Object.entries(verifyTexts)) {
-        texts[sourceId] = sanitizeReferenceTextForSearch(text)
+        texts[sourceId] = sanitizeReferenceText(text)
       }
       const excludedIds = Object.entries(enabledSources)
         .filter(([, enabled]) => !enabled)
@@ -485,6 +486,88 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
     }
   },
 
+  startVerificationNonFoundForPdf: async (pdfId) => {
+    try {
+      const { verifyTexts, enabledSources, sourceOrder, resultsByPdf } = get()
+      const texts: Record<string, string> = {}
+      for (const [sourceId, text] of Object.entries(verifyTexts)) {
+        texts[sourceId] = sanitizeReferenceText(text)
+      }
+
+      const orderedIds = sourceOrder[pdfId] ?? []
+      const knownResultIds = Object.keys(resultsByPdf[pdfId] ?? {})
+      const sourceIds = orderedIds.length > 0
+        ? orderedIds
+        : knownResultIds
+
+      if (sourceIds.length === 0) return
+
+      const includeIds = sourceIds.filter(sourceId => {
+        if (enabledSources[sourceId] === false) return false
+        const result = resultsByPdf[pdfId]?.[sourceId]
+        return result?.status !== 'green'
+      })
+
+      if (includeIds.length === 0) return
+
+      const includeSet = new Set(includeIds)
+      const excludedIds = sourceIds.filter(sourceId => !includeSet.has(sourceId))
+
+      // Initialize verify log batch for this targeted run.
+      initVerifyBatch(includeIds.length, 1)
+
+      set(state => {
+        const pdfResults = { ...(state.resultsByPdf[pdfId] ?? {}) }
+        const sourceProgress = { ...state.sourceProgress }
+
+        for (const sourceId of includeIds) {
+          pdfResults[sourceId] = {
+            source_id: sourceId,
+            status: 'in_progress' as VerifyStatus,
+            all_results: [],
+            databases_searched: [],
+          }
+          sourceProgress[sourceId] = { currentDb: null, checkedDbs: [] }
+        }
+
+        let green = 0, yellow = 0, red = 0, black = 0, inProgress = 0
+        for (const r of Object.values(pdfResults)) {
+          if (r.status === 'green') green++
+          else if (r.status === 'yellow') yellow++
+          else if (r.status === 'red') red++
+          else if (r.status === 'black') black++
+          else if (r.status === 'in_progress') inProgress++
+        }
+
+        return {
+          resultsByPdf: {
+            ...state.resultsByPdf,
+            [pdfId]: pdfResults,
+          },
+          sourceProgress,
+          summaries: {
+            ...state.summaries,
+            [pdfId]: {
+              pdf_id: pdfId,
+              green,
+              yellow,
+              red,
+              black,
+              in_progress: inProgress,
+              total: Object.keys(pdfResults).length,
+              completed: false,
+            },
+          },
+        }
+      })
+
+      const response = await api.verifyBatch([pdfId], texts, excludedIds)
+      startPolling([pdfId], response.job_id)
+    } catch (e) {
+      console.error('Failed to start non-found PDF verification:', e)
+    }
+  },
+
   reverifySource: async (pdfId, sourceId, text) => {
     try {
       // Init a mini batch for single verify logging
@@ -508,7 +591,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           [sourceId]: { currentDb: null, checkedDbs: [] },
         },
       }))
-      await api.verifySource(pdfId, sourceId, sanitizeReferenceTextForSearch(text ?? ''))
+      await api.verifySource(pdfId, sourceId, sanitizeReferenceText(text ?? ''))
     } catch (e) {
       console.error('Failed to verify source:', e)
     }
