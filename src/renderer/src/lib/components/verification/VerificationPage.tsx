@@ -72,6 +72,9 @@ function buildDbSearchUrl(db: string, text: string): string {
 
 const statusOrder: Record<string, number> = { green: 0, yellow: 1, red: 2, black: 3, in_progress: 4, pending: 5 }
 type CardSortMode = 'default' | 'status' | 'ref' | 'enabled'
+const MIN_BROWSER_ZOOM = 0.5
+const MAX_BROWSER_ZOOM = 3
+const BROWSER_ZOOM_STEP = 1.1
 
 export default function VerificationPage() {
   const verifyCenterRef = useRef<HTMLElement | null>(null)
@@ -313,11 +316,14 @@ export default function VerificationPage() {
   const [browserOverlayOpen, setBrowserOverlayOpen] = useState(false)
   const [browserOverlayUrl, setBrowserOverlayUrl] = useState('https://www.google.com/')
   const [browserOverlayHeight, setBrowserOverlayHeight] = useState(360)
+  const browserOverlayRef = useRef<HTMLDivElement | null>(null)
   const [overlayResizing, setOverlayResizing] = useState(false)
   const overlayResizeStartRef = useRef<{ y: number; height: number } | null>(null)
   const browserWebviewRef = useRef<any>(null)
   const [browserCanGoBack, setBrowserCanGoBack] = useState(false)
   const [browserCanGoForward, setBrowserCanGoForward] = useState(false)
+  const [browserZoomFactor, setBrowserZoomFactor] = useState(1)
+  const browserZoomFactorRef = useRef(1)
   const preOverlaySortRef = useRef<{ key: CardSortMode; asc: boolean } | null>(null)
 
   const selectedSearchText = useMemo(() => {
@@ -462,6 +468,63 @@ export default function VerificationPage() {
     }
   }
 
+  const clampBrowserZoom = useCallback((nextZoom: number): number => {
+    return Math.min(MAX_BROWSER_ZOOM, Math.max(MIN_BROWSER_ZOOM, nextZoom))
+  }, [])
+
+  const syncBrowserZoomState = useCallback(() => {
+    const view = browserWebviewRef.current
+    if (!view) {
+      browserZoomFactorRef.current = 1
+      setBrowserZoomFactor(1)
+      return
+    }
+    try {
+      const maybeZoom = view.getZoomFactor?.()
+      if (typeof maybeZoom === 'number') {
+        const clamped = clampBrowserZoom(maybeZoom)
+        browserZoomFactorRef.current = clamped
+        setBrowserZoomFactor(clamped)
+        return
+      }
+      if (maybeZoom && typeof maybeZoom.then === 'function') {
+        void maybeZoom
+          .then((zoom: number) => {
+            const clamped = clampBrowserZoom(zoom)
+            browserZoomFactorRef.current = clamped
+            setBrowserZoomFactor(clamped)
+          })
+          .catch(() => {})
+      }
+    } catch {
+      // ignore webview zoom state errors
+    }
+  }, [clampBrowserZoom])
+
+  const applyBrowserZoom = useCallback((nextZoom: number) => {
+    const clamped = clampBrowserZoom(nextZoom)
+    const view = browserWebviewRef.current
+    try {
+      view?.setZoomFactor?.(clamped)
+    } catch {
+      // ignore webview zoom errors
+    }
+    browserZoomFactorRef.current = clamped
+    setBrowserZoomFactor(clamped)
+  }, [clampBrowserZoom])
+
+  const zoomBrowserIn = useCallback(() => {
+    applyBrowserZoom(browserZoomFactorRef.current * BROWSER_ZOOM_STEP)
+  }, [applyBrowserZoom])
+
+  const zoomBrowserOut = useCallback(() => {
+    applyBrowserZoom(browserZoomFactorRef.current / BROWSER_ZOOM_STEP)
+  }, [applyBrowserZoom])
+
+  const resetBrowserZoom = useCallback(() => {
+    applyBrowserZoom(1)
+  }, [applyBrowserZoom])
+
   function goBrowserBack() {
     const view = browserWebviewRef.current
     if (!view) return
@@ -532,27 +595,81 @@ export default function VerificationPage() {
     if (!browserOverlayOpen) {
       setBrowserCanGoBack(false)
       setBrowserCanGoForward(false)
+      browserZoomFactorRef.current = 1
+      setBrowserZoomFactor(1)
       return
     }
 
     const view = browserWebviewRef.current
     if (!view) return
 
-    const onNav = () => syncBrowserNavState()
+    const onViewStateChange = () => {
+      syncBrowserNavState()
+      syncBrowserZoomState()
+    }
 
-    view.addEventListener('did-navigate', onNav)
-    view.addEventListener('did-navigate-in-page', onNav)
-    view.addEventListener('did-stop-loading', onNav)
+    view.addEventListener('did-navigate', onViewStateChange)
+    view.addEventListener('did-navigate-in-page', onViewStateChange)
+    view.addEventListener('did-stop-loading', onViewStateChange)
 
-    const timer = window.setTimeout(syncBrowserNavState, 100)
+    const timer = window.setTimeout(onViewStateChange, 100)
 
     return () => {
       window.clearTimeout(timer)
-      view.removeEventListener('did-navigate', onNav)
-      view.removeEventListener('did-navigate-in-page', onNav)
-      view.removeEventListener('did-stop-loading', onNav)
+      view.removeEventListener('did-navigate', onViewStateChange)
+      view.removeEventListener('did-navigate-in-page', onViewStateChange)
+      view.removeEventListener('did-stop-loading', onViewStateChange)
     }
-  }, [browserOverlayOpen, browserOverlayUrl, selectedSourceId])
+  }, [browserOverlayOpen, browserOverlayUrl, selectedSourceId, syncBrowserZoomState])
+
+  useEffect(() => {
+    if (!browserOverlayOpen) return
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+
+      if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
+        e.preventDefault()
+        zoomBrowserIn()
+        return
+      }
+
+      if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
+        e.preventDefault()
+        zoomBrowserOut()
+        return
+      }
+
+      if (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0') {
+        e.preventDefault()
+        resetBrowserZoom()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [browserOverlayOpen, zoomBrowserIn, zoomBrowserOut, resetBrowserZoom])
+
+  useEffect(() => {
+    if (!browserOverlayOpen) return
+
+    const overlay = browserOverlayRef.current
+
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (overlay && !overlay.contains(e.target as Node)) return
+      e.preventDefault()
+      if (e.deltaY > 0) zoomBrowserOut()
+      if (e.deltaY < 0) zoomBrowserIn()
+    }
+
+    overlay?.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => {
+      overlay?.removeEventListener('wheel', onWheel)
+      window.removeEventListener('wheel', onWheel, true)
+    }
+  }, [browserOverlayOpen, browserOverlayUrl, zoomBrowserIn, zoomBrowserOut])
 
   useEffect(() => {
     if (!overlayResizing) return
@@ -855,7 +972,7 @@ export default function VerificationPage() {
             </div>
 
             {browserOverlayOpen && (
-              <div className={styles['scholar-overlay']} style={{ height: `${browserOverlayHeight}px` }}>
+              <div className={styles['scholar-overlay']} style={{ height: `${browserOverlayHeight}px` }} ref={browserOverlayRef}>
                 <div className={styles['scholar-overlay-resizer']} onMouseDown={startOverlayResize} title="Drag to resize">
                   <span className={styles['scholar-overlay-resizer-line']} />
                 </div>
@@ -894,6 +1011,26 @@ export default function VerificationPage() {
                         <path d="M12.4 7.5A5 5 0 103.8 11" />
                       </svg>
                     </button>
+                  </div>
+                  <div className={styles['scholar-overlay-zoom-actions']}>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-zoom-btn']}`}
+                      onClick={zoomBrowserOut}
+                      title="Zoom out (Ctrl + -)"
+                      aria-label="Zoom out"
+                    >-</button>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-zoom-readout']}`}
+                      onClick={resetBrowserZoom}
+                      title="Reset zoom (Ctrl + 0)"
+                      aria-label="Reset zoom"
+                    >{Math.round(browserZoomFactor * 100)}%</button>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-zoom-btn']}`}
+                      onClick={zoomBrowserIn}
+                      title="Zoom in (Ctrl + +)"
+                      aria-label="Zoom in"
+                    >+</button>
                   </div>
                   <div className={styles['scholar-overlay-actions']}>
                     <button
