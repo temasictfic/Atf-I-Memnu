@@ -12,12 +12,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 0 16px;
   height: 48px;
   box-sizing: border-box;
   border-bottom: 1px solid #e7e5e4;
 }
 .panel-title {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  min-width: 0;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
@@ -26,6 +31,7 @@
   margin: 0;
 }
 .title-count {
+  flex-shrink: 0;
   font-size: 11px;
   font-weight: 600;
   color: #d97706;
@@ -45,14 +51,27 @@
   flex-direction: column;
   overflow: hidden;
 }
+.pdf-list-panel .panel-header {
+  justify-content: flex-start;
+  gap: 6px;
+}
 .import-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 80px;
+  height: 28px;
+  box-sizing: border-box;
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 600;
-  padding: 4px 12px;
+  padding: 1px 6px;
   border: 1px solid #d97706;
   background: transparent;
   color: #d97706;
-  border-radius: 5px;
+  border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s;
 }
