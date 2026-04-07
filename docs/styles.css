@@ -232,6 +232,21 @@ h1 {
   padding: 12px;
 }
 
+.asset-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.asset-action-note {
+  margin: 0;
+  font-size: 12px;
+  color: #7f4c1e;
+  max-width: 280px;
+  text-align: right;
+}
+
 .asset-name {
   font-weight: 600;
   color: #4a290c;
@@ -360,7 +375,18 @@ h1 {
     align-items: flex-start;
   }
 
-  .download-btn {
+  .asset-action {
     width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .asset-action-note {
+    max-width: 100%;
+    text-align: left;
+  }
+
+  .download-btn {
+    width: auto;
   }
 }

@@ -4,6 +4,7 @@ const fallbackRepo = {
 };
 
 const technicalAssetPatterns = [/\.blockmap$/i, /^latest.*\.ya?ml$/i];
+const endUserExtensionPattern = /\.(exe|msi|zip)$/i;
 
 function inferRepoFromLocation() {
   const host = window.location.hostname;
@@ -68,6 +69,29 @@ function classifyAssetKind(name) {
   return "other";
 }
 
+function isEndUserDownloadAsset(asset) {
+  const safeName = asset?.name || "";
+  if (!safeName) {
+    return false;
+  }
+
+  if (isTechnicalAsset(safeName)) {
+    return false;
+  }
+
+  return endUserExtensionPattern.test(safeName);
+}
+
+function getAssetActionHint(kind) {
+  if (kind === "setup") {
+    return "Recommended. Installs app and adds shortcuts.";
+  }
+  if (kind === "portable") {
+    return "No install needed. Run directly from folder/USB.";
+  }
+  return "Manual package for advanced use.";
+}
+
 function createAssetElement(asset) {
   const row = document.createElement("article");
   row.className = "asset";
@@ -105,7 +129,16 @@ function createAssetElement(asset) {
     action.textContent = "Download";
   }
 
-  row.append(info, action);
+  const actionWrap = document.createElement("div");
+  actionWrap.className = "asset-action";
+
+  const actionHint = document.createElement("p");
+  actionHint.className = "asset-action-note";
+  actionHint.textContent = getAssetActionHint(kind);
+
+  actionWrap.append(actionHint, action);
+
+  row.append(info, actionWrap);
   return row;
 }
 
@@ -135,7 +168,7 @@ async function loadLatestRelease() {
 
     const release = await response.json();
     const assets = Array.isArray(release.assets) ? release.assets : [];
-    const visibleAssets = assets.filter((asset) => !isTechnicalAsset(asset.name));
+    const visibleAssets = assets.filter((asset) => isEndUserDownloadAsset(asset));
     const hiddenAssetCount = assets.length - visibleAssets.length;
 
     document.getElementById("releaseTitle").textContent = release.name || release.tag_name || "Latest release";
