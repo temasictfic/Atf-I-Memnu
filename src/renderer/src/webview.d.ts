@@ -8,6 +8,7 @@ declare global {
         partition?: string
         allowpopups?: boolean
         webpreferences?: string
+        preload?: string
       }
     }
   }

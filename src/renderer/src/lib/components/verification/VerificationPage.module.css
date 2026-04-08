@@ -674,3 +674,28 @@
 .db-link-unsearched:hover { color: #d97706; }
 .db-score { font-size: 10px; font-weight: 700; flex-shrink: 0; }
 .db-pending { color: #d6d3d1; }
+
+/* Verification completion toast */
+.verify-toast {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  pointer-events: none;
+  animation: verify-toast-in 0.25s ease-out;
+}
+.verify-toast-inner {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 20px;
+  border-radius: 20px;
+  background: #f0fdf4;
+  color: #16a34a;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+  white-space: nowrap;
+}
+@keyframes verify-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}

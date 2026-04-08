@@ -111,6 +111,39 @@ export default function VerificationPage() {
   const currentSummary = useMemo(() => (effectivePdfId ? summaries[effectivePdfId] : undefined), [summaries, effectivePdfId])
   const orderedSourceIds = useMemo(() => (effectivePdfId ? (sourceOrder[effectivePdfId] ?? []) : []), [sourceOrder, effectivePdfId])
 
+  // Toast for verification completion – only for actual runs, not cached loads
+  const [verifyToast, setVerifyToast] = useState<string | null>(null)
+  const verifyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const verifiedPdfIdsRef = useRef<Set<string>>(new Set())
+  const prevInProgressRef = useRef<Record<string, boolean>>({})
+
+  // Track PDFs that are actively verifying (in_progress results exist)
+  useEffect(() => {
+    const prev = prevInProgressRef.current
+    for (const [pdfId, summary] of Object.entries(summaries)) {
+      const wasInProgress = prev[pdfId]
+      const isInProgress = summary.in_progress > 0
+
+      // Mark as actively verified when we see in_progress results
+      if (isInProgress) {
+        verifiedPdfIdsRef.current.add(pdfId)
+      }
+
+      // Show toast only when transitioning from in_progress to completed AND was actually verified
+      if (wasInProgress && summary.completed && !isInProgress && verifiedPdfIdsRef.current.has(pdfId)) {
+        verifiedPdfIdsRef.current.delete(pdfId)
+        const pdf = allPdfs.find(p => p.id === pdfId)
+        const name = pdf?.name ?? 'PDF'
+        if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
+        setVerifyToast(`Verification complete: ${name}`)
+        verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+      }
+    }
+    prevInProgressRef.current = Object.fromEntries(
+      Object.entries(summaries).map(([id, s]) => [id, s.in_progress > 0])
+    )
+  }, [summaries, allPdfs])
+
   const orderedSources = useMemo(() => {
     const sourceMap = new Map(sources.map(s => [s.id, s]))
     return orderedSourceIds.map(id => sourceMap.get(id)).filter(Boolean) as typeof sources
@@ -608,19 +641,54 @@ export default function VerificationPage() {
       syncBrowserZoomState()
     }
 
+    // Inject zoom handler into webview content so Ctrl+Wheel works inside the page
+    const injectZoomScript = () => {
+      try {
+        view.executeJavaScript?.(`
+          (function() {
+            if (window.__zoomInjected) return;
+            window.__zoomInjected = true;
+            document.addEventListener('wheel', function(e) {
+              if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                console.log(e.deltaY > 0 ? '__ZOOM_OUT__' : '__ZOOM_IN__');
+              }
+            }, { passive: false });
+          })();
+        `)
+      } catch {
+        // ignore injection errors
+      }
+    }
+
+    const onDomReady = () => {
+      injectZoomScript()
+      onViewStateChange()
+    }
+
+    const onConsoleMessage = (event: any) => {
+      const msg = event?.message
+      if (msg === '__ZOOM_IN__') zoomBrowserIn()
+      else if (msg === '__ZOOM_OUT__') zoomBrowserOut()
+    }
+
     view.addEventListener('did-navigate', onViewStateChange)
     view.addEventListener('did-navigate-in-page', onViewStateChange)
-    view.addEventListener('did-stop-loading', onViewStateChange)
+    view.addEventListener('did-stop-loading', onDomReady)
+    view.addEventListener('dom-ready', onDomReady)
+    view.addEventListener('console-message', onConsoleMessage)
 
-    const timer = window.setTimeout(onViewStateChange, 100)
+    const timer = window.setTimeout(onDomReady, 100)
 
     return () => {
       window.clearTimeout(timer)
       view.removeEventListener('did-navigate', onViewStateChange)
       view.removeEventListener('did-navigate-in-page', onViewStateChange)
-      view.removeEventListener('did-stop-loading', onViewStateChange)
+      view.removeEventListener('did-stop-loading', onDomReady)
+      view.removeEventListener('dom-ready', onDomReady)
+      view.removeEventListener('console-message', onConsoleMessage)
     }
-  }, [browserOverlayOpen, browserOverlayUrl, selectedSourceId, syncBrowserZoomState])
+  }, [browserOverlayOpen, browserOverlayUrl, selectedSourceId, syncBrowserZoomState, zoomBrowserIn, zoomBrowserOut])
 
   useEffect(() => {
     if (!browserOverlayOpen) return
@@ -697,6 +765,13 @@ export default function VerificationPage() {
 
   return (
     <div className={styles['verify-page']}>
+      {/* Verification completion toast */}
+      {verifyToast && (
+        <div className={styles['verify-toast']} onClick={() => setVerifyToast(null)}>
+          <span className={styles['verify-toast-inner']}>{verifyToast}</span>
+        </div>
+      )}
+
       {/* Left Panel: PDF List */}
       <aside className={styles['verify-left']} onMouseDownCapture={() => browserOverlayOpen && closeBrowserOverlay()}>
         <div className={styles['panel-header']}>
@@ -726,7 +801,7 @@ export default function VerificationPage() {
           </div>
         )}
 
-        <div className={styles['verify-list']}>
+        <div className={styles['verify-list']} data-scrollable>
           {pdfs.length === 0 ? (
             <div className={styles['empty-state']}>
               <p>No approved PDFs</p>
@@ -832,7 +907,7 @@ export default function VerificationPage() {
             </div>
 
             {/* Source cards */}
-            <div className={styles['card-list']} ref={cardListRef}>
+            <div className={styles['card-list']} ref={cardListRef} data-scrollable>
               {sortedSourceCards.map((card, idx) => {
                 const isSelected = selectedSourceId === card.source.id
                 const cardClass = [
