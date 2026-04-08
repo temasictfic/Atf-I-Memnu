@@ -200,12 +200,15 @@ ipcMain.on('update:download', () => {
 
 ipcMain.on('update:cancel', () => {
   if (isDev) return
+  // Stop in-flight download if any
   try {
     downloadCancellationToken?.cancel()
   } catch {
     // ignore if no download in progress
   }
   downloadCancellationToken = null
+  // Prevent already-downloaded update from installing on quit
+  autoUpdater.autoInstallOnAppQuit = false
 })
 
 ipcMain.on('update:install', () => {
