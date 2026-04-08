@@ -61,6 +61,7 @@
   justify-content: center;
   gap: 4px;
   flex-shrink: 0;
+  margin-left: auto;
   min-width: 80px;
   height: 28px;
   box-sizing: border-box;

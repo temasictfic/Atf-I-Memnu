@@ -488,7 +488,9 @@ export default function ParsingPage() {
     }
   }, []);
 
-  const onMouseUp = useCallback((_e: React.MouseEvent) => {
+  const onMouseUp = useCallback((e: React.MouseEvent) => {
+    // Drawing (right-click hold) should only finish on right-button release
+    if (drawingRef.current && e.button !== 2) return;
     const pdfId = selectedPdfIdRef.current;
     const currentScale = scaleRef.current;
     const currentPageOffsets = pageOffsetsRef.current;
@@ -610,6 +612,10 @@ export default function ParsingPage() {
 
   function onDocumentContextMenu(e: React.MouseEvent) {
     e.preventDefault();
+  }
+
+  function onDocumentMouseDown(e: React.MouseEvent) {
+    if (e.button !== 2) return;
     if (!selectedPdfId) return;
     suppressPageClickRef.current = true;
     const docEl = viewerRef.current?.querySelector(
@@ -756,7 +762,7 @@ export default function ParsingPage() {
           </div>
         )}
 
-        <div className={styles["pdf-list"]}>
+        <div className={styles["pdf-list"]} data-scrollable>
           {allPdfs.length === 0 ? (
             <div className={styles["empty-state"]}>
               <div className={styles["empty-icon"]}>&#x1F4C4;</div>
@@ -880,7 +886,7 @@ export default function ParsingPage() {
                         <span className={styles["hint-desc"]}>Select / Move</span>
                       </div>
                       <div className={styles["hint-row"]}>
-                        <span className={styles["hint-keys"]}>Right click</span>
+                        <span className={styles["hint-keys"]}>Right hold</span>
                         <span className={styles["hint-desc"]}>Draw new</span>
                       </div>
                       <div className={styles["hint-row"]}>
@@ -916,6 +922,7 @@ export default function ParsingPage() {
             <div
               className={styles["viewer-content"]}
               ref={viewerRef}
+              data-scrollable
               role="button"
               tabIndex={0}
               aria-label="Document view (press Enter or Space to clear selection)"
@@ -936,6 +943,7 @@ export default function ParsingPage() {
                   margin: "0 auto",
                 }}
                 onContextMenu={onDocumentContextMenu}
+                onMouseDown={onDocumentMouseDown}
               >
                 {pages.map((page, idx) => (
                   <div key={page.page_num}>
