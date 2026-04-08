@@ -78,12 +78,32 @@ export default function App() {
 
       {/* Main Content */}
       <main className={styles['main-content']}>
-        {activeTab === 'parsing' && <ParsingPage />}
-        {activeTab === 'verification' && <VerificationPage />}
+        <div style={{ display: activeTab === 'parsing' ? 'contents' : 'none' }}>
+          <ParsingPage />
+        </div>
+        <div style={{ display: activeTab === 'verification' ? 'contents' : 'none' }}>
+          <VerificationPage />
+        </div>
         {activeTab === 'settings' && <SettingsPage />}
       </main>
 
-      <footer className={styles['footer-bar']} aria-hidden="true" />
+      <footer className={styles['footer-bar']}>
+        <button
+          className={styles['scroll-top-btn']}
+          onClick={() => {
+            document.querySelectorAll('[data-scrollable]').forEach(el => {
+              el.scrollTo({ top: 0, behavior: 'smooth' })
+            })
+          }}
+          title="Scroll to top"
+          aria-label="Scroll to top"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 12V4" />
+            <path d="M4 7l4-4 4 4" />
+          </svg>
+        </button>
+      </footer>
     </div>
   )
 }

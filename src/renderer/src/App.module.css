@@ -158,6 +158,27 @@
   border-top: 1px solid rgba(212, 120, 11, 0.32);
   position: relative;
   z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.scroll-top-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: rgba(254, 243, 199, 0.7);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  position: relative;
+  z-index: 1;
+  transition: color 0.15s, background 0.15s;
+}
+.scroll-top-btn:hover {
+  color: #fef3c7;
+  background: rgba(254, 243, 199, 0.12);
 }
 .footer-bar::before {
   content: '';
