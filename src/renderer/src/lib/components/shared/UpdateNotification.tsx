@@ -119,7 +119,13 @@ export default function UpdateNotification() {
         type="button"
         className={styles['close-btn']}
         aria-label="Dismiss update notification"
-        onClick={() => setVisible(false)}
+        onClick={() => {
+          if (stage === 'downloading') {
+            window.electronAPI.cancelUpdate()
+          }
+          setVisible(false)
+          setStage('hidden')
+        }}
       >
         ×
       </button>

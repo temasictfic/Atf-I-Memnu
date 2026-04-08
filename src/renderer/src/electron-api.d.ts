@@ -13,6 +13,7 @@ declare global {
       onUpdateDownloaded: (cb: () => void) => () => void
       onUpdateError: (cb: (message: string) => void) => () => void
       downloadUpdate: () => void
+      cancelUpdate: () => void
       installUpdate: () => void
     }
   }

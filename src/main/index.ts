@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron'
 import { mkdirSync } from 'fs'
 import { join } from 'path'
 import { autoUpdater } from 'electron-updater'
+import { CancellationToken } from 'builder-util-runtime'
 import type { ProgressInfo, UpdateInfo } from 'builder-util-runtime'
 import { startPythonBackend, stopPythonBackend, getPythonBackendPort } from './python-bridge'
 
@@ -189,9 +190,22 @@ ipcMain.handle('backend:getPort', () => {
   return port
 })
 
+let downloadCancellationToken: CancellationToken | null = null
+
 ipcMain.on('update:download', () => {
   if (isDev) return
-  autoUpdater.downloadUpdate().catch(() => {})
+  downloadCancellationToken = new CancellationToken()
+  autoUpdater.downloadUpdate(downloadCancellationToken).catch(() => {})
+})
+
+ipcMain.on('update:cancel', () => {
+  if (isDev) return
+  try {
+    downloadCancellationToken?.cancel()
+  } catch {
+    // ignore if no download in progress
+  }
+  downloadCancellationToken = null
 })
 
 ipcMain.on('update:install', () => {

@@ -48,6 +48,9 @@ const electronAPI = {
   downloadUpdate: (): void => {
     ipcRenderer.send('update:download')
   },
+  cancelUpdate: (): void => {
+    ipcRenderer.send('update:cancel')
+  },
   installUpdate: (): void => {
     ipcRenderer.send('update:install')
   }
