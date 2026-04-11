@@ -423,3 +423,17 @@ async def revert_pdf(pdf_id: str):
     original = pdf_store[pdf_id]["original_sources"]
     pdf_store[pdf_id]["sources"] = [s.model_copy() for s in original]
     return {"sources": [s.model_dump() for s in pdf_store[pdf_id]["sources"]]}
+
+
+@router.delete("/parse/pdf/{pdf_id}")
+async def remove_pdf(pdf_id: str):
+    """Drop a PDF from the in-memory store so a re-import will reparse it."""
+    pdf_store.pop(pdf_id, None)
+
+    from api.verification import verify_results
+    verify_results.pop(pdf_id, None)
+
+    for job in parse_jobs.values():
+        job["pdfs"] = [p for p in job.get("pdfs", []) if p.get("id") != pdf_id]
+
+    return {"success": True}

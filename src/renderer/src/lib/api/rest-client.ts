@@ -55,6 +55,9 @@ export const api = {
   revertPdf: (pdfId: string) =>
     request<{ sources: Array<import('./types').SourceRectangle> }>('POST', `/api/parse/revert/${pdfId}`),
 
+  removePdf: (pdfId: string) =>
+    request<{ success: boolean }>('DELETE', `/api/parse/pdf/${pdfId}`),
+
   extractText: (pdfId: string, page: number, x0: number, y0: number, x1: number, y1: number) =>
     request<{ text: string }>('POST', `/api/parse/extract-text/${pdfId}`, { page, x0, y0, x1, y1 }),
 
