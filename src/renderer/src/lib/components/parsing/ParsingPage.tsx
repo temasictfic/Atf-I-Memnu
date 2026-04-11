@@ -264,7 +264,7 @@ export default function ParsingPage() {
 
   function handleRemovePdf(pdfId: string) {
     const pdf = allPdfs.find((p) => p.id === pdfId);
-    if (!pdf || pdf.status === "parsing") return;
+    if (!pdf) return;
 
     if (selectedPdfId === pdfId) {
       setSelectedSourceId(null);
@@ -869,14 +869,9 @@ export default function ParsingPage() {
                   }}
                 >
                   <span
-                    className={`${styles["pdf-status"]} ${pdf.status !== "parsing" ? styles["pdf-status-removable"] : ""}`}
-                    title={
-                      pdf.status === "parsing"
-                        ? "Cannot remove while parsing"
-                        : "Remove from list"
-                    }
+                    className={`${styles["pdf-status"]} ${styles["pdf-status-removable"]}`}
+                    title="Remove from list"
                     onClick={(e) => {
-                      if (pdf.status === "parsing") return;
                       e.preventDefault();
                       e.stopPropagation();
                       handleRemovePdf(pdf.id);
@@ -888,11 +883,9 @@ export default function ParsingPage() {
                     >
                       {statusIcon(pdf.status)}
                     </span>
-                    {pdf.status !== "parsing" && (
-                      <span className={styles["pdf-status-remove"]}>
-                        &times;
-                      </span>
-                    )}
+                    <span className={styles["pdf-status-remove"]}>
+                      &times;
+                    </span>
                   </span>
                   <span className={styles["pdf-name"]} title={pdf.name}>
                     {pdf.name}

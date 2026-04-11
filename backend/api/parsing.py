@@ -140,8 +140,15 @@ async def _parse_all_pdfs(job_id: str, pdf_files: list[Path], force: bool = Fals
         await manager.broadcast("parse_started", {"pdf_id": pdf_id, "pdf_name": pdf_path.name})
         try:
             await _parse_single_pdf(job_id, pdf_id, pdf_path, force)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[_parse_all_pdfs] unhandled error for {pdf_id}: {e}", flush=True)
+            for pdf_info in parse_jobs[job_id]["pdfs"]:
+                if pdf_info["id"] == pdf_id:
+                    pdf_info["status"] = "error"
+            try:
+                await manager.broadcast("parse_error", {"pdf_id": pdf_id, "error": str(e)})
+            except Exception as be:
+                print(f"[_parse_all_pdfs] failed to broadcast parse_error for {pdf_id}: {be}", flush=True)
         await asyncio.sleep(0)
 
     parse_jobs[job_id]["status"] = "done"
@@ -248,8 +255,14 @@ async def _parse_single_pdf(job_id: str, pdf_id: str, pdf_path: Path, force: boo
             if pdf_info["id"] == pdf_id:
                 pdf_info["status"] = "error"
 
-        await manager.broadcast("parse_error", {"pdf_id": pdf_id, "error": str(e)})
-        await manager.send_log("error", f"Failed to parse {pdf_path.name}: {e}", pdf_id=pdf_id)
+        try:
+            await manager.broadcast("parse_error", {"pdf_id": pdf_id, "error": str(e)})
+        except Exception as be:
+            print(f"[_parse_single_pdf] failed to broadcast parse_error for {pdf_id}: {be}", flush=True)
+        try:
+            await manager.send_log("error", f"Failed to parse {pdf_path.name}: {e}", pdf_id=pdf_id)
+        except Exception as le:
+            print(f"[_parse_single_pdf] failed to send_log for {pdf_id}: {le}", flush=True)
 
 
 @router.get("/parse/status/{job_id}")
