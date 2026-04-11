@@ -21,9 +21,10 @@ import {
   approveSources,
   unapproveSources,
   clearSourcesForPdf,
+  mergeWithClosest,
 } from "../../stores/sources-store";
 import { clearVerificationForPdf } from "../../stores/verification-store";
-import type { SourceRectangle, PageData } from "../../api/types";
+import type { SourceRectangle, PageData, ParsedSource } from "../../api/types";
 import { api, pageImageUrl } from "../../api/rest-client";
 import styles from "./ParsingPage.module.css";
 
@@ -98,6 +99,10 @@ export default function ParsingPage() {
   const [containerWidth, setContainerWidth] = useState(0);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [manualCounter, setManualCounter] = useState(0);
+  const [parsedFields, setParsedFields] = useState<ParsedSource | null>(null);
+  const [parsedFieldsLoading, setParsedFieldsLoading] = useState(false);
+  const parsedFieldsCache = useRef<Record<string, ParsedSource>>({});
+  const [rawTextExpanded, setRawTextExpanded] = useState(false);
 
   // Refs for interaction state (not reactive, no re-render needed)
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -145,6 +150,12 @@ export default function ParsingPage() {
         return (
           dir * ((statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9))
         );
+      if (sortKey === "numbered") {
+        // Unnumbered first (ascending): unnumbered=0, numbered=1
+        const diff = (a.numbered ? 1 : 0) - (b.numbered ? 1 : 0);
+        if (diff !== 0) return dir * diff;
+        return a.name.localeCompare(b.name);
+      }
       return dir * (a.source_count - b.source_count);
     });
     return list;
@@ -216,7 +227,12 @@ export default function ParsingPage() {
     try {
       const result = await api.getPages(pdfId);
       setPages(result.pages);
-      await loadSources(pdfId);
+      // Local store is authoritative; only fetch sources the first time a PDF
+      // is opened this session. Re-fetching on every PDF switch would clobber
+      // any in-flight unsaved edits with stale backend data.
+      if (!useSourcesStore.getState().sourcesByPdf[pdfId]) {
+        await loadSources(pdfId);
+      }
     } catch (e) {
       console.error("Failed to load PDF pages:", e);
       setPages([]);
@@ -288,7 +304,11 @@ export default function ParsingPage() {
 
   function handleRevert() {
     if (!selectedPdfId) return;
-    revert(selectedPdfId);
+    const pdfId = selectedPdfId;
+    revert(pdfId);
+    void saveSources(pdfId).catch((err) => {
+      console.error("Undo save failed:", err);
+    });
   }
 
   async function handleRevertToOriginal() {
@@ -560,21 +580,20 @@ export default function ParsingPage() {
     }
 
     if (hadDrag && pdfId && dragIntentRef.current) {
-      saveSources(pdfId);
+      const draggedId = dragIntentRef.current.sourceId;
+      void saveSources(pdfId).catch((e) => {
+        console.error("Drag save failed:", e);
+      });
       const currentSources =
         useSourcesStore.getState().sourcesByPdf[pdfId] ?? [];
-      const movedSource = currentSources.find(
-        (s) => s.id === dragIntentRef.current!.sourceId,
-      );
+      const movedSource = currentSources.find((s) => s.id === draggedId);
       if (movedSource)
-        extractAndSetText(
-          pdfId,
-          dragIntentRef.current.sourceId,
-          movedSource.bbox,
-        );
+        extractAndSetText(pdfId, draggedId, movedSource.bbox);
     }
     if (hadResize && pdfId) {
-      saveSources(pdfId);
+      void saveSources(pdfId).catch((e) => {
+        console.error("Resize save failed:", e);
+      });
       const currentSources =
         useSourcesStore.getState().sourcesByPdf[pdfId] ?? [];
       const resizedSource = currentSources.find(
@@ -673,6 +692,17 @@ export default function ParsingPage() {
       e.preventDefault();
       handleRevert();
     }
+    if (e.key === " " && selectedSourceId && selectedPdfId) {
+      e.preventDefault();
+      const pdfId = selectedPdfId;
+      const newId = mergeWithClosest(pdfId, selectedSourceId);
+      if (newId) {
+        setSelectedSourceId(newId);
+        void saveSources(pdfId).catch((err) => {
+          console.error("Merge save failed:", err);
+        });
+      }
+    }
   }
 
   const selectedSource = useMemo(
@@ -683,6 +713,41 @@ export default function ParsingPage() {
     [sources, selectedSourceId],
   );
   const selectedSourceStatus = selectedSource?.status ?? null;
+
+  // Fetch parsed fields when a source is selected (debounced 300ms, cached)
+  useEffect(() => {
+    if (!selectedSource || !selectedSource.text) {
+      setParsedFields(null);
+      setRawTextExpanded(false);
+      return;
+    }
+
+    const sourceId = selectedSource.id;
+
+    // Check cache
+    if (parsedFieldsCache.current[sourceId]) {
+      setParsedFields(parsedFieldsCache.current[sourceId]);
+      return;
+    }
+
+    setParsedFieldsLoading(true);
+    const timer = setTimeout(() => {
+      api
+        .extractFields(selectedSource.text)
+        .then((result) => {
+          parsedFieldsCache.current[sourceId] = result;
+          setParsedFields(result);
+        })
+        .catch(() => {
+          setParsedFields(null);
+        })
+        .finally(() => {
+          setParsedFieldsLoading(false);
+        });
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [selectedSource?.id, selectedSource?.text]);
 
   const HANDLES = ["n", "s", "w", "e", "nw", "ne", "sw", "se"] as const;
 
@@ -742,6 +807,18 @@ export default function ParsingPage() {
             >
               Name
               {sortKey === "name" && (
+                <span className={styles["sort-arrow"]}>
+                  {sortAsc ? "\u2191" : "\u2193"}
+                </span>
+              )}
+            </button>
+            <button
+              className={`${styles["sort-btn"]} ${styles["sort-btn-numbered"]} ${sortKey === "numbered" ? styles["sort-active"] : ""}`}
+              onClick={() => toggleSort("numbered")}
+              title="Sort by numbered (unnumbered first)"
+            >
+              N
+              {sortKey === "numbered" && (
                 <span className={styles["sort-arrow"]}>
                   {sortAsc ? "\u2191" : "\u2193"}
                 </span>
@@ -810,6 +887,11 @@ export default function ParsingPage() {
                   </span>
                   <span className={styles["pdf-name"]} title={pdf.name}>
                     {pdf.name}
+                  </span>
+                  <span className={styles["pdf-numbered-col"]}>
+                    {pdf.numbered && (
+                      <span className={styles["numbered-tag"]}>N</span>
+                    )}
                   </span>
                   <span className={styles["pdf-count"]}>{pdf.source_count}</span>
                 </button>
@@ -894,6 +976,10 @@ export default function ParsingPage() {
                         <span className={styles["hint-desc"]}>Remove source</span>
                       </div>
                       <div className={styles["hint-row"]}>
+                        <span className={styles["hint-keys"]}>Space</span>
+                        <span className={styles["hint-desc"]}>Merge with closest</span>
+                      </div>
+                      <div className={styles["hint-row"]}>
                         <span className={styles["hint-keys"]}>Ctrl + Z</span>
                         <span className={styles["hint-desc"]}>Undo</span>
                       </div>
@@ -925,13 +1011,16 @@ export default function ParsingPage() {
               data-scrollable
               role="button"
               tabIndex={0}
-              aria-label="Document view (press Enter or Space to clear selection)"
+              aria-label="Document view"
               onClick={onPageClick}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
+                if (e.key === "Enter") {
                   e.preventDefault();
                   onPageClick();
                 }
+                // Space is handled by the parent onKeyDown:
+                // - if a source is selected: merge with closest
+                // - otherwise: do nothing (let parent handle clearing if needed)
               }}
             >
               <div
@@ -1096,8 +1185,82 @@ export default function ParsingPage() {
                       &#x2715;
                     </button>
                   </div>
-                  <div className={styles["detail-text-display"]}>
-                    {selectedSource.text || "(no text detected)"}
+
+                  {/* Extracted fields */}
+                  {parsedFieldsLoading && (
+                    <div className={styles["fields-loading"]}>Extracting fields...</div>
+                  )}
+                  {parsedFields && !parsedFieldsLoading && (
+                    <div className={styles["parsed-fields"]}>
+                      {parsedFields.title && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>Title</span>
+                          <span className={styles["field-value"]}>{parsedFields.title}</span>
+                        </div>
+                      )}
+                      {parsedFields.authors.length > 0 && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>Authors</span>
+                          <span className={styles["field-value"]}>
+                            {parsedFields.authors.join(", ")}
+                          </span>
+                        </div>
+                      )}
+                      {parsedFields.year && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>Year</span>
+                          <span className={styles["field-value"]}>{parsedFields.year}</span>
+                        </div>
+                      )}
+                      {parsedFields.source && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>Source</span>
+                          <span className={styles["field-value"]}>{parsedFields.source}</span>
+                        </div>
+                      )}
+                      {parsedFields.url && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>URL</span>
+                          <a
+                            className={styles["field-link"]}
+                            href={parsedFields.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {parsedFields.url.length > 50
+                              ? parsedFields.url.slice(0, 50) + "..."
+                              : parsedFields.url}
+                          </a>
+                        </div>
+                      )}
+                      <div className={styles["field-row"]}>
+                        <span className={styles["field-label"]}>Method</span>
+                        <span className={styles["extraction-method-badge"]}>
+                          {parsedFields.extraction_method.toUpperCase()}
+                        </span>
+                        <span className={styles["confidence-value"]}>
+                          {Math.round(parsedFields.parse_confidence * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Collapsible raw text */}
+                  <div className={styles["raw-text-section"]}>
+                    <button
+                      className={styles["raw-text-toggle"]}
+                      onClick={() => setRawTextExpanded((v) => !v)}
+                    >
+                      <span className={styles["raw-text-toggle-icon"]}>
+                        {rawTextExpanded ? "\u25BC" : "\u25B6"}
+                      </span>
+                      Raw Text
+                    </button>
+                    {rawTextExpanded && (
+                      <div className={styles["detail-text-display"]}>
+                        {selectedSource.text || "(no text detected)"}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

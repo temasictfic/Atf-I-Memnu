@@ -9,7 +9,7 @@ import { sanitizeReferenceText } from '../utils/reference-text'
 import { usePdfStore } from './pdf-store'
 
 type CardSortKey = 'default' | 'status' | 'ref' | 'enabled'
-type PdfSortKey = 'name' | 'status' | 'green' | 'yellow' | 'red'
+type PdfSortKey = 'name' | 'status' | 'found' | 'problematic' | 'not_found'
 
 interface VerificationState {
   resultsByPdf: Record<string, Record<string, VerificationResult>>
@@ -38,7 +38,7 @@ interface VerificationState {
   startVerificationNonFoundForPdf: (pdfId: string) => Promise<void>
   reverifySource: (pdfId: string, sourceId: string, text?: string) => Promise<void>
   reverifyPdf: (pdfId: string) => Promise<void>
-  overrideStatus: (pdfId: string, sourceId: string, status: 'green' | 'yellow' | 'red' | 'black') => Promise<void>
+  overrideStatus: (pdfId: string, sourceId: string, status: 'found' | 'problematic' | 'not_found') => Promise<void>
   cancelAll: () => Promise<void>
   cancelPdf: (pdfId: string) => Promise<void>
   cancelSource: (sourceId: string) => Promise<void>
@@ -90,10 +90,7 @@ function startPolling(pdfIds: string[], jobId: string): void {
       useVerificationStore.setState(state => {
         const next = { ...state.summaries }
         for (const s of statusResp.pdfs) {
-          next[s.pdf_id] = {
-            ...s,
-            black: (s as any).black ?? 0,
-          }
+          next[s.pdf_id] = { ...s }
         }
         return { summaries: next }
       })
@@ -190,7 +187,7 @@ function flushPdfVerifyLog(pdfId: string): void {
 
   for (const [, sourceLog] of pdfLog.sources) {
     const statusColors: Record<string, string> = {
-      green: '#22c55e', yellow: '#eab308', red: '#ef4444', black: '#111827',
+      found: '#22c55e', problematic: '#f59e0b', not_found: '#9ca3af',
     }
     const statusColor = statusColors[sourceLog.finalStatus ?? ''] ?? '#a8a29e'
     const statusLabel = (sourceLog.finalStatus ?? 'unknown').toUpperCase()
@@ -395,17 +392,16 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       if (updatedResults !== state.resultsByPdf) {
         const results = updatedResults[pdfId] ?? {}
         const count = Object.keys(results).length
-        let green = 0, yellow = 0, red = 0, black = 0
+        let found = 0, problematic = 0, not_found = 0
         for (const r of Object.values(results)) {
-          if (r.status === 'green') green++
-          else if (r.status === 'yellow') yellow++
-          else if (r.status === 'red') red++
-          else if (r.status === 'black') black++
+          if (r.status === 'found') found++
+          else if (r.status === 'problematic') problematic++
+          else if (r.status === 'not_found') not_found++
         }
         updatedSummaries = {
           ...state.summaries,
           [pdfId]: {
-            pdf_id: pdfId, green, yellow, red, black,
+            pdf_id: pdfId, found, problematic, not_found,
             in_progress: 0, total: count, completed: count > 0,
           },
         }
@@ -457,7 +453,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         const newResults: Record<string, Record<string, VerificationResult>> = {}
         for (const id of pdfIds) {
           summaries[id] = {
-            pdf_id: id, green: 0, yellow: 0, red: 0, black: 0,
+            pdf_id: id, found: 0, problematic: 0, not_found: 0,
             in_progress: 0, total: 0, completed: false,
           }
           // Create progress + in_progress result for each enabled source
@@ -470,6 +466,8 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             newResults[id][sourceId] = {
               source_id: sourceId,
               status: 'in_progress' as VerifyStatus,
+              problem_tags: [],
+              url_liveness: {},
               all_results: [],
               databases_searched: [],
             }
@@ -505,7 +503,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const includeIds = sourceIds.filter(sourceId => {
         if (enabledSources[sourceId] === false) return false
         const result = resultsByPdf[pdfId]?.[sourceId]
-        return result?.status !== 'green'
+        return result?.status !== 'found'
       })
 
       if (includeIds.length === 0) return
@@ -524,18 +522,19 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           pdfResults[sourceId] = {
             source_id: sourceId,
             status: 'in_progress' as VerifyStatus,
+            problem_tags: [],
+            url_liveness: {},
             all_results: [],
             databases_searched: [],
           }
           sourceProgress[sourceId] = { currentDb: null, checkedDbs: [] }
         }
 
-        let green = 0, yellow = 0, red = 0, black = 0, inProgress = 0
+        let found = 0, problematic = 0, not_found = 0, inProgress = 0
         for (const r of Object.values(pdfResults)) {
-          if (r.status === 'green') green++
-          else if (r.status === 'yellow') yellow++
-          else if (r.status === 'red') red++
-          else if (r.status === 'black') black++
+          if (r.status === 'found') found++
+          else if (r.status === 'problematic') problematic++
+          else if (r.status === 'not_found') not_found++
           else if (r.status === 'in_progress') inProgress++
         }
 
@@ -549,10 +548,9 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             ...state.summaries,
             [pdfId]: {
               pdf_id: pdfId,
-              green,
-              yellow,
-              red,
-              black,
+              found,
+              problematic,
+              not_found,
               in_progress: inProgress,
               total: Object.keys(pdfResults).length,
               completed: false,
@@ -581,6 +579,8 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             [sourceId]: {
               source_id: sourceId,
               status: 'in_progress' as VerifyStatus,
+              problem_tags: [],
+              url_liveness: {},
               all_results: [],
               databases_searched: [],
             },
@@ -637,21 +637,20 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         let changed = false
         for (const sourceId of Object.keys(pdfResults)) {
           if (pdfResults[sourceId].status === 'in_progress') {
-            pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'black' as VerifyStatus }
+            pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'not_found' as VerifyStatus }
             newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
             changed = true
           }
         }
         if (changed) {
           newResults[pdfId] = pdfResults
-          let green = 0, yellow = 0, red = 0, black = 0
+          let found = 0, problematic = 0, not_found = 0
           for (const r of Object.values(pdfResults)) {
-            if (r.status === 'green') green++
-            else if (r.status === 'yellow') yellow++
-            else if (r.status === 'red') red++
-            else if (r.status === 'black') black++
+            if (r.status === 'found') found++
+            else if (r.status === 'problematic') problematic++
+            else if (r.status === 'not_found') not_found++
           }
-          newSummaries[pdfId] = { pdf_id: pdfId, green, yellow, red, black, in_progress: 0, total: Object.keys(pdfResults).length, completed: true }
+          newSummaries[pdfId] = { pdf_id: pdfId, found, problematic, not_found, in_progress: 0, total: Object.keys(pdfResults).length, completed: true }
         }
       }
       return { resultsByPdf: newResults, summaries: newSummaries, sourceProgress: newProgress }
@@ -668,21 +667,20 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       let changed = false
       for (const sourceId of Object.keys(pdfResults)) {
         if (pdfResults[sourceId].status === 'in_progress') {
-          pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'black' as VerifyStatus }
+          pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'not_found' as VerifyStatus }
           newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
           changed = true
         }
       }
       if (!changed) return state
-      let green = 0, yellow = 0, red = 0, black = 0
+      let found = 0, problematic = 0, not_found = 0
       for (const r of Object.values(pdfResults)) {
-        if (r.status === 'green') green++
-        else if (r.status === 'yellow') yellow++
-        else if (r.status === 'red') red++
-        else if (r.status === 'black') black++
+        if (r.status === 'found') found++
+        else if (r.status === 'problematic') problematic++
+        else if (r.status === 'not_found') not_found++
       }
       const newResults = { ...state.resultsByPdf, [pdfId]: pdfResults }
-      const newSummaries = { ...state.summaries, [pdfId]: { pdf_id: pdfId, green, yellow, red, black, in_progress: 0, total: Object.keys(pdfResults).length, completed: true } }
+      const newSummaries = { ...state.summaries, [pdfId]: { pdf_id: pdfId, found, problematic, not_found, in_progress: 0, total: Object.keys(pdfResults).length, completed: true } }
       // Stop polling if no more in-progress across all PDFs
       const anyStillRunning = Object.entries(newResults).some(([id, res]) =>
         id !== pdfId && Object.values(res).some(r => r.status === 'in_progress')
@@ -698,25 +696,24 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const newResults = { ...state.resultsByPdf }
       const newSummaries = { ...state.summaries }
       const newProgress = { ...state.sourceProgress }
-      let foundPdfId: string | null = null
+      let targetPdfId: string | null = null
       for (const pdfId of Object.keys(newResults)) {
         const pdfResults = newResults[pdfId]
         if (pdfResults[sourceId]?.status === 'in_progress') {
-          newResults[pdfId] = { ...pdfResults, [sourceId]: { ...pdfResults[sourceId], status: 'black' as VerifyStatus } }
+          newResults[pdfId] = { ...pdfResults, [sourceId]: { ...pdfResults[sourceId], status: 'not_found' as VerifyStatus } }
           newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
-          foundPdfId = pdfId
+          targetPdfId = pdfId
           break
         }
       }
-      if (!foundPdfId) return state
-      let green = 0, yellow = 0, red = 0, black = 0
-      for (const r of Object.values(newResults[foundPdfId])) {
-        if (r.status === 'green') green++
-        else if (r.status === 'yellow') yellow++
-        else if (r.status === 'red') red++
-        else if (r.status === 'black') black++
+      if (!targetPdfId) return state
+      let found = 0, problematic = 0, not_found = 0
+      for (const r of Object.values(newResults[targetPdfId])) {
+        if (r.status === 'found') found++
+        else if (r.status === 'problematic') problematic++
+        else if (r.status === 'not_found') not_found++
       }
-      newSummaries[foundPdfId] = { pdf_id: foundPdfId, green, yellow, red, black, in_progress: Object.values(newResults[foundPdfId]).filter(r => r.status === 'in_progress').length, total: Object.keys(newResults[foundPdfId]).length, completed: Object.values(newResults[foundPdfId]).every(r => r.status !== 'in_progress') }
+      newSummaries[targetPdfId] = { pdf_id: targetPdfId, found, problematic, not_found, in_progress: Object.values(newResults[targetPdfId]).filter(r => r.status === 'in_progress').length, total: Object.keys(newResults[targetPdfId]).length, completed: Object.values(newResults[targetPdfId]).every(r => r.status !== 'in_progress') }
       return { resultsByPdf: newResults, summaries: newSummaries, sourceProgress: newProgress }
     })
     try { await api.cancelSourceVerification(sourceId) } catch (e) { console.error('Failed to cancel source:', e) }
@@ -730,12 +727,11 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       if (count > 0) {
         console.log('%c[Loaded Verify Cache] %s (%d sources)', 'color: #60a5fa; font-weight: bold', pdfId, count)
         // Compute summary from cached results
-        let green = 0, yellow = 0, red = 0, black = 0, inProgress = 0
+        let found = 0, problematic = 0, not_found = 0, inProgress = 0
         for (const r of Object.values(results)) {
-          if (r.status === 'green') green++
-          else if (r.status === 'yellow') yellow++
-          else if (r.status === 'red') red++
-          else if (r.status === 'black') black++
+          if (r.status === 'found') found++
+          else if (r.status === 'problematic') problematic++
+          else if (r.status === 'not_found') not_found++
           else if (r.status === 'in_progress') inProgress++
         }
         set(state => ({
@@ -744,7 +740,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             ...state.summaries,
             [pdfId]: {
               pdf_id: pdfId,
-              green, yellow, red, black,
+              found, problematic, not_found,
               in_progress: inProgress,
               total: count,
               completed: inProgress === 0,
@@ -793,6 +789,8 @@ export function initVerificationListeners(): () => void {
             [sourceId]: {
               source_id: sourceId,
               status: 'in_progress' as VerifyStatus,
+              problem_tags: [],
+              url_liveness: {},
               all_results: [],
               databases_searched: [],
             },
@@ -903,6 +901,8 @@ export function initVerificationListeners(): () => void {
               [sourceId]: {
                 source_id: sourceId,
                 status: data.status as VerifyStatus,
+                problem_tags: (data.problem_tags as string[]) ?? [],
+                url_liveness: (data.url_liveness as Record<string, boolean>) ?? {},
                 best_match: data.best_match as any,
                 all_results: (data.all_results as any[]) ?? [],
                 databases_searched: existing[sourceId]?.databases_searched ?? [],
@@ -922,17 +922,19 @@ export function initVerificationListeners(): () => void {
 
     wsClient.on('verify_pdf_done', (data) => {
       const pdfId = data.pdf_id as string
+      const found = (data.found as number | undefined) ?? 0
+      const problematic = (data.problematic as number | undefined) ?? 0
+      const not_found = (data.not_found as number | undefined) ?? 0
       useVerificationStore.setState(state => ({
         summaries: {
           ...state.summaries,
           [pdfId]: {
             pdf_id: pdfId,
-            green: data.green as number,
-            yellow: data.yellow as number,
-            red: data.red as number,
-            black: (data.black as number | undefined) ?? 0,
+            found,
+            problematic,
+            not_found,
             in_progress: 0,
-            total: (data.green as number) + (data.yellow as number) + (data.red as number) + ((data.black as number | undefined) ?? 0),
+            total: found + problematic + not_found,
             completed: true,
           },
         },
@@ -959,16 +961,18 @@ export function initVerificationListeners(): () => void {
       const pdfId = data.pdf_id as string
       useVerificationStore.setState(state => {
         if (!state.summaries[pdfId]) return state
+        const found = (data.found as number | undefined) ?? state.summaries[pdfId].found
+        const problematic = (data.problematic as number | undefined) ?? state.summaries[pdfId].problematic
+        const not_found = (data.not_found as number | undefined) ?? state.summaries[pdfId].not_found
         return {
           summaries: {
             ...state.summaries,
             [pdfId]: {
               ...state.summaries[pdfId],
-              green: data.green as number,
-              yellow: data.yellow as number,
-              red: data.red as number,
-              black: (data.black as number | undefined) ?? state.summaries[pdfId].black,
-              total: (data.green as number) + (data.yellow as number) + (data.red as number) + ((data.black as number | undefined) ?? state.summaries[pdfId].black),
+              found,
+              problematic,
+              not_found,
+              total: found + problematic + not_found,
             },
           },
         }

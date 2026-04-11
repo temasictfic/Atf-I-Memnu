@@ -58,6 +58,9 @@ export const api = {
   extractText: (pdfId: string, page: number, x0: number, y0: number, x1: number, y1: number) =>
     request<{ text: string }>('POST', `/api/parse/extract-text/${pdfId}`, { page, x0, y0, x1, y1 }),
 
+  extractFields: (text: string) =>
+    request<import('./types').ParsedSource>('POST', '/api/parse/extract-fields', { text }),
+
   getLastDirectory: () =>
     request<{ directory: string }>('GET', '/api/parse/last-directory'),
 
@@ -89,7 +92,7 @@ export const api = {
   verifyResults: (pdfId: string) =>
     request<{ results: Record<string, import('./types').VerificationResult> }>('GET', `/api/verify/results/${pdfId}`),
 
-  overrideStatus: (pdfId: string, sourceId: string, status: 'green' | 'yellow' | 'red' | 'black') =>
+  overrideStatus: (pdfId: string, sourceId: string, status: 'found' | 'problematic' | 'not_found') =>
     request<{ success: boolean }>('PUT', `/api/verify/override/${pdfId}/${sourceId}`, { status }),
 
   // Settings

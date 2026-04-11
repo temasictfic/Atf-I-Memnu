@@ -91,8 +91,23 @@ function createWindow(): void {
   // Hide the native menu bar (File/Edit/View/Window/Help) on desktop.
   mainWindow.setMenuBarVisibility(false)
 
+  // Ensure devtools can always be opened via F12 / Ctrl+Shift+I even when
+  // the menu bar (which owns the default accelerators) is hidden.
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.type !== 'keyDown') return
+    const isF12 = input.key === 'F12'
+    const isCtrlShiftI = input.control && input.shift && (input.key === 'I' || input.key === 'i')
+    if (isF12 || isCtrlShiftI) {
+      mainWindow?.webContents.toggleDevTools()
+    }
+  })
+
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+
+    if (isDev) {
+      mainWindow?.webContents.openDevTools({ mode: 'detach' })
+    }
 
     if (!isDev) {
       configureAutoUpdater()

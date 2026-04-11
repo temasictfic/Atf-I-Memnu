@@ -143,10 +143,9 @@
   line-height: 18px;
   color: white;
 }
-.vc-green { background: #22c55e; }
-.vc-yellow { background: #eab308; }
-.vc-red { background: #ef4444; }
-.vc-black { background: #111827; }
+.vc-found { background: #22c55e; }
+.vc-problematic { background: #f59e0b; }
+.vc-not-found { background: #9ca3af; }
 
 /* Center panel */
 .verify-center {
@@ -415,6 +414,25 @@
   flex-shrink: 0;
 }
 
+.problem-tags {
+  display: inline-flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+.problem-tag {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+  white-space: nowrap;
+  cursor: help;
+}
+
 .card-textarea {
   width: 100%;
   border: 1px solid #e7e5e4;
@@ -566,14 +584,12 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
-.override-green { color: #22c55e; }
-.override-green:hover, .override-green-active { background: #22c55e; color: white; border-color: #22c55e; }
-.override-yellow { color: #eab308; }
-.override-yellow:hover, .override-yellow-active { background: #eab308; color: white; border-color: #eab308; }
-.override-red { color: #ef4444; }
-.override-red:hover, .override-red-active { background: #ef4444; color: white; border-color: #ef4444; }
-.override-black { color: #111827; }
-.override-black:hover, .override-black-active { background: #111827; color: white; border-color: #111827; }
+.override-found { color: #22c55e; }
+.override-found:hover, .override-found-active { background: #22c55e; color: white; border-color: #22c55e; }
+.override-problematic { color: #f59e0b; }
+.override-problematic:hover, .override-problematic-active { background: #f59e0b; color: white; border-color: #f59e0b; }
+.override-not-found { color: #9ca3af; }
+.override-not-found:hover, .override-not-found-active { background: #9ca3af; color: white; border-color: #9ca3af; }
 
 .action-btn {
   font-size: 11px;
@@ -608,6 +624,58 @@
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: #a8a29e;
+}
+
+/* Detail panel: problems + URL liveness */
+.detail-problems,
+.detail-urls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.problem-list,
+.url-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.problem-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.problem-desc {
+  font-size: 11px;
+  color: #57534e;
+  line-height: 1.3;
+}
+.url-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.url-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.url-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: #d97706;
+  cursor: pointer;
+  text-align: left;
+  word-break: break-all;
+  line-height: 1.3;
+}
+.url-link:hover {
+  text-decoration: underline;
 }
 
 /* Match card */

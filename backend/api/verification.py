@@ -25,8 +25,20 @@ def _save_verify_cache(pdf_id: str, results: dict[str, VerificationResult]) -> N
     cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
+_LEGACY_STATUS_MAP = {
+    "green": "found",
+    "yellow": "problematic",
+    "red": "problematic",
+    "black": "not_found",
+}
+
+
 def _load_verify_cache(pdf_id: str) -> dict[str, VerificationResult] | None:
-    """Load verification results from disk cache."""
+    """Load verification results from disk cache.
+
+    Migrates legacy 4-category statuses (green/yellow/red/black) to the
+    3-category model (found/problematic/not_found).
+    """
     cache_file = settings.get_cache_dir() / f"verify_{pdf_id}.json"
     if not cache_file.exists():
         return None
@@ -36,19 +48,18 @@ def _load_verify_cache(pdf_id: str) -> dict[str, VerificationResult] | None:
         normalized: dict[str, VerificationResult] = {}
         for source_id, payload in data.items():
             entry = dict(payload)
-            # Backward-compat migration:
-            # older caches used "red" for no-score not-found results.
-            if entry.get("status") == "red":
-                best = entry.get("best_match")
-                score = 0.0
-                if isinstance(best, dict):
-                    try:
-                        score = float(best.get("score") or 0.0)
-                    except Exception:
-                        score = 0.0
-                if score <= 0.0:
-                    entry["status"] = "black"
-                    migrated = True
+            old_status = entry.get("status")
+            if old_status in _LEGACY_STATUS_MAP:
+                entry["status"] = _LEGACY_STATUS_MAP[old_status]
+                migrated = True
+            # Drop journal_match from legacy MatchDetails entries
+            for m in (entry.get("all_results") or []):
+                md = m.get("match_details") or {}
+                md.pop("journal_match", None)
+            best = entry.get("best_match")
+            if isinstance(best, dict):
+                md = best.get("match_details") or {}
+                md.pop("journal_match", None)
             normalized[source_id] = VerificationResult(**entry)
 
         if migrated:
@@ -68,7 +79,7 @@ class VerifySourceRequest(BaseModel):
 
 
 class OverrideRequest(BaseModel):
-    status: str  # green, yellow, red, black
+    status: str  # found, problematic, not_found
 
 
 class VerifyBatchRequest(BaseModel):
@@ -208,10 +219,9 @@ async def get_verify_status(job_id: str):
     summaries = []
     for pdf_id in job["pdfs"]:
         results = verify_results.get(pdf_id, {})
-        green = sum(1 for r in results.values() if r.status == "green")
-        yellow = sum(1 for r in results.values() if r.status == "yellow")
-        red = sum(1 for r in results.values() if r.status == "red")
-        black = sum(1 for r in results.values() if r.status == "black")
+        found = sum(1 for r in results.values() if r.status == "found")
+        problematic = sum(1 for r in results.values() if r.status == "problematic")
+        not_found = sum(1 for r in results.values() if r.status == "not_found")
         in_progress = sum(1 for r in results.values() if r.status == "in_progress")
 
         # A PDF is completed if: no in-progress sources AND either
@@ -220,10 +230,9 @@ async def get_verify_status(job_id: str):
 
         summaries.append({
             "pdf_id": pdf_id,
-            "green": green,
-            "yellow": yellow,
-            "red": red,
-            "black": black,
+            "found": found,
+            "problematic": problematic,
+            "not_found": not_found,
             "in_progress": in_progress,
             "total": len(results),
             "completed": completed,
@@ -255,17 +264,15 @@ async def override_status(pdf_id: str, source_id: str, request: OverrideRequest)
 
     # Recalculate counts
     results = verify_results[pdf_id]
-    green = sum(1 for r in results.values() if r.status == "green")
-    yellow = sum(1 for r in results.values() if r.status == "yellow")
-    red = sum(1 for r in results.values() if r.status == "red")
-    black = sum(1 for r in results.values() if r.status == "black")
+    found = sum(1 for r in results.values() if r.status == "found")
+    problematic = sum(1 for r in results.values() if r.status == "problematic")
+    not_found = sum(1 for r in results.values() if r.status == "not_found")
 
     await manager.broadcast("verify_pdf_updated", {
         "pdf_id": pdf_id,
-        "green": green,
-        "yellow": yellow,
-        "red": red,
-        "black": black,
+        "found": found,
+        "problematic": problematic,
+        "not_found": not_found,
     })
     await manager.send_log(
         "info",

@@ -3,7 +3,7 @@ import type { PdfDocument } from '../api/types'
 import { api } from '../api/rest-client'
 import { wsClient } from '../api/ws-client'
 
-type ParsingSortKey = 'name' | 'status' | 'count'
+type ParsingSortKey = 'name' | 'status' | 'count' | 'numbered'
 
 interface PdfState {
   pdfs: PdfDocument[]
@@ -15,7 +15,7 @@ interface PdfState {
   toggleParsingSort: (key: ParsingSortKey) => void
   addPdf: (pdf: PdfDocument) => void
   removePdf: (pdfId: string) => void
-  updatePdfStatus: (pdfId: string, status: PdfDocument['status'], sourceCount?: number) => void
+  updatePdfStatus: (pdfId: string, status: PdfDocument['status'], sourceCount?: number, numbered?: boolean) => void
   updateSourceCount: (pdfId: string, count: number) => void
   loadDirectory: (directory: string) => Promise<void>
   loadFiles: (filePaths: string[]) => Promise<void>
@@ -48,6 +48,7 @@ function startPollingFallback(jobId: string): void {
             path: '',
             status: pdf.status as PdfDocument['status'],
             source_count: pdf.source_count ?? 0,
+            numbered: false,
           })
         } else if (existing.status !== pdf.status || existing.source_count !== (pdf.source_count ?? 0)) {
           usePdfStore.getState().updatePdfStatus(pdf.id, pdf.status as PdfDocument['status'], pdf.source_count)
@@ -70,7 +71,7 @@ export const usePdfStore = create<PdfState>()((set, get) => ({
   pdfs: [],
   selectedPdfId: null,
   loading: false,
-  parsingSortKey: 'name' as ParsingSortKey,
+  parsingSortKey: 'numbered' as ParsingSortKey,
   parsingSortAsc: true,
 
   selectPdf: (id) => set({ selectedPdfId: id }),
@@ -107,10 +108,15 @@ export const usePdfStore = create<PdfState>()((set, get) => ({
       }
     }),
 
-  updatePdfStatus: (pdfId, status, sourceCount) =>
+  updatePdfStatus: (pdfId, status, sourceCount, numbered) =>
     set(state => ({
       pdfs: state.pdfs.map(p =>
-        p.id === pdfId ? { ...p, status, source_count: sourceCount ?? p.source_count } : p
+        p.id === pdfId ? {
+          ...p,
+          status,
+          source_count: sourceCount ?? p.source_count,
+          numbered: numbered ?? p.numbered,
+        } : p
       ),
     })),
 
@@ -200,6 +206,7 @@ export function initPdfListeners(): () => void {
         path: '',
         status: 'parsing',
         source_count: 0,
+        numbered: false,
       })
     }),
     wsClient.on('parse_progress', (data) => {
@@ -211,7 +218,9 @@ export function initPdfListeners(): () => void {
         sourceCount: data.source_count as number,
         fromCache: (data.from_cache as string) ?? null,
       })
-      usePdfStore.getState().updatePdfStatus(data.pdf_id as string, 'parsed', data.source_count as number)
+      usePdfStore.getState().updatePdfStatus(
+        data.pdf_id as string, 'parsed', data.source_count as number, data.numbered as boolean ?? false,
+      )
     }),
     wsClient.on('parse_error', (data) => {
       parseBuffer.push({

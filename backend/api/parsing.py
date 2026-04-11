@@ -25,20 +25,27 @@ class ParseRequest(BaseModel):
     force: bool = False
 
 
-def _save_to_cache(pdf_id: str, sources: list[SourceRectangle]) -> None:
+def _save_to_cache(pdf_id: str, sources: list[SourceRectangle], numbered: bool = False) -> None:
     cache_dir = settings.get_cache_dir()
     cache_file = cache_dir / f"{pdf_id}.json"
-    data = [s.model_dump() for s in sources]
-    cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    data = {"sources": [s.model_dump() for s in sources], "numbered": numbered}
+    try:
+        cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"[_save_to_cache] FAILED to write {cache_file}: {e}", flush=True)
+        raise
 
 
-def _load_from_cache(pdf_id: str) -> list[SourceRectangle] | None:
+def _load_from_cache(pdf_id: str) -> tuple[list[SourceRectangle], bool] | None:
     cache_file = settings.get_cache_dir() / f"{pdf_id}.json"
     if not cache_file.exists():
         return None
     try:
-        data = json.loads(cache_file.read_text(encoding="utf-8"))
-        return [SourceRectangle(**item) for item in data]
+        raw = json.loads(cache_file.read_text(encoding="utf-8"))
+        # Support old format (plain list) and new format (dict with numbered)
+        if isinstance(raw, list):
+            return [SourceRectangle(**item) for item in raw], False
+        return [SourceRectangle(**item) for item in raw["sources"]], raw.get("numbered", False)
     except Exception:
         return None
 
@@ -152,6 +159,7 @@ async def _parse_single_pdf(job_id: str, pdf_id: str, pdf_path: Path, force: boo
         # Check in-memory cache (already parsed this session)
         if not force and pdf_id in pdf_store:
             sources = pdf_store[pdf_id]["sources"]
+            numbered = pdf_store[pdf_id].get("numbered", False)
             mem_approved = len(sources) > 0 and all(s.status == "approved" for s in sources)
             mem_status = "approved" if mem_approved else "parsed"
             await manager.send_log("info", f"Using cached result for {pdf_path.name}", pdf_id=pdf_id)
@@ -171,6 +179,7 @@ async def _parse_single_pdf(job_id: str, pdf_id: str, pdf_path: Path, force: boo
                     "pdf_name": pdf_path.name,
                     "source_count": len(sources),
                     "sources": [s.model_dump() for s in sources],
+                    "numbered": numbered,
                     "from_cache": "memory",
                 },
             )
@@ -178,24 +187,24 @@ async def _parse_single_pdf(job_id: str, pdf_id: str, pdf_path: Path, force: boo
             return
 
         # Check disk cache for sources
-        cached_sources = None if force else _load_from_cache(pdf_id)
+        cached = None if force else _load_from_cache(pdf_id)
 
         await manager.send_log("info", f"Parsing {pdf_path.name}...", pdf_id=pdf_id)
 
         # Always parse PDF for page images (needed for viewer)
         document = await loop.run_in_executor(None, parse_pdf, str(pdf_path))
 
-        if cached_sources is not None:
+        if cached is not None:
             # Use cached sources, skip reference detection
-            sources = cached_sources
+            sources, numbered = cached
             await manager.send_log("info", f"Loaded cached sources for {pdf_path.name}", pdf_id=pdf_id)
             # Check if all sources were previously approved
             all_approved = len(sources) > 0 and all(s.status == "approved" for s in sources)
         else:
             # Detect references fresh
-            sources = await loop.run_in_executor(None, detect_references, document)
+            sources, numbered = await loop.run_in_executor(None, detect_references, document)
             # Save to disk cache
-            _save_to_cache(pdf_id, sources)
+            _save_to_cache(pdf_id, sources, numbered)
             all_approved = False
 
         resolved_status = "approved" if all_approved else "parsed"
@@ -205,6 +214,7 @@ async def _parse_single_pdf(job_id: str, pdf_id: str, pdf_path: Path, force: boo
             "document": document,
             "sources": sources,
             "original_sources": [s.model_copy() for s in sources],
+            "numbered": numbered,
         }
 
         # Update job status
@@ -220,7 +230,8 @@ async def _parse_single_pdf(job_id: str, pdf_id: str, pdf_path: Path, force: boo
                 "pdf_name": pdf_path.name,
                 "source_count": len(sources),
                 "sources": [s.model_dump() for s in sources],
-                "from_cache": "disk" if cached_sources is not None else None,
+                "numbered": numbered,
+                "from_cache": "disk" if cached is not None else None,
             },
         )
 
@@ -285,9 +296,13 @@ async def get_sources(pdf_id: str):
 @router.put("/parse/sources/{pdf_id}")
 async def update_sources(pdf_id: str, request: UpdateSourcesRequest):
     if pdf_id not in pdf_store:
+        print(f"[update_sources] 404: pdf_id={pdf_id} not in pdf_store (keys={list(pdf_store.keys())})", flush=True)
         raise HTTPException(status_code=404, detail="PDF not found")
+    print(f"[update_sources] {pdf_id}: {len(request.sources)} sources", flush=True)
     pdf_store[pdf_id]["sources"] = request.sources
-    _save_to_cache(pdf_id, request.sources)
+    _save_to_cache(pdf_id, request.sources, pdf_store[pdf_id].get("numbered", False))
+    cache_file = settings.get_cache_dir() / f"{pdf_id}.json"
+    print(f"[update_sources] wrote {cache_file} ({cache_file.stat().st_size} bytes)", flush=True)
     # Clean stale verify results for removed/renumbered sources
     _clean_verify_cache(pdf_id, {s.id for s in request.sources})
     # Also clean in-memory verify results
@@ -327,7 +342,7 @@ async def approve_pdf(pdf_id: str):
     doc.status = "approved"
 
     # Persist approved status to disk cache
-    _save_to_cache(pdf_id, pdf_store[pdf_id]["sources"])
+    _save_to_cache(pdf_id, pdf_store[pdf_id]["sources"], pdf_store[pdf_id].get("numbered", False))
 
     await manager.broadcast("parse_approved", {"pdf_id": pdf_id})
     await manager.send_log("success", f"Sources approved for {pdf_id}", pdf_id=pdf_id)
@@ -345,7 +360,7 @@ async def unapprove_pdf(pdf_id: str):
     doc = pdf_store[pdf_id]["document"]
     doc.status = "parsed"
 
-    _save_to_cache(pdf_id, pdf_store[pdf_id]["sources"])
+    _save_to_cache(pdf_id, pdf_store[pdf_id]["sources"], pdf_store[pdf_id].get("numbered", False))
 
     await manager.broadcast("parse_unapproved", {"pdf_id": pdf_id})
     await manager.send_log("info", f"Approval revoked for {pdf_id}", pdf_id=pdf_id)
@@ -385,6 +400,19 @@ async def extract_text_from_region(pdf_id: str, request: ExtractTextRequest):
             texts.append(block.text)
 
     return {"text": " ".join(texts)}
+
+
+class ExtractFieldsRequest(BaseModel):
+    text: str
+
+
+@router.post("/parse/extract-fields")
+async def extract_fields(request: ExtractFieldsRequest):
+    """Extract structured citation fields from raw reference text using NER + regex fallback."""
+    from services.source_extractor import extract_source_fields
+
+    parsed = await extract_source_fields(request.text)
+    return parsed.model_dump()
 
 
 @router.post("/parse/revert/{pdf_id}")

@@ -13,12 +13,11 @@ const ALL_DATABASES = [
 ]
 
 function statusColor(result: VerificationResult | undefined): string {
-  if (!result) return '#a8a29e'
+  if (!result) return '#9ca3af'
   switch (result.status) {
-    case 'green': return '#22c55e'
-    case 'yellow': return '#eab308'
-    case 'red': return '#ef4444'
-    case 'black': return '#111827'
+    case 'found': return '#22c55e'
+    case 'problematic': return '#f59e0b'
+    case 'not_found': return '#9ca3af'
     case 'in_progress': return '#a8a29e'
     default: return '#a8a29e'
   }
@@ -27,12 +26,22 @@ function statusColor(result: VerificationResult | undefined): string {
 function statusLabel(result: VerificationResult | undefined): string {
   if (!result) return 'Pending'
   switch (result.status) {
-    case 'green': return 'Found'
-    case 'yellow': return 'Partial Match'
-    case 'red': return 'Low Match'
-    case 'black': return 'Not Found'
+    case 'found': return 'Found'
+    case 'problematic': return 'Problematic'
+    case 'not_found': return 'Not Found'
     case 'in_progress': return 'Searching...'
     default: return 'Pending'
+  }
+}
+
+function problemTagDescription(tag: string): string {
+  switch (tag) {
+    case '!authors': return 'Source authors not found in candidate authors'
+    case '!doi/arXiv': return 'Source DOI/arXiv differs from candidate'
+    case '!url': return 'Non-DOI/arXiv URL is not reachable'
+    case '!year': return 'Year mismatch (>1 year difference)'
+    case '!publication': return 'Publication / venue mismatch'
+    default: return tag
   }
 }
 
@@ -70,7 +79,7 @@ function buildDbSearchUrl(db: string, text: string): string {
   return urls[db] ?? ''
 }
 
-const statusOrder: Record<string, number> = { green: 0, yellow: 1, red: 2, black: 3, in_progress: 4, pending: 5 }
+const statusOrder: Record<string, number> = { found: 0, problematic: 1, not_found: 2, in_progress: 3, pending: 4 }
 type CardSortMode = 'default' | 'status' | 'ref' | 'enabled'
 const MIN_BROWSER_ZOOM = 0.5
 const MAX_BROWSER_ZOOM = 3
@@ -183,9 +192,9 @@ export default function VerificationPage() {
         const bo = sb?.completed ? 0 : sb ? 1 : 2
         return dir * (ao - bo)
       }
-      if (pdfSortKey === 'green') return dir * ((sa?.green ?? 0) - (sb?.green ?? 0))
-      if (pdfSortKey === 'yellow') return dir * ((sa?.yellow ?? 0) - (sb?.yellow ?? 0))
-      return dir * ((sa?.red ?? 0) - (sb?.red ?? 0))
+      if (pdfSortKey === 'found') return dir * ((sa?.found ?? 0) - (sb?.found ?? 0))
+      if (pdfSortKey === 'problematic') return dir * ((sa?.problematic ?? 0) - (sb?.problematic ?? 0))
+      return dir * ((sa?.not_found ?? 0) - (sb?.not_found ?? 0))
     })
     return list
   }, [pdfs, pdfSortKey, pdfSortAsc, summaries])
@@ -331,7 +340,7 @@ export default function VerificationPage() {
     }
   }
 
-  async function handleOverride(status: 'green' | 'yellow' | 'red' | 'black') {
+  async function handleOverride(status: 'found' | 'problematic' | 'not_found') {
     if (!effectivePdfId || !selectedSourceId || !currentResult) return
     await useVerificationStore.getState().overrideStatus(effectivePdfId, selectedSourceId, status)
   }
@@ -789,14 +798,14 @@ export default function VerificationPage() {
             <button className={`${styles['sort-btn']} ${styles['sort-btn-grow']} ${pdfSortKey === 'name' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('name')} title="Sort by name">
               Name{pdfSortKey === 'name' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'green' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('green')} title="Sort by found count" style={{ color: pdfSortKey === 'green' ? '#22c55e' : undefined }}>
-              &#x2713;{pdfSortKey === 'green' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
+            <button className={`${styles['sort-btn']} ${pdfSortKey === 'found' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('found')} title="Sort by found count" style={{ color: pdfSortKey === 'found' ? '#22c55e' : undefined }}>
+              &#x2713;{pdfSortKey === 'found' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'yellow' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('yellow')} title="Sort by partial count" style={{ color: pdfSortKey === 'yellow' ? '#eab308' : undefined }}>
-              ~{pdfSortKey === 'yellow' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
+            <button className={`${styles['sort-btn']} ${pdfSortKey === 'problematic' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('problematic')} title="Sort by problematic count" style={{ color: pdfSortKey === 'problematic' ? '#f59e0b' : undefined }}>
+              !{pdfSortKey === 'problematic' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'red' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('red')} title="Sort by not found count" style={{ color: pdfSortKey === 'red' ? '#ef4444' : undefined }}>
-              &#x2715;{pdfSortKey === 'red' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
+            <button className={`${styles['sort-btn']} ${pdfSortKey === 'not_found' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('not_found')} title="Sort by not found count" style={{ color: pdfSortKey === 'not_found' ? '#9ca3af' : undefined }}>
+              &#x2715;{pdfSortKey === 'not_found' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
           </div>
         )}
@@ -819,7 +828,7 @@ export default function VerificationPage() {
                 sourceIds.length === 0
                 || sourceIds.some(sourceId => {
                   if (enabledSources[sourceId] === false) return false
-                  return resultsByPdf[pdf.id]?.[sourceId]?.status !== 'green'
+                  return resultsByPdf[pdf.id]?.[sourceId]?.status !== 'found'
                 })
               )
               return (
@@ -845,10 +854,9 @@ export default function VerificationPage() {
                   </div>
                   {summary && (
                     <div className={styles['verify-counts']}>
-                      <span className={`${styles['vc']} ${styles['vc-green']}`}>{summary.green}</span>
-                      <span className={`${styles['vc']} ${styles['vc-yellow']}`}>{summary.yellow}</span>
-                      <span className={`${styles['vc']} ${styles['vc-red']}`}>{summary.red}</span>
-                      <span className={`${styles['vc']} ${styles['vc-black']}`}>{summary.black ?? 0}</span>
+                      <span className={`${styles['vc']} ${styles['vc-found']}`}>{summary.found}</span>
+                      <span className={`${styles['vc']} ${styles['vc-problematic']}`}>{summary.problematic}</span>
+                      <span className={`${styles['vc']} ${styles['vc-not-found']}`}>{summary.not_found}</span>
                       <button
                         className={`${styles['vi-verify-btn']} ${styles['vi-verify-nonfound-btn']} ${styles['vi-verify-nonfound-inline']}`}
                         onClick={(e) => { e.stopPropagation(); handleVerifyNonFoundPdf(pdf.id) }}
@@ -988,6 +996,15 @@ export default function VerificationPage() {
                         {card.result && (
                           <span className={styles['status-badge']} style={{ background: statusColor(card.result), color: 'white' }}>
                             {statusLabel(card.result)}
+                          </span>
+                        )}
+                        {card.result?.problem_tags && card.result.problem_tags.length > 0 && (
+                          <span className={styles['problem-tags']}>
+                            {card.result.problem_tags.map((tag) => (
+                              <span key={tag} className={styles['problem-tag']} title={problemTagDescription(tag)}>
+                                {tag}
+                              </span>
+                            ))}
                           </span>
                         )}
                       </div>
@@ -1166,24 +1183,19 @@ export default function VerificationPage() {
                   >[{currentSource?.ref_number ?? '?'}]</button>
                   <div className={styles['detail-actions']}>
                     <button
-                      className={`${styles['override-btn']} ${styles['override-green']} ${r?.status === 'green' ? styles['override-green-active'] : ''}`}
+                      className={`${styles['override-btn']} ${styles['override-found']} ${r?.status === 'found' ? styles['override-found-active'] : ''}`}
                       disabled={!r || r.status === 'in_progress'}
-                      onClick={() => handleOverride('green')} title="Mark as found"
+                      onClick={() => handleOverride('found')} title="Mark as found"
                     >&#x2713;</button>
                     <button
-                      className={`${styles['override-btn']} ${styles['override-yellow']} ${r?.status === 'yellow' ? styles['override-yellow-active'] : ''}`}
+                      className={`${styles['override-btn']} ${styles['override-problematic']} ${r?.status === 'problematic' ? styles['override-problematic-active'] : ''}`}
                       disabled={!r || r.status === 'in_progress'}
-                      onClick={() => handleOverride('yellow')} title="Mark as partial"
-                    >/</button>
+                      onClick={() => handleOverride('problematic')} title="Mark as problematic"
+                    >!</button>
                     <button
-                      className={`${styles['override-btn']} ${styles['override-red']} ${r?.status === 'red' ? styles['override-red-active'] : ''}`}
+                      className={`${styles['override-btn']} ${styles['override-not-found']} ${r?.status === 'not_found' ? styles['override-not-found-active'] : ''}`}
                       disabled={!r || r.status === 'in_progress'}
-                      onClick={() => handleOverride('red')} title="Mark as low match"
-                    >V</button>
-                    <button
-                      className={`${styles['override-btn']} ${styles['override-black']} ${r?.status === 'black' ? styles['override-black-active'] : ''}`}
-                      disabled={!r || r.status === 'in_progress'}
-                      onClick={() => handleOverride('black')} title="Mark as not found"
+                      onClick={() => handleOverride('not_found')} title="Mark as not found"
                     >X</button>
                   </div>
                 </div>
@@ -1202,6 +1214,40 @@ export default function VerificationPage() {
                     title="Open Google Search in middle panel"
                   >Google Search</button>
                 </div>
+
+                {/* Problem tags + URL liveness */}
+                {r && r.problem_tags && r.problem_tags.length > 0 && (
+                  <div className={styles['detail-problems']}>
+                    <div className={styles['section-title']}>Problems</div>
+                    <ul className={styles['problem-list']}>
+                      {r.problem_tags.map((tag) => (
+                        <li key={tag} className={styles['problem-item']}>
+                          <span className={styles['problem-tag']}>{tag}</span>
+                          <span className={styles['problem-desc']}>{problemTagDescription(tag)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {r && r.url_liveness && Object.keys(r.url_liveness).length > 0 && (
+                  <div className={styles['detail-urls']}>
+                    <div className={styles['section-title']}>URL Status</div>
+                    <ul className={styles['url-list']}>
+                      {Object.entries(r.url_liveness).map(([url, alive]) => (
+                        <li key={url} className={styles['url-item']}>
+                          <span
+                            className={styles['url-dot']}
+                            style={{ background: alive ? '#22c55e' : '#ef4444' }}
+                            title={alive ? 'Reachable' : 'Dead link'}
+                          />
+                          <button className={styles['url-link']} onClick={() => openExternal(url)} title={url}>
+                            {url.length > 50 ? url.slice(0, 50) + '\u2026' : url}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 <div className={styles['section-header-row']}>
                   <div className={styles['section-title']}>Best Match</div>

@@ -72,6 +72,96 @@ export function addRectangle(pdfId: string, rect: SourceRectangle): void {
   updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
 }
 
+/**
+ * Merge a source rectangle with its closest neighbor (by bbox center distance).
+ * Same-page neighbors are preferred. Returns the id of the resulting merged source,
+ * or null if there is no other source to merge with.
+ */
+export function mergeWithClosest(pdfId: string, sourceId: string): string | null {
+  const all = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+  const target = all.find(s => s.id === sourceId)
+  if (!target || all.length < 2) return null
+
+  const targetCx = (target.bbox.x0 + target.bbox.x1) / 2
+  const targetCy = (target.bbox.y0 + target.bbox.y1) / 2
+
+  let closest: SourceRectangle | null = null
+  let closestDist = Infinity
+  for (const s of all) {
+    if (s.id === sourceId) continue
+    const cx = (s.bbox.x0 + s.bbox.x1) / 2
+    const cy = (s.bbox.y0 + s.bbox.y1) / 2
+    // Penalize different pages heavily so same-page neighbors win
+    const pagePenalty = s.bbox.page === target.bbox.page ? 0 : 100000
+    const dist = Math.hypot(cx - targetCx, cy - targetCy) + pagePenalty
+    if (dist < closestDist) {
+      closestDist = dist
+      closest = s
+    }
+  }
+  if (!closest) return null
+
+  pushHistory(pdfId)
+
+  // Sort target+closest by (page, y0) so text is joined in reading order
+  const ordered = [target, closest].sort((a, b) => {
+    if (a.bbox.page !== b.bbox.page) return a.bbox.page - b.bbox.page
+    return a.bbox.y0 - b.bbox.y0
+  })
+  const first = ordered[0]
+  const second = ordered[1]
+
+  // Build the merged bbox list — group by page, union bboxes per page
+  const byPage = new Map<number, { x0: number; y0: number; x1: number; y1: number }>()
+  const collectBboxes = (s: SourceRectangle): void => {
+    const allBboxes = s.bboxes && s.bboxes.length > 0 ? s.bboxes : [s.bbox]
+    for (const bb of allBboxes) {
+      const existing = byPage.get(bb.page)
+      if (existing) {
+        existing.x0 = Math.min(existing.x0, bb.x0)
+        existing.y0 = Math.min(existing.y0, bb.y0)
+        existing.x1 = Math.max(existing.x1, bb.x1)
+        existing.y1 = Math.max(existing.y1, bb.y1)
+      } else {
+        byPage.set(bb.page, { x0: bb.x0, y0: bb.y0, x1: bb.x1, y1: bb.y1 })
+      }
+    }
+  }
+  collectBboxes(first)
+  collectBboxes(second)
+
+  const mergedBboxes = Array.from(byPage.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([page, b]) => ({ ...b, page }))
+
+  const mergedText = `${first.text.trim()} ${second.text.trim()}`.trim()
+
+  const merged: SourceRectangle = {
+    ...first,
+    bbox: mergedBboxes[0],
+    bboxes: mergedBboxes.length > 1 ? mergedBboxes : [],
+    text: mergedText,
+    status: 'edited',
+  }
+
+  useSourcesStore.setState(state => ({
+    sourcesByPdf: {
+      ...state.sourcesByPdf,
+      [pdfId]: (state.sourcesByPdf[pdfId] ?? [])
+        .filter(s => s.id !== first.id && s.id !== second.id)
+        .concat(merged),
+    },
+  }))
+  renumberSources(pdfId)
+  updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+
+  // Find the new id of the merged source after renumbering
+  const renumbered = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+  const newOne = renumbered.find(s => s.text === mergedText)
+  return newOne?.id ?? null
+}
+
+
 export function removeRectangle(pdfId: string, sourceId: string): void {
   pushHistory(pdfId)
   useSourcesStore.setState(state => ({
@@ -142,10 +232,18 @@ export async function revertToOriginal(pdfId: string): Promise<void> {
 }
 
 export async function saveSources(pdfId: string): Promise<void> {
+  const sources = useSourcesStore.getState().sourcesByPdf[pdfId]
+  if (!sources) {
+    // No in-memory state yet — refuse to overwrite backend with an empty list.
+    console.warn(`[saveSources] skipped for ${pdfId}: no sources in store`)
+    return
+  }
   try {
-    await api.updateSources(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId] ?? [])
+    await api.updateSources(pdfId, sources)
+    console.log(`%c[saveSources] ✓ ${pdfId} (${sources.length} sources)`, 'color: #22c55e')
   } catch (e) {
-    console.error('Failed to save sources:', e)
+    console.error(`[saveSources] ✗ ${pdfId}:`, e)
+    throw e
   }
 }
 

@@ -80,8 +80,8 @@ async def search(source: ParsedSource) -> MatchResult | None:
 
     # Add container-title to separate editions published by different houses
     # under slightly different encyclopedia/journal titles.
-    if source.journal and _is_specific_container_title(source.journal):
-        params["query.container-title"] = source.journal
+    if source.source and _is_specific_container_title(source.source):
+        params["query.container-title"] = source.source
 
     # Year-range filter (±1 year) excludes papers from other editions whose
     # publication year differs from the cited one.  A tolerance of one year
