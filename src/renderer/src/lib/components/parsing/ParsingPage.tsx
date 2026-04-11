@@ -270,9 +270,18 @@ export default function ParsingPage() {
       setSelectedSourceId(null);
     }
 
+    const pdfSources = useSourcesStore.getState().sourcesByPdf[pdfId] ?? [];
+    for (const s of pdfSources) {
+      delete parsedFieldsCache.current[s.id];
+    }
+
     clearSourcesForPdf(pdfId);
     clearVerificationForPdf(pdfId);
     removePdf(pdfId);
+
+    void api.removePdf(pdfId).catch((err) => {
+      console.error("Failed to drop PDF from backend cache:", err);
+    });
   }
 
   async function handleApprove() {

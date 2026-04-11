@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { usePdfStore } from '../../stores/pdf-store'
 import { useSourcesStore, loadSources as loadSourcesFn } from '../../stores/sources-store'
 import { useVerificationStore } from '../../stores/verification-store'
+import { useSettingsStore } from '../../stores/settings-store'
 import type { VerificationResult, MatchResult, DbCheckEntry } from '../../api/types'
 import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../../utils/reference-text'
 import styles from './VerificationPage.module.css'
@@ -106,6 +107,14 @@ export default function VerificationPage() {
   const cardSortAsc = useVerificationStore(s => s.cardSortAsc)
   const pdfSortKey = useVerificationStore(s => s.pdfSortKey)
   const pdfSortAsc = useVerificationStore(s => s.pdfSortAsc)
+
+  const configuredDatabases = useSettingsStore(s => s.settings.databases)
+  const enabledDatabases = useMemo(() => {
+    const enabledNames = new Set(
+      configuredDatabases.filter(db => db.enabled).map(db => db.name),
+    )
+    return ALL_DATABASES.filter(name => enabledNames.has(name))
+  }, [configuredDatabases])
 
   const pdfs = useMemo(() => allPdfs.filter(p => p.status === 'approved'), [allPdfs])
   const effectivePdfId = useMemo(
@@ -1038,7 +1047,7 @@ export default function VerificationPage() {
                                 : `${card.progress.checkedDbs.length} searched`}
                           </span>
                           <div className={styles['progress-dots']}>
-                            {ALL_DATABASES.map(db => {
+                            {enabledDatabases.map(db => {
                               const check = card.progress?.checkedDbs.find((d: DbCheckEntry) => d.name === db)
                               const isCurrent = card.progress?.currentDb === db
                               const dotClass = [
@@ -1155,7 +1164,7 @@ export default function VerificationPage() {
                   className={styles['scholar-overlay-webview']}
                   src={browserOverlayUrl}
                   partition="persist:scholar-panel"
-                  allowpopups
+                  allowpopups="true"
                 />
               </div>
             )}
@@ -1240,7 +1249,7 @@ export default function VerificationPage() {
                             style={{ background: alive ? '#22c55e' : '#ef4444' }}
                             title={alive ? 'Reachable' : 'Dead link'}
                           />
-                          <button className={styles['url-link']} onClick={() => openExternal(url)} title={url}>
+                          <button className={styles['url-link']} onClick={() => openOverlayWithUrl(url)} title={url}>
                             {url.length > 50 ? url.slice(0, 50) + '\u2026' : url}
                           </button>
                         </li>
@@ -1277,7 +1286,7 @@ export default function VerificationPage() {
                           </span>
                         </div>
                         {r.best_match.url && (
-                          <button className={styles['match-link']} onClick={() => openExternal(r.best_match!.url)}>Open source &#x2197;</button>
+                          <button className={styles['match-link']} onClick={() => openOverlayWithUrl(r.best_match!.url)}>Open source &#x2197;</button>
                         )}
                       </div>
                     ) : (
@@ -1287,7 +1296,7 @@ export default function VerificationPage() {
                     {/* All database results */}
                     <div className={styles['section-title']}>Database Results</div>
                     <div className={styles['detail-db-list']}>
-                      {ALL_DATABASES.map(db => {
+                      {enabledDatabases.map(db => {
                         const match = r.all_results.find((m: MatchResult) => m.database === db)
                         const searched = r.databases_searched.includes(db)
                         const dbCheck = selectedProgress?.checkedDbs.find(d => d.name === db)
