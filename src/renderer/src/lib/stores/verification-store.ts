@@ -450,7 +450,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       set(state => {
         const summaries = { ...state.summaries }
         const newProgress: Record<string, { currentDb: string | null; checkedDbs: DbCheckEntry[] }> = {}
-        const newResults: Record<string, Record<string, VerificationResult>> = {}
+        const newResults: Record<string, Record<string, VerificationResult>> = { ...state.resultsByPdf }
         for (const id of pdfIds) {
           summaries[id] = {
             pdf_id: id, found: 0, problematic: 0, not_found: 0,
