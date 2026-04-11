@@ -978,44 +978,54 @@ export default function VerificationPage() {
                           title="Drag to reorder"
                           aria-hidden="true"
                         >&#x2807;</span>
-                        <button
-                          className={styles['copy-btn']}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            const text = verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)
-                            navigator.clipboard.writeText(text)
-                          }}
-                          title="Copy text"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" />
-                            <path d="M10.5 5.5V3a1.5 1.5 0 00-1.5-1.5H3A1.5 1.5 0 001.5 3v6A1.5 1.5 0 003 10.5h2.5" />
-                          </svg>
-                        </button>
-                        {verifyTexts[card.source.id] != null && sourceOriginalTexts[card.source.id] != null && verifyTexts[card.source.id] !== sourceOriginalTexts[card.source.id] && (
+                        <span className={styles['card-actions']}>
                           <button
-                            className={styles['reset-btn']}
+                            className={styles['copy-btn']}
                             onClick={(e) => {
                               e.stopPropagation()
-                              resetVerifyText(card.source.id)
+                              const text = verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)
+                              navigator.clipboard.writeText(text)
                             }}
-                            title="Reset to original text"
-                          >&#x21BA;</button>
-                        )}
-                        {card.result && (
-                          <span className={styles['status-badge']} style={{ background: statusColor(card.result), color: 'white' }}>
-                            {statusLabel(card.result)}
-                          </span>
-                        )}
-                        {card.result?.problem_tags && card.result.problem_tags.length > 0 && (
-                          <span className={styles['problem-tags']}>
-                            {card.result.problem_tags.map((tag) => (
-                              <span key={tag} className={styles['problem-tag']} title={problemTagDescription(tag)}>
-                                {tag}
-                              </span>
-                            ))}
-                          </span>
-                        )}
+                            title="Copy text"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" />
+                              <path d="M10.5 5.5V3a1.5 1.5 0 00-1.5-1.5H3A1.5 1.5 0 001.5 3v6A1.5 1.5 0 003 10.5h2.5" />
+                            </svg>
+                          </button>
+                          {verifyTexts[card.source.id] != null && sourceOriginalTexts[card.source.id] != null && verifyTexts[card.source.id] !== sourceOriginalTexts[card.source.id] && (
+                            <button
+                              className={styles['reset-btn']}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                resetVerifyText(card.source.id)
+                              }}
+                              title="Reset to original text"
+                            >&#x21BA;</button>
+                          )}
+                        </span>
+                        <span className={styles['card-status-group']}>
+                          {((card.result?.problem_tags && card.result.problem_tags.length > 0) ||
+                            (card.result && card.result.status !== 'found' && card.result.best_match && card.result.best_match.match_details.title_similarity > 0.75)) && (
+                            <span className={styles['problem-tags']}>
+                              {card.result && card.result.status !== 'found' && card.result.best_match && card.result.best_match.match_details.title_similarity > 0.75 && (
+                                <span className={styles['title-tag']} title={`Title similarity ${Math.round(card.result.best_match.match_details.title_similarity * 100)}%`}>
+                                  ~title
+                                </span>
+                              )}
+                              {card.result?.problem_tags?.map((tag) => (
+                                <span key={tag} className={styles['problem-tag']} title={problemTagDescription(tag)}>
+                                  {tag}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                          {card.result && (
+                            <span className={styles['status-badge']} style={{ background: statusColor(card.result), color: 'white' }}>
+                              {statusLabel(card.result)}
+                            </span>
+                          )}
+                        </span>
                       </div>
 
                       {/* Textarea */}
