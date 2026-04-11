@@ -9,13 +9,14 @@ from api.websocket import manager
 from models.settings import DatabaseConfig
 from models.source import SourceRectangle, ParsedSource
 from models.verification_result import VerificationResult, MatchResult
-from services.match_scorer import determine_status
+from services.match_scorer import determine_verification_status
 from services.search_settings import (
     get_max_concurrent_apis,
     get_max_concurrent_sources_per_pdf,
     get_search_timeout_seconds,
 )
 from services.source_extractor import extract_source_fields
+from services.url_checker import check_urls, is_doi_or_arxiv_url
 from utils.text_cleaning import clean_reference_text, strip_reference_noise
 
 
@@ -104,17 +105,15 @@ async def verify_pdf_sources(
 
         # Calculate final counts (works for both normal and cancelled runs)
         results = results_store.get(pdf_id, {})
-        green = sum(1 for r in results.values() if r.status == "green")
-        yellow = sum(1 for r in results.values() if r.status == "yellow")
-        red = sum(1 for r in results.values() if r.status == "red")
-        black = sum(1 for r in results.values() if r.status == "black")
+        found = sum(1 for r in results.values() if r.status == "found")
+        problematic = sum(1 for r in results.values() if r.status == "problematic")
+        not_found = sum(1 for r in results.values() if r.status == "not_found")
 
         await manager.broadcast("verify_pdf_done", {
             "pdf_id": pdf_id,
-            "green": green,
-            "yellow": yellow,
-            "red": red,
-            "black": black,
+            "found": found,
+            "problematic": problematic,
+            "not_found": not_found,
         })
 
         # Persist results to disk cache
@@ -154,17 +153,15 @@ async def verify_single_source(
 
     # Recalculate counts
     results = results_store.get(pdf_id, {})
-    green = sum(1 for r in results.values() if r.status == "green")
-    yellow = sum(1 for r in results.values() if r.status == "yellow")
-    red = sum(1 for r in results.values() if r.status == "red")
-    black = sum(1 for r in results.values() if r.status == "black")
+    found = sum(1 for r in results.values() if r.status == "found")
+    problematic = sum(1 for r in results.values() if r.status == "problematic")
+    not_found = sum(1 for r in results.values() if r.status == "not_found")
 
     await manager.broadcast("verify_pdf_updated", {
         "pdf_id": pdf_id,
-        "green": green,
-        "yellow": yellow,
-        "red": red,
-        "black": black,
+        "found": found,
+        "problematic": problematic,
+        "not_found": not_found,
     })
 
     # Persist updated results to disk cache
@@ -199,6 +196,8 @@ async def _verify_source(
 
     all_matches: list[MatchResult] = []
     databases_searched: list[str] = []
+    parsed: ParsedSource | None = None
+    url_liveness: dict[str, bool] = {}
 
     try:
         # Load settings for API keys and enabled databases
@@ -210,7 +209,7 @@ async def _verify_source(
         api_semaphore = asyncio.Semaphore(get_max_concurrent_apis())
 
         # Parse source text into structured fields
-        parsed = extract_source_fields(source_text)
+        parsed = await extract_source_fields(source_text)
 
         if parsed.doi:
             await manager.send_log("info", f"DOI found: {parsed.doi}", pdf_id=pdf_id, source_id=source_id)
@@ -226,9 +225,15 @@ async def _verify_source(
                 pdf_id=pdf_id,
                 source_id=source_id,
             )
-            # Use aggressively cleaned raw text for broader fallback queries.
             cleaned_query = clean_reference_text(source_text)
             parsed.title = cleaned_query[:200].strip()
+
+        # Kick off URL liveness check in parallel with the database searches.
+        # Skips doi.org / arxiv.org URLs (validated via API verifiers).
+        urls_to_check: list[str] = []
+        if parsed.url and not is_doi_or_arxiv_url(parsed.url):
+            urls_to_check.append(parsed.url)
+        url_check_task = asyncio.create_task(check_urls(urls_to_check)) if urls_to_check else None
 
         # Phase 1: Tier 1 APIs (parallel)
         tier1_results = await _run_tier1_apis(
@@ -243,22 +248,29 @@ async def _verify_source(
         all_matches.extend(tier1_results["matches"])
         databases_searched.extend(tier1_results["searched"])
 
-        # Check if we have a green match already
-        best_score = max((m.score for m in all_matches), default=0)
-        if best_score >= 0.65:
-            return
-
-        # Phase 2: Tier 2 Meta-search fallback (DuckDuckGo)
-        tier2_results = await _run_tier2_fallback(
-            pdf_id,
-            source_id,
-            parsed,
-            enabled_db_configs,
-            api_semaphore,
-            search_timeout,
+        # Phase 2: Tier 2 Meta-search fallback (DuckDuckGo) — only when nothing
+        # in tier 1 came close to a real title match.
+        best_title = max(
+            (m.match_details.title_similarity for m in all_matches), default=0.0
         )
-        all_matches.extend(tier2_results["matches"])
-        databases_searched.extend(tier2_results["searched"])
+        if best_title < 0.85:
+            tier2_results = await _run_tier2_fallback(
+                pdf_id,
+                source_id,
+                parsed,
+                enabled_db_configs,
+                api_semaphore,
+                search_timeout,
+            )
+            all_matches.extend(tier2_results["matches"])
+            databases_searched.extend(tier2_results["searched"])
+
+        # Wait for URL check to complete (with bounded timeout)
+        if url_check_task is not None:
+            try:
+                url_liveness = await asyncio.wait_for(url_check_task, timeout=12.0)
+            except (asyncio.TimeoutError, Exception):
+                url_liveness = {u: False for u in urls_to_check}
 
     except asyncio.CancelledError:
         await manager.send_log("info", f"Source {source_id} verification cancelled",
@@ -268,7 +280,10 @@ async def _verify_source(
                               pdf_id=pdf_id, source_id=source_id)
     finally:
         # Always finalize — guarantees verify_source_done is sent
-        await _finalize_result(results_store, pdf_id, source_id, all_matches, databases_searched)
+        await _finalize_result(
+            results_store, pdf_id, source_id, parsed, all_matches,
+            databases_searched, url_liveness,
+        )
 
 
 async def _run_tier1_apis(
@@ -462,17 +477,34 @@ async def _finalize_result(
     results_store: dict,
     pdf_id: str,
     source_id: str,
+    parsed: ParsedSource | None,
     all_matches: list[MatchResult],
     databases_searched: list[str],
+    url_liveness: dict[str, bool] | None = None,
 ):
-    """Finalize the verification result for a source."""
+    """Finalize the verification result for a source.
+
+    Picks the best candidate by composite score, then runs the new 3-category
+    status determination (found / problematic / not_found) with problem tags.
+    """
+    url_liveness = url_liveness or {}
+
+    # Best candidate is the highest-scoring match (composite of title+author).
     best_match = max(all_matches, key=lambda m: m.score) if all_matches else None
-    best_score = best_match.score if best_match else 0.0
-    status = determine_status(best_score)
+
+    if parsed is not None:
+        status, problem_tags = determine_verification_status(
+            parsed, best_match, url_liveness
+        )
+    else:
+        # Failure to parse → fall back to not_found
+        status, problem_tags = "not_found", []
 
     result = VerificationResult(
         source_id=source_id,
         status=status,
+        problem_tags=problem_tags,
+        url_liveness=url_liveness,
         best_match=best_match,
         all_results=sorted(all_matches, key=lambda m: m.score, reverse=True),
         databases_searched=databases_searched,
@@ -483,6 +515,8 @@ async def _finalize_result(
         "pdf_id": pdf_id,
         "source_id": source_id,
         "status": status,
+        "problem_tags": problem_tags,
+        "url_liveness": url_liveness,
         "best_match": best_match.model_dump() if best_match else None,
         "all_results": [m.model_dump() for m in result.all_results],
     })

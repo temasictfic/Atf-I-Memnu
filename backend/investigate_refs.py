@@ -98,7 +98,7 @@ def analyze_pdf(pdf_name: str, verbose: bool = True):
             print(f"    {marker} [page {page_num}] bold={block.is_bold} size={block.font_size:.1f} bbox=[{block.bbox[0]:.0f},{block.bbox[1]:.0f},{block.bbox[2]:.0f},{block.bbox[3]:.0f}]: {text[:150]}")
 
     # Step 6: Run actual detection
-    sources = detect_references(doc)
+    sources, _ = detect_references(doc)
     print(f"\n  === DETECTED SOURCES: {len(sources)} ===")
     for s in sources:
         print(f"    Ref #{s.ref_number}: page={s.bbox.page} | {s.text[:120]}")

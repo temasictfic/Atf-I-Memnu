@@ -16,6 +16,25 @@ def _default_output_dir() -> str:
     return str(Path(__file__).resolve().parent.parent / "output")
 
 
+def _default_ner_local_model_path() -> str:
+    """Path to the bundled fine-tuned INT8 ONNX NER model, or "" if not bundled.
+
+    Resolves `backend/models/citation-ner-int8` both in dev (source checkout)
+    and in a packaged Electron/PyInstaller build (via _MEIPASS).
+    """
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "models" / "citation-ner-int8")
+            candidates.append(Path(meipass) / "backend" / "models" / "citation-ner-int8")
+    candidates.append(Path(__file__).resolve().parent / "models" / "citation-ner-int8")
+    for c in candidates:
+        if c.exists() and any(c.glob("*.onnx")):
+            return str(c)
+    return ""
+
+
 class Settings(BaseSettings):
     port: int = 0
     host: str = "0.0.0.0"
@@ -27,6 +46,11 @@ class Settings(BaseSettings):
     max_concurrent_apis: int = 5
     max_concurrent_sources_per_pdf: int = 3
 
+    # NER
+    ner_model_name: str = "SIRIS-Lab/citation-parser-ENTITY"
+    ner_local_model_path: str = _default_ner_local_model_path()
+    ner_enabled: bool = True
+
     class Config:
         env_prefix = "ATFI_"
 
@@ -37,6 +61,11 @@ class Settings(BaseSettings):
 
     def get_cache_dir(self) -> Path:
         p = Path(self.output_dir) / "cache"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    def get_models_dir(self) -> Path:
+        p = Path(self.output_dir) / "models"
         p.mkdir(parents=True, exist_ok=True)
         return p
 

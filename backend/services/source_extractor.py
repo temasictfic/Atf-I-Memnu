@@ -20,20 +20,41 @@ URL_PATTERN = re.compile(r"https?://[^\s,;\"'}\]]+")
 YEAR_PATTERN = re.compile(r"\b((?:19|20)\d{2})\b")
 
 
-def extract_source_fields(raw_text: str) -> ParsedSource:
+async def extract_source_fields(raw_text: str) -> ParsedSource:
+    """Parse raw reference text into structured fields.
+
+    Tries NER extraction first (GLiNER2), falls back to regex if NER is
+    unavailable or returns low confidence.
+    """
+    from services.ner_extractor import extract_fields_ner
+
+    ner_result = await extract_fields_ner(raw_text)
+    if ner_result is not None and ner_result.parse_confidence >= 0.3:
+        return ner_result
+
+    return _extract_source_fields_regex(raw_text)
+
+
+def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
     """Parse raw reference text into structured fields using rule-based, format-aware extraction."""
     result = ParsedSource(raw_text=raw_text)
 
     # Strip leading numbering and access-date noise before parsing fields.
     text = strip_reference_noise(raw_text)
 
-    # Extract DOI (consolidated via utils)
-    result.doi = extract_doi(text)
+    # Extract identifiers for URL building
+    doi = extract_doi(text)
+    arxiv_id = extract_arxiv_id(text)
 
-    # Extract URL
-    url_match = URL_PATTERN.search(text)
-    if url_match:
-        result.url = url_match.group(0).rstrip(".,;:)]}\"'")
+    # Build URL: doi > arxiv > first extracted URL
+    if doi:
+        result.url = f"https://doi.org/{doi}"
+    elif arxiv_id:
+        result.url = f"https://arxiv.org/abs/{arxiv_id}"
+    else:
+        url_match = URL_PATTERN.search(text)
+        if url_match:
+            result.url = url_match.group(0).rstrip(".,;:)]}\"'")
 
     # Detect citation format
     fmt, fmt_confidence = detect_format(text)
@@ -49,8 +70,8 @@ def extract_source_fields(raw_text: str) -> ParsedSource:
     # Extract year (rule-based priority: parenthesized > post-conjunction > first-after-authors)
     result.year, year_start, year_end = _extract_year(text, author_end)
 
-    # Extract title and journal (format-aware)
-    result.title, result.journal = _extract_title_journal(text, author_end, year_start, year_end, fmt)
+    # Extract title and source (journal/conference/publisher name)
+    result.title, result.source = _extract_title_journal(text, author_end, year_start, year_end, fmt)
 
     # Compute confidence
     result.parse_confidence = _compute_parse_confidence(result)
@@ -622,8 +643,8 @@ def _compute_parse_confidence(parsed: ParsedSource) -> float:
     if len(parsed.title) >= 10:
         score += 0.15
 
-    # Journal present
-    if parsed.journal and len(parsed.journal) >= 3:
+    # Source (journal/conference/publisher) present
+    if parsed.source and len(parsed.source) >= 3:
         score += 0.10
 
     return min(round(score, 2), 1.0)

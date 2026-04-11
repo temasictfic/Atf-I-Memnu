@@ -5,7 +5,7 @@ class MatchDetails(BaseModel):
     title_similarity: float = 0.0
     author_match: float = 0.0
     year_match: float = 0.0
-    journal_match: float = 0.0
+    url_match: bool = False  # unified: doi, arXiv, or other URL matches
 
 
 class MatchResult(BaseModel):
@@ -22,7 +22,13 @@ class MatchResult(BaseModel):
 
 class VerificationResult(BaseModel):
     source_id: str
-    status: str = "pending"  # pending, in_progress, green, yellow, red, black
+    # Status values: pending, in_progress, found, problematic, not_found
+    status: str = "pending"
+    # Problem tags for "problematic" status — values:
+    # "!authors", "!doi/arXiv", "!url", "!year", "!publication"
+    problem_tags: list[str] = []
+    # URL -> liveness map (for non-doi/arXiv URLs that were checked)
+    url_liveness: dict[str, bool] = {}
     best_match: MatchResult | None = None
     all_results: list[MatchResult] = []
     databases_searched: list[str] = []
