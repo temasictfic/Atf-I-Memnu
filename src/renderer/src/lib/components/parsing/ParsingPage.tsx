@@ -848,7 +848,7 @@ export default function ParsingPage() {
           </div>
         )}
 
-        <div className={styles["pdf-list"]} data-scrollable>
+        <div className={styles["pdf-list"]}>
           {allPdfs.length === 0 ? (
             <div className={styles["empty-state"]}>
               <div className={styles["empty-icon"]}>&#x1F4C4;</div>

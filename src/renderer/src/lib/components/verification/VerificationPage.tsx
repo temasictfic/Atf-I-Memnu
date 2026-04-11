@@ -819,7 +819,7 @@ export default function VerificationPage() {
           </div>
         )}
 
-        <div className={styles['verify-list']} data-scrollable>
+        <div className={styles['verify-list']}>
           {pdfs.length === 0 ? (
             <div className={styles['empty-state']}>
               <p>No approved PDFs</p>
