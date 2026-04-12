@@ -19,6 +19,24 @@ function updateSourceCount(pdfId: string, count: number): void {
   usePdfStore.getState().updateSourceCount(pdfId, count)
 }
 
+/**
+ * Demote an approved PDF back to "parsed" when the user edits its
+ * rectangles. Unlike `unapproveSources` — which is triggered by the user
+ * explicitly clicking the Approved toggle and therefore reloads the cached
+ * backend state — this variant does NOT touch the in-memory source list,
+ * because the caller has just modified it locally and we would otherwise
+ * clobber the edit. Status-only change; the backend unapprove is best-
+ * effort in the background.
+ */
+function autoUnapproveOnEdit(pdfId: string): void {
+  const pdf = usePdfStore.getState().pdfs.find(p => p.id === pdfId)
+  if (!pdf || pdf.status !== 'approved') return
+  usePdfStore.getState().updatePdfStatus(pdfId, 'parsed')
+  api.unapprovePdf(pdfId).catch(err => {
+    console.warn(`[sources-store] backend unapprove failed for ${pdfId}:`, err)
+  })
+}
+
 function pushHistory(pdfId: string): void {
   useSourcesStore.setState(state => {
     const history = state.historyByPdf[pdfId] ?? []
@@ -70,6 +88,7 @@ export function addRectangle(pdfId: string, rect: SourceRectangle): void {
   }))
   renumberSources(pdfId)
   updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  autoUnapproveOnEdit(pdfId)
 }
 
 /**
@@ -154,6 +173,7 @@ export function mergeWithClosest(pdfId: string, sourceId: string): string | null
   }))
   renumberSources(pdfId)
   updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  autoUnapproveOnEdit(pdfId)
 
   // Find the new id of the merged source after renumbering
   const renumbered = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
@@ -172,6 +192,7 @@ export function removeRectangle(pdfId: string, sourceId: string): void {
   }))
   renumberSources(pdfId)
   updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  autoUnapproveOnEdit(pdfId)
 }
 
 export function updateRectangle(pdfId: string, sourceId: string, updates: Partial<SourceRectangle>): void {
@@ -184,6 +205,7 @@ export function updateRectangle(pdfId: string, sourceId: string, updates: Partia
       ),
     },
   }))
+  autoUnapproveOnEdit(pdfId)
 }
 
 export function beginEdit(pdfId: string): void {
@@ -199,6 +221,7 @@ export function updateRectangleSilent(pdfId: string, sourceId: string, updates: 
       ),
     },
   }))
+  autoUnapproveOnEdit(pdfId)
 }
 
 export function revert(pdfId: string): void {
