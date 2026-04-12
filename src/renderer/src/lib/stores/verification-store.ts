@@ -53,6 +53,8 @@ interface VerificationState {
 
 let pollingTimer: ReturnType<typeof setInterval> | null = null
 let pollingPdfIds: string[] = []
+let pollingConsecutiveErrors = 0
+const MAX_POLLING_CONSECUTIVE_ERRORS = 3
 
 function stopPolling(): void {
   if (pollingTimer) {
@@ -60,6 +62,7 @@ function stopPolling(): void {
     pollingTimer = null
   }
   pollingPdfIds = []
+  pollingConsecutiveErrors = 0
 }
 
 function startPolling(pdfIds: string[], jobId: string): void {
@@ -129,8 +132,20 @@ function startPolling(pdfIds: string[], jobId: string): void {
 
       const allDone = statusResp.pdfs.length > 0 && statusResp.pdfs.every(s => s.completed)
       if (allDone) stopPolling()
+      // Successful tick — reset the consecutive-error counter
+      pollingConsecutiveErrors = 0
     } catch (e) {
-      console.error('[Poll] Polling error:', e)
+      pollingConsecutiveErrors++
+      console.error(
+        `[Poll] Polling error (${pollingConsecutiveErrors}/${MAX_POLLING_CONSECUTIVE_ERRORS}):`,
+        e,
+      )
+      // Backend is probably down (restart, crash, network hiccup). Don't
+      // spin forever hammering a dead endpoint — stop after a few failures.
+      if (pollingConsecutiveErrors >= MAX_POLLING_CONSECUTIVE_ERRORS) {
+        console.warn('[Poll] Too many consecutive errors, stopping poll loop')
+        stopPolling()
+      }
     }
   }, 5000)
 }
@@ -640,23 +655,43 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   },
 
   overrideStatus: async (pdfId, sourceId, status) => {
+    // Apply optimistically FIRST so a late `verify_source_done` WS event
+    // arriving between the API call and the set() can't clobber the user's
+    // manual override. If the API call fails we roll back.
+    let previousStatus: VerifyStatus | undefined
+    set(state => {
+      const prev = state.resultsByPdf[pdfId]?.[sourceId]
+      if (!prev) return state
+      previousStatus = prev.status
+      return {
+        resultsByPdf: {
+          ...state.resultsByPdf,
+          [pdfId]: {
+            ...state.resultsByPdf[pdfId],
+            [sourceId]: { ...prev, status },
+          },
+        },
+      }
+    })
     try {
       await api.overrideStatus(pdfId, sourceId, status)
-      set(state => {
-        const prev = state.resultsByPdf[pdfId]?.[sourceId]
-        if (!prev) return state
-        return {
-          resultsByPdf: {
-            ...state.resultsByPdf,
-            [pdfId]: {
-              ...state.resultsByPdf[pdfId],
-              [sourceId]: { ...prev, status },
-            },
-          },
-        }
-      })
     } catch (e) {
       console.error('Failed to override status:', e)
+      if (previousStatus !== undefined) {
+        set(state => {
+          const prev = state.resultsByPdf[pdfId]?.[sourceId]
+          if (!prev) return state
+          return {
+            resultsByPdf: {
+              ...state.resultsByPdf,
+              [pdfId]: {
+                ...state.resultsByPdf[pdfId],
+                [sourceId]: { ...prev, status: previousStatus! },
+              },
+            },
+          }
+        })
+      }
     }
   },
 

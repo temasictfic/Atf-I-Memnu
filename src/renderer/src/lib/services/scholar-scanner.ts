@@ -175,6 +175,11 @@ export class ScholarScanner {
   private callbacks: ScholarScanCallbacks | null = null
   private rateLimiter = new ScholarRateLimiter()
   private cancelRequested = false
+  // Bumped on every loadAndExtract call. The load closure captures its own
+  // generation and checks after each await — if the counter has moved
+  // forward, a newer call (or a cancellation) owns the webview now, so the
+  // stale closure must not execute JS against it or resolve/reject.
+  private loadGeneration = 0
 
   setWebview(webview: any): void {
     this.webview = webview
@@ -207,6 +212,10 @@ export class ScholarScanner {
 
   cancel(): void {
     this.cancelRequested = true
+    // Bump the generation so any in-flight loadAndExtract closure sees
+    // `isStale() === true` on its next await and bails without touching
+    // the webview or resolving its promise.
+    this.loadGeneration++
     this.setStatus('cancelled')
   }
 
@@ -345,6 +354,13 @@ export class ScholarScanner {
   }
 
   private loadAndExtract(url: string): Promise<ScholarCandidate[] | 'captcha'> {
+    // Capture the generation at the start of this call; every async step
+    // below re-checks it and bails silently if a newer call has taken over
+    // the shared webview. This prevents the old closure from running JS
+    // against a page that belongs to the *next* citation.
+    const myGen = ++this.loadGeneration
+    const isStale = (): boolean => this.loadGeneration !== myGen
+
     return new Promise((resolve, reject) => {
       const view = this.webview
       if (!view) {
@@ -386,10 +402,18 @@ export class ScholarScanner {
 
         // Wait for page JS to finish rendering
         await sleep(2500)
+        if (isStale()) {
+          console.warn('[Scholar] stale onLoaded after sleep — aborting extraction')
+          return
+        }
 
         try {
           // Check for CAPTCHA first
           const isCaptcha = await view.executeJavaScript(DETECT_CAPTCHA_SCRIPT)
+          if (isStale()) {
+            console.warn('[Scholar] stale onLoaded after captcha check — aborting')
+            return
+          }
           if (isCaptcha) {
             resolve('captcha')
             return
@@ -397,6 +421,10 @@ export class ScholarScanner {
 
           // Extract results
           const extraction = await view.executeJavaScript(EXTRACT_RESULTS_SCRIPT)
+          if (isStale()) {
+            console.warn('[Scholar] stale onLoaded after extraction — discarding results')
+            return
+          }
           console.log('[Scholar] Extraction result:', JSON.stringify(extraction).substring(0, 500))
           if (extraction && extraction.ok && Array.isArray(extraction.results)) {
             resolve(extraction.results)
@@ -408,10 +436,12 @@ export class ScholarScanner {
               bodyLen: document.body?.innerText?.length || 0,
               html: document.documentElement.outerHTML.substring(0, 500)
             })`)
+            if (isStale()) return
             console.warn('[Scholar] Extraction failed. Page info:', debugInfo)
             resolve([])
           }
         } catch (err) {
+          if (isStale()) return
           reject(new Error(`Extraction failed: ${err}`))
         }
       }

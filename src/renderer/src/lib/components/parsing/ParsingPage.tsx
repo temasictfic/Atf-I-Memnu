@@ -146,6 +146,12 @@ export default function ParsingPage() {
   // Refs for interaction state (not reactive, no re-render needed)
   const viewerRef = useRef<HTMLDivElement>(null);
   const loadedPdfIdRef = useRef<string | null>(null);
+  // Monotonic counter bumped on every `loadPdfPages` call. Each load captures
+  // its own generation at entry and re-checks after every `await`; if the
+  // ref moves ahead, a newer load has started and the older one must abort
+  // and destroy any pdfjs-dist objects it's already created. Without this,
+  // rapid PDF switches leak PDFDocumentProxy instances into the pdfjs worker.
+  const loadGenerationRef = useRef(0);
   // Set by loadPdfPages when a new batch of pages is about to mount; the
   // useLayoutEffect below consumes it to apply fit-to-width before paint.
   const pendingFitRef = useRef(false);
@@ -336,6 +342,9 @@ export default function ParsingPage() {
   }, []);
 
   async function loadPdfPages(pdfId: string) {
+    const myGen = ++loadGenerationRef.current;
+    const isStale = () => loadGenerationRef.current !== myGen;
+
     setLoadingPages(true);
     setSelectedSourceId(null);
     // Tear down any previously loaded pdfjs-dist document.
@@ -349,18 +358,22 @@ export default function ParsingPage() {
         console.warn(
           `[ParsingPage] no local path for ${pdfId}; cannot render`,
         );
-        setPages([]);
+        if (!isStale()) setPages([]);
         return;
       }
 
       // Load the PDF bytes and hand them to pdfjs-dist. We pass the buffer
       // directly (pdfjs transfers ownership to its worker).
       const bytes = await window.electronAPI.readPdfFile(localPath);
+      if (isStale()) return;
+
       const pdfjsLib = getPdfjs();
       const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
 
-      // Guard against rapid PDF switches.
-      if (usePdfStore.getState().selectedPdfId !== pdfId) {
+      // Guard against rapid PDF switches — if a newer load has started, or
+      // the store has moved to a different PDF entirely, destroy this doc
+      // and bail before publishing it to state.
+      if (isStale() || usePdfStore.getState().selectedPdfId !== pdfId) {
         await doc.destroy();
         return;
       }
@@ -369,6 +382,11 @@ export default function ParsingPage() {
       // share them (true for virtually all academic papers). This lets us
       // render immediately instead of waiting for every page proxy.
       const firstPage = await doc.getPage(1);
+      if (isStale()) {
+        firstPage.cleanup();
+        await doc.destroy();
+        return;
+      }
       const firstVp = firstPage.getViewport({ scale: SCALE });
       firstPage.cleanup();
       const w = firstVp.width;
@@ -401,7 +419,11 @@ export default function ParsingPage() {
             }
           }),
         );
-        if (corrections.length > 0 && usePdfStore.getState().selectedPdfId === pdfId) {
+        if (
+          corrections.length > 0
+          && !isStale()
+          && usePdfStore.getState().selectedPdfId === pdfId
+        ) {
           setPages((prev) => {
             const next = [...prev];
             for (const c of corrections) {
@@ -416,14 +438,20 @@ export default function ParsingPage() {
       // import, but if the user opens a PDF that was imported in a prior
       // session the store may be empty — fall back to the cache endpoint
       // in that case. This mirrors the old `getSources` seeding.
-      if (!useSourcesStore.getState().sourcesByPdf[pdfId]) {
+      if (!isStale() && !useSourcesStore.getState().sourcesByPdf[pdfId]) {
         await loadSources(pdfId);
       }
     } catch (e) {
       console.error("Failed to load PDF pages:", e);
-      setPages([]);
+      if (!isStale()) {
+        setPages([]);
+        // Surface the error to the user instead of a silent blank viewer.
+        window.alert(
+          `Failed to open PDF: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     } finally {
-      setLoadingPages(false);
+      if (!isStale()) setLoadingPages(false);
     }
   }
 
