@@ -1,13 +1,20 @@
 """Singleton manager for the bundled citation-parser NER model.
 
-Loads the bundled fine-tuned INT8 ONNX model at startup and automatically
-detects GPU acceleration when available:
+Loads the bundled fine-tuned INT8 ONNX model at startup using ONNX Runtime
+and the `tokenizers` library directly — no transformers, no optimum, no
+torch. The resulting pipeline object is callable with raw text and returns
+a list of entity dicts matching HuggingFace's "simple" aggregation output
+(keys: entity_group, score, start, end), so ner_extractor.py needs no
+changes.
+
+Execution provider is auto-detected:
   - DirectML (Windows, any DirectX 12 GPU)
   - CUDA (NVIDIA GPUs)
-  - Falls back to CPU otherwise
+  - CPU otherwise
 """
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -20,6 +27,10 @@ _pipeline: Any | None = None
 _pipeline_lock = asyncio.Lock()
 _loading = False
 _load_error: str | None = None
+
+# RoBERTa's positional embedding is 514 (512 content + 2 special). Keep the
+# tokenizer capped at 512 total so input_ids never exceed the model window.
+_MAX_SEQ_LEN = 512
 
 
 def is_model_ready() -> bool:
@@ -58,10 +69,129 @@ def _detect_ort_provider() -> str:
     return "CPUExecutionProvider"
 
 
+def _softmax(x):
+    import numpy as np
+
+    x_max = np.max(x, axis=-1, keepdims=True)
+    e = np.exp(x - x_max)
+    return e / np.sum(e, axis=-1, keepdims=True)
+
+
+class NerPipeline:
+    """Thin replacement for `transformers.pipeline("ner", aggregation_strategy="simple")`.
+
+    Callable with a single string. Returns a list of entity dicts with the
+    same shape HF emits: ``{"entity_group", "score", "start", "end"}``.
+    """
+
+    def __init__(self, session, tokenizer, id2label: dict[int, str]):
+        self.session = session
+        self.tokenizer = tokenizer
+        self.id2label = id2label
+        self._input_names = {i.name for i in session.get_inputs()}
+
+    def __call__(self, text: str) -> list[dict]:
+        import numpy as np
+
+        enc = self.tokenizer.encode(text)
+
+        input_ids = np.array([enc.ids], dtype=np.int64)
+        attention_mask = np.array([enc.attention_mask], dtype=np.int64)
+
+        feeds: dict[str, Any] = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+        if "token_type_ids" in self._input_names:
+            feeds["token_type_ids"] = np.zeros_like(input_ids)
+
+        logits = self.session.run(None, feeds)[0]  # [1, seq, num_labels]
+        probs = _softmax(logits[0])  # [seq, num_labels]
+        label_ids = np.argmax(probs, axis=-1)  # [seq]
+        scores = probs[np.arange(len(label_ids)), label_ids]  # [seq]
+
+        tokens: list[dict] = []
+        for label_id, score, offset, special in zip(
+            label_ids, scores, enc.offsets, enc.special_tokens_mask
+        ):
+            if special:
+                continue
+            start, end = int(offset[0]), int(offset[1])
+            if start == end:
+                # Zero-width tokens (e.g. leading space on RoBERTa prefix-space
+                # encoders) carry no text span — skip.
+                continue
+            tokens.append({
+                "label": self.id2label[int(label_id)],
+                "score": float(score),
+                "start": start,
+                "end": end,
+            })
+
+        return _aggregate_simple(tokens)
+
+
+def _aggregate_simple(tokens: list[dict]) -> list[dict]:
+    """Merge consecutive BIO-labeled tokens into entity spans.
+
+    Mirrors HuggingFace's ``aggregation_strategy="simple"``: consecutive
+    tokens sharing the same entity type are merged; a new B- marker (or a
+    type change) starts a fresh span. Entity score is the mean of member
+    token probabilities.
+    """
+    groups: list[dict] = []
+    current: dict | None = None
+
+    for tok in tokens:
+        label = tok["label"]
+        if label == "O":
+            if current is not None:
+                groups.append(current)
+                current = None
+            continue
+
+        if label.startswith("B-") or label.startswith("I-"):
+            prefix = label[0]
+            entity_type = label[2:]
+        else:
+            prefix = ""
+            entity_type = label
+
+        if (
+            current is not None
+            and entity_type == current["_type"]
+            and prefix != "B"
+        ):
+            current["_scores"].append(tok["score"])
+            current["end"] = tok["end"]
+        else:
+            if current is not None:
+                groups.append(current)
+            current = {
+                "_type": entity_type,
+                "_scores": [tok["score"]],
+                "start": tok["start"],
+                "end": tok["end"],
+            }
+
+    if current is not None:
+        groups.append(current)
+
+    return [
+        {
+            "entity_group": g["_type"],
+            "score": sum(g["_scores"]) / len(g["_scores"]),
+            "start": g["start"],
+            "end": g["end"],
+        }
+        for g in groups
+    ]
+
+
 def _load_pipeline_sync() -> Any:
     """Load the bundled ONNX NER pipeline (blocking, call from executor)."""
-    from optimum.onnxruntime import ORTModelForTokenClassification
-    from transformers import AutoTokenizer, pipeline as hf_pipeline
+    import onnxruntime as ort
+    from tokenizers import Tokenizer
 
     local_path = settings.ner_local_model_path
     if not local_path or not Path(local_path).exists():
@@ -74,25 +204,31 @@ def _load_pipeline_sync() -> Any:
     onnx_files = sorted(path.glob("*.onnx"))
     if not onnx_files:
         raise RuntimeError(f"No .onnx files found in {path}")
-    file_name = onnx_files[0].name
+    onnx_file = onnx_files[0]
+
+    config_path = path / "config.json"
+    if not config_path.exists():
+        raise RuntimeError(f"config.json missing in {path}")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    id2label_raw = config.get("id2label") or {}
+    id2label = {int(k): v for k, v in id2label_raw.items()}
+    if not id2label:
+        raise RuntimeError(f"config.json has no id2label mapping in {path}")
+
+    tokenizer_path = path / "tokenizer.json"
+    if not tokenizer_path.exists():
+        raise RuntimeError(f"tokenizer.json missing in {path}")
+    tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    tokenizer.enable_truncation(max_length=_MAX_SEQ_LEN)
 
     provider = _detect_ort_provider()
     logger.info(
         "Loading ONNX NER model: %s (file=%s, provider=%s)",
-        path, file_name, provider,
+        path, onnx_file.name, provider,
     )
-    model = ORTModelForTokenClassification.from_pretrained(
-        str(path), file_name=file_name, provider=provider,
-    )
-    tokenizer = AutoTokenizer.from_pretrained(str(path))
-    ner_pipeline = hf_pipeline(
-        "ner",
-        model=model,
-        tokenizer=tokenizer,
-        aggregation_strategy="simple",
-    )
+    session = ort.InferenceSession(str(onnx_file), providers=[provider])
     logger.info("ONNX NER pipeline loaded (provider=%s)", provider)
-    return ner_pipeline
+    return NerPipeline(session, tokenizer, id2label)
 
 
 async def get_pipeline() -> Any | None:
@@ -109,7 +245,6 @@ async def get_pipeline() -> Any | None:
         return _pipeline
 
     async with _pipeline_lock:
-        # Double-check after acquiring lock
         if _pipeline is not None:
             return _pipeline
 
