@@ -1,12 +1,17 @@
 import { create } from 'zustand'
 import type { PdfDocument } from '../api/types'
-import { api } from '../api/rest-client'
+import { parseAndDetect } from '../pdf/orchestrator'
+import { setSources } from './sources-store'
 import { wsClient } from '../api/ws-client'
 
 type ParsingSortKey = 'name' | 'status' | 'count' | 'numbered'
 
 interface PdfState {
   pdfs: PdfDocument[]
+  // Absolute file system paths keyed by pdf_id (filename stem). Populated from
+  // loadFiles/loadDirectory so the renderer can read PDF bytes locally without
+  // round-tripping through the backend.
+  pathsById: Record<string, string>
   selectedPdfId: string | null
   loading: boolean
   parsingSortKey: ParsingSortKey
@@ -14,6 +19,7 @@ interface PdfState {
   selectPdf: (id: string | null) => void
   toggleParsingSort: (key: ParsingSortKey) => void
   addPdf: (pdf: PdfDocument) => void
+  setPdfPath: (pdfId: string, path: string) => void
   removePdf: (pdfId: string) => void
   updatePdfStatus: (pdfId: string, status: PdfDocument['status'], sourceCount?: number, numbered?: boolean) => void
   updateSourceCount: (pdfId: string, count: number) => void
@@ -22,143 +28,19 @@ interface PdfState {
   clearPdfs: () => void
 }
 
-let pollIntervalId: ReturnType<typeof setInterval> | null = null
-
-function stopPolling(): void {
-  if (pollIntervalId) {
-    clearInterval(pollIntervalId)
-    pollIntervalId = null
-  }
+function stemFromPath(filePath: string): string {
+  const base = filePath.split(/[/\\]/).pop() ?? filePath
+  return base.replace(/\.pdf$/i, '')
 }
 
-function startPollingFallback(jobId: string): void {
-  stopPolling()
-  pollIntervalId = setInterval(async () => {
-    try {
-      const status = await api.parseStatus(jobId)
-      const { pdfs } = usePdfStore.getState()
-      let allDone = true
-
-      for (const pdf of status.pdfs) {
-        const existing = pdfs.find(p => p.id === pdf.id)
-        if (!existing) {
-          usePdfStore.getState().addPdf({
-            id: pdf.id,
-            name: pdf.name,
-            path: '',
-            status: pdf.status as PdfDocument['status'],
-            source_count: pdf.source_count ?? 0,
-            numbered: false,
-          })
-        } else if (existing.status !== pdf.status || existing.source_count !== (pdf.source_count ?? 0)) {
-          usePdfStore.getState().updatePdfStatus(pdf.id, pdf.status as PdfDocument['status'], pdf.source_count)
-        }
-        if (pdf.status !== 'parsed' && pdf.status !== 'error' && pdf.status !== 'approved') {
-          allDone = false
-        }
-      }
-      if (allDone && status.pdfs.length > 0) {
-        usePdfStore.setState({ loading: false })
-        stopPolling()
-      }
-    } catch (e) {
-      console.error('Polling fallback failed:', e)
-    }
-  }, 3000)
+function nameFromPath(filePath: string): string {
+  return filePath.split(/[/\\]/).pop() ?? filePath
 }
-
-export const usePdfStore = create<PdfState>()((set, get) => ({
-  pdfs: [],
-  selectedPdfId: null,
-  loading: false,
-  parsingSortKey: 'numbered' as ParsingSortKey,
-  parsingSortAsc: true,
-
-  selectPdf: (id) => set({ selectedPdfId: id }),
-
-  toggleParsingSort: (key) =>
-    set(state => {
-      if (state.parsingSortKey === key) return { parsingSortAsc: !state.parsingSortAsc }
-      return { parsingSortKey: key, parsingSortAsc: true }
-    }),
-
-  addPdf: (pdf) =>
-    set(state => ({
-      pdfs: state.pdfs.some(p => p.id === pdf.id) ? state.pdfs : [...state.pdfs, pdf],
-    })),
-
-  removePdf: (pdfId) =>
-    set(state => {
-      const remaining = state.pdfs.filter(p => p.id !== pdfId)
-      let nextSelectedPdfId = state.selectedPdfId
-
-      if (state.selectedPdfId === pdfId) {
-        if (remaining.length === 0) {
-          nextSelectedPdfId = null
-        } else {
-          const removedIndex = state.pdfs.findIndex(p => p.id === pdfId)
-          const fallbackIndex = Math.min(Math.max(removedIndex, 0), remaining.length - 1)
-          nextSelectedPdfId = remaining[fallbackIndex]?.id ?? null
-        }
-      }
-
-      return {
-        pdfs: remaining,
-        selectedPdfId: nextSelectedPdfId,
-      }
-    }),
-
-  updatePdfStatus: (pdfId, status, sourceCount, numbered) =>
-    set(state => ({
-      pdfs: state.pdfs.map(p =>
-        p.id === pdfId ? {
-          ...p,
-          status,
-          source_count: sourceCount ?? p.source_count,
-          numbered: numbered ?? p.numbered,
-        } : p
-      ),
-    })),
-
-  updateSourceCount: (pdfId, count) =>
-    set(state => ({
-      pdfs: state.pdfs.map(p => (p.id === pdfId ? { ...p, source_count: count } : p)),
-    })),
-
-  loadDirectory: async (directory) => {
-    set({ loading: true })
-    try {
-      const response = await api.parseDirectory(directory)
-      startPollingFallback(response.job_id)
-    } catch (e) {
-      console.error('Failed to start parsing:', e)
-      set({ loading: false })
-    }
-  },
-
-  loadFiles: async (filePaths) => {
-    set({ loading: true })
-    try {
-      const response = await api.parseFiles(filePaths)
-      startPollingFallback(response.job_id)
-    } catch (e) {
-      console.error('Failed to start parsing:', e)
-      set({ loading: false })
-    }
-  },
-
-  clearPdfs: () => {
-    stopPolling()
-    set({ pdfs: [], selectedPdfId: null, loading: false })
-  },
-}))
-
-// --- Buffered parse console logging ---
 
 interface ParseLogEntry {
   pdfName: string
   sourceCount: number
-  fromCache: string | null
+  fromCache: boolean
   error?: string
 }
 
@@ -168,7 +50,7 @@ function flushParseLog(): void {
   if (parseBuffer.length === 0) return
 
   const totalSources = parseBuffer.reduce((sum, e) => sum + e.sourceCount, 0)
-  const allCached = parseBuffer.every(e => e.fromCache !== null && !e.error)
+  const allCached = parseBuffer.every(e => e.fromCache && !e.error)
 
   const label = allCached
     ? `[Loaded Parsed Cache] ${totalSources}`
@@ -195,7 +77,173 @@ function flushParseLog(): void {
   parseBuffer.length = 0
 }
 
+async function processPdfBatch(filePaths: string[]): Promise<void> {
+  // Seed the store with "parsing" placeholders so the list updates immediately
+  // and the user sees progress.
+  usePdfStore.setState(state => {
+    const nextPaths = { ...state.pathsById }
+    const existing = new Map(state.pdfs.map(p => [p.id, p]))
+    for (const fp of filePaths) {
+      const id = stemFromPath(fp)
+      nextPaths[id] = fp
+      if (!existing.has(id)) {
+        existing.set(id, {
+          id,
+          name: nameFromPath(fp),
+          path: fp,
+          status: 'parsing',
+          source_count: 0,
+          numbered: false,
+        })
+      } else {
+        existing.set(id, { ...existing.get(id)!, status: 'parsing' })
+      }
+    }
+    return {
+      pdfs: Array.from(existing.values()),
+      pathsById: nextPaths,
+      loading: true,
+    }
+  })
+
+  // Process files sequentially so pdfjs-dist's single worker isn't swamped
+  // and the UI stays responsive. Each file reads → parses → detects → saves.
+  for (const filePath of filePaths) {
+    const outcome = await parseAndDetect(filePath)
+
+    parseBuffer.push({
+      pdfName: outcome.name,
+      sourceCount: outcome.sources.length,
+      fromCache: outcome.fromCache,
+      error: outcome.error,
+    })
+
+    if (outcome.error) {
+      usePdfStore.getState().updatePdfStatus(outcome.pdfId, 'error')
+      continue
+    }
+
+    // Seed the client-side sources store so the parsing page picks them up
+    // without needing a second GET /api/parse/sources roundtrip.
+    setSources(outcome.pdfId, outcome.sources)
+
+    usePdfStore.getState().updatePdfStatus(
+      outcome.pdfId,
+      outcome.approved ? 'approved' : 'parsed',
+      outcome.sources.length,
+      outcome.numbered,
+    )
+  }
+
+  usePdfStore.setState({ loading: false })
+  flushParseLog()
+}
+
+export const usePdfStore = create<PdfState>()((set, _get) => ({
+  pdfs: [],
+  pathsById: {},
+  selectedPdfId: null,
+  loading: false,
+  parsingSortKey: 'numbered' as ParsingSortKey,
+  parsingSortAsc: true,
+
+  selectPdf: (id) => set({ selectedPdfId: id }),
+
+  toggleParsingSort: (key) =>
+    set(state => {
+      if (state.parsingSortKey === key) return { parsingSortAsc: !state.parsingSortAsc }
+      return { parsingSortKey: key, parsingSortAsc: true }
+    }),
+
+  addPdf: (pdf) =>
+    set(state => ({
+      pdfs: state.pdfs.some(p => p.id === pdf.id) ? state.pdfs : [...state.pdfs, pdf],
+      pathsById:
+        pdf.path && !state.pathsById[pdf.id]
+          ? { ...state.pathsById, [pdf.id]: pdf.path }
+          : state.pathsById,
+    })),
+
+  setPdfPath: (pdfId, path) =>
+    set(state => ({
+      pathsById: { ...state.pathsById, [pdfId]: path },
+    })),
+
+  removePdf: (pdfId) =>
+    set(state => {
+      const remaining = state.pdfs.filter(p => p.id !== pdfId)
+      let nextSelectedPdfId = state.selectedPdfId
+
+      if (state.selectedPdfId === pdfId) {
+        if (remaining.length === 0) {
+          nextSelectedPdfId = null
+        } else {
+          const removedIndex = state.pdfs.findIndex(p => p.id === pdfId)
+          const fallbackIndex = Math.min(Math.max(removedIndex, 0), remaining.length - 1)
+          nextSelectedPdfId = remaining[fallbackIndex]?.id ?? null
+        }
+      }
+
+      const { [pdfId]: _dropped, ...remainingPaths } = state.pathsById
+      return {
+        pdfs: remaining,
+        pathsById: remainingPaths,
+        selectedPdfId: nextSelectedPdfId,
+      }
+    }),
+
+  updatePdfStatus: (pdfId, status, sourceCount, numbered) =>
+    set(state => ({
+      pdfs: state.pdfs.map(p =>
+        p.id === pdfId ? {
+          ...p,
+          status,
+          source_count: sourceCount ?? p.source_count,
+          numbered: numbered ?? p.numbered,
+        } : p
+      ),
+    })),
+
+  updateSourceCount: (pdfId, count) =>
+    set(state => ({
+      pdfs: state.pdfs.map(p => (p.id === pdfId ? { ...p, source_count: count } : p)),
+    })),
+
+  loadDirectory: async (directory) => {
+    try {
+      const paths = await window.electronAPI.listPdfsInDirectory(directory)
+      if (paths.length === 0) {
+        console.warn(`[pdf-store] no PDFs found in directory: ${directory}`)
+        return
+      }
+      await processPdfBatch(paths)
+    } catch (e) {
+      console.error('Failed to load directory:', e)
+      set({ loading: false })
+    }
+  },
+
+  loadFiles: async (filePaths) => {
+    try {
+      await processPdfBatch(filePaths)
+    } catch (e) {
+      console.error('Failed to parse files:', e)
+      set({ loading: false })
+    }
+  },
+
+  clearPdfs: () => {
+    set({ pdfs: [], pathsById: {}, selectedPdfId: null, loading: false })
+  },
+}))
+
 // --- Listeners ---
+//
+// These subscribe to backend websocket parse-* events. Client-side parsing
+// doesn't emit them, so the handlers are dormant for now — they're kept in
+// place so any lingering backend-driven parse paths (none expected) still
+// integrate. Safe to remove entirely in Phase 4 when the backend parse
+// endpoints are deleted.
 
 export function initPdfListeners(): () => void {
   const unsubs = [
@@ -213,22 +261,11 @@ export function initPdfListeners(): () => void {
       usePdfStore.getState().updatePdfStatus(data.pdf_id as string, 'parsing')
     }),
     wsClient.on('parse_complete', (data) => {
-      parseBuffer.push({
-        pdfName: data.pdf_name as string,
-        sourceCount: data.source_count as number,
-        fromCache: (data.from_cache as string) ?? null,
-      })
       usePdfStore.getState().updatePdfStatus(
         data.pdf_id as string, 'parsed', data.source_count as number, data.numbered as boolean ?? false,
       )
     }),
     wsClient.on('parse_error', (data) => {
-      parseBuffer.push({
-        pdfName: (data.pdf_name as string) ?? (data.pdf_id as string),
-        sourceCount: 0,
-        fromCache: null,
-        error: data.error as string,
-      })
       usePdfStore.getState().updatePdfStatus(data.pdf_id as string, 'error')
     }),
     wsClient.on('parse_approved', (data) => {
@@ -237,15 +274,9 @@ export function initPdfListeners(): () => void {
     wsClient.on('parse_unapproved', (data) => {
       usePdfStore.getState().updatePdfStatus(data.pdf_id as string, 'parsed')
     }),
-    wsClient.on('parse_all_done', () => {
-      usePdfStore.setState({ loading: false })
-      stopPolling()
-      flushParseLog()
-    }),
   ]
 
   return () => {
     unsubs.forEach(fn => fn())
-    stopPolling()
   }
 }
