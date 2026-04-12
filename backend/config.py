@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     search_timeout: int = 20
     max_concurrent_apis: int = 5
     max_concurrent_sources_per_pdf: int = 3
+    max_concurrent_pdfs: int = 2
 
     # NER
-    ner_model_name: str = "SIRIS-Lab/citation-parser-ENTITY"
     ner_local_model_path: str = _default_ner_local_model_path()
     ner_enabled: bool = True
 
