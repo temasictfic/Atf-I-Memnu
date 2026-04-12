@@ -7,6 +7,7 @@ from rapidfuzz import fuzz
 
 from models.source import ParsedSource
 from models.verification_result import MatchDetails, MatchResult
+from services.author_matcher import author_score, authors_match
 from utils.doi_extractor import extract_arxiv_id, normalize_doi
 
 
@@ -168,33 +169,15 @@ def determine_verification_status(
 
 
 def _authors_satisfied(source: ParsedSource, best_match: MatchResult) -> bool:
-    """Verify source author last names are present in candidate authors.
+    """Verify source authors are present in candidate authors.
 
-    Counts a name as found if its last name fuzzy-matches any candidate name.
-    Requires at least 50% of source authors to be found (or all if there are
-    only 1-2 authors).
+    Delegates to services.author_matcher.authors_match, which handles
+    diacritics, IEEE/Vancouver/display-name formats, multi-part surnames,
+    and initial-based disambiguation.
     """
     if not source.authors:
-        # No authors to verify — author check is vacuously satisfied
         return True
-    if not best_match.authors:
-        return False
-
-    src_last = [_extract_last_name(a).lower() for a in source.authors if a.strip()]
-    cand_last = [_extract_last_name(a).lower() for a in best_match.authors if a.strip()]
-    if not src_last or not cand_last:
-        return False
-
-    matched = 0
-    for s in src_last:
-        for c in cand_last:
-            if fuzz.ratio(s, c) > 80:
-                matched += 1
-                break
-
-    if len(src_last) <= 2:
-        return matched == len(src_last)
-    return matched / len(src_last) >= 0.5
+    return authors_match(source.authors, best_match.authors or [])
 
 
 def _candidate_journal(best_match: MatchResult) -> str | None:
@@ -241,48 +224,5 @@ def _url_match_score(source: ParsedSource, candidate: dict[str, Any]) -> float:
 
 
 def _compare_authors(source_authors: list[str], candidate_authors: list[str]) -> float:
-    """Compare author lists using fuzzy last-name matching."""
-    if not source_authors or not candidate_authors:
-        return 0.0
-
-    source_last = [_extract_last_name(a).lower() for a in source_authors]
-    cand_last = [_extract_last_name(a).lower() for a in candidate_authors]
-
-    if not source_last or not cand_last:
-        return 0.0
-
-    matches = 0
-    for s_name in source_last:
-        for c_name in cand_last:
-            if fuzz.ratio(s_name, c_name) > 80:
-                matches += 1
-                break
-
-    return matches / len(source_last)
-
-
-def _extract_last_name(author: str) -> str:
-    """Extract last name from author string, handling all citation formats."""
-    author = author.strip().rstrip(".")
-
-    # IEEE: "G. Liu" or "K. Y. Lee" — initials first, last name at end
-    ieee_match = re.match(r"^(?:[A-Z]\.?\s*)+([A-Z][a-z]+)", author)
-    if ieee_match and re.match(r"^[A-Z]\.", author):
-        return ieee_match.group(1).strip()
-
-    # Vancouver: "Liu G" or "Liu GH" — last name first, bare initials at end
-    vanc_match = re.match(r"^([A-Z][a-z]+)\s+[A-Z]{1,3}$", author)
-    if vanc_match:
-        return vanc_match.group(1).strip()
-
-    # Standard: "Liu, G." or "Liu, George" — last name before comma
-    parts = author.split(",")
-    if parts:
-        return parts[0].strip()
-
-    # Fallback: last word
-    parts = author.split()
-    if parts:
-        return parts[-1].strip()
-
-    return author
+    """Return the fraction of source authors found in the candidate list."""
+    return author_score(source_authors, candidate_authors)

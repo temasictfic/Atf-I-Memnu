@@ -65,6 +65,19 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
 
     # Extract authors from the author section
     author_text = text[:author_end].strip().rstrip(",").rstrip(".")
+    # Trailing year can leak into the author section when the boundary
+    # detector stops at a title quote (e.g. IEEE book refs). Strip it.
+    author_text = re.sub(
+        r"[\s.,]*(?:19|20)\d{2}[a-z]?\.?$", "", author_text
+    ).strip().rstrip(",").rstrip(".")
+    # Strip leading inline citations that some refs duplicate before the
+    # real author list, e.g. "(Calazans vd. 2024) Calazans, M. A. A., ..."
+    author_text = re.sub(
+        r"^\(\s*[^)]*?(?:vd|et\s+al|diğerleri)\.?\s*(?:,?\s*(?:19|20)\d{2})?\s*\)\s*",
+        "",
+        author_text,
+        flags=re.IGNORECASE,
+    ).strip()
     result.authors = _parse_authors(author_text, fmt)
 
     # Extract year (rule-based priority: parenthesized > post-conjunction > first-after-authors)
@@ -513,10 +526,10 @@ def _parse_authors(author_text: str, fmt: CitationFormat | None = None) -> list[
 
     if fmt == CitationFormat.VANCOUVER:
         return _parse_vancouver_authors(author_text)
-    if fmt == CitationFormat.IEEE:
-        return _parse_ieee_authors(author_text)
 
-    # Default: APA/MLA/Chicago/Harvard and unknown formats
+    # IEEE and all remaining formats share the standard parser. Standard
+    # handles native IEEE input ("G. Liu, K. Y. Lee") correctly AND pairs
+    # "Last, Initials" when a reference is mis-classified as IEEE.
     return _parse_standard_authors(author_text)
 
 
@@ -581,8 +594,9 @@ def _parse_standard_authors(author_text: str) -> list[str]:
     author_text = re.sub(r"\s+and\s+", ", ", author_text, flags=re.IGNORECASE)
     author_text = re.sub(r"\s+ve\s+", ", ", author_text)  # Turkish "and"
 
-    # Remove "et al."
+    # Remove "et al." and Turkish "vd" / "vd." (= "ve diğerleri", i.e. "et al.")
     author_text = re.sub(r",?\s*et\s+al\.?\s*$", "", author_text, flags=re.IGNORECASE).strip()
+    author_text = re.sub(r",?\s*vd\.?\s*$", "", author_text).strip()
 
     # Split by comma
     parts = [p.strip() for p in author_text.split(",") if p.strip()]
@@ -590,24 +604,42 @@ def _parse_standard_authors(author_text: str) -> list[str]:
     # Reassemble "Last, Initials" or "Last, First" pairs
     # Kurallar Rule 12: ", K." = author; Rule 7: single letter + period = abbreviation
     authors = []
+    # Recognize a complete "Surname Initial(s)" Vancouver-style entry so
+    # we don't over-pair (e.g. "Savran A." shouldn't grab "Sankur B").
+    complete_vanc_re = re.compile(
+        r"^[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:[-\s][A-ZÇĞİÖŞÜ][a-zçğıöşü]+)*"
+        r"\s+[A-ZÇĞİÖŞÜ](?:\.?[A-ZÇĞİÖŞÜ]){0,3}\.?$"
+    )
     i = 0
     while i < len(parts):
         part = parts[i]
+        # If part is already "Surname Init" (Vancouver-complete), don't pair.
+        if complete_vanc_re.match(part):
+            authors.append(part)
+            i += 1
+            continue
         if i + 1 < len(parts):
             next_part = parts[i + 1].strip()
-            # Check if next part is initials (1-3 chars, uppercase)
+            # Check if next part is initials (1-4 chars, uppercase, with
+            # optional hyphens between letters: "A.", "R.-N.", "C. J. C. H.")
             is_initials = bool(re.match(
-                r"^[A-ZÇĞİÖŞÜ][.\s]*[A-ZÇĞİÖŞÜ]?[.\s]*[A-ZÇĞİÖŞÜ]?\.?$", next_part
+                r"^[A-ZÇĞİÖŞÜ](?:[.\-\s]*[A-ZÇĞİÖŞÜ]){0,3}\.?$", next_part
             ))
-            # Check if next part is a first name (capitalized word, not too long)
+            # Check if next part is a given-name section:
+            #   - plain first name: "John", "Alice"
+            #   - hyphenated given with uppercase: "Ying-Chun", "Bao-Liang"
+            #   - first name + middle initial: "Julian P.", "Buse N."
+            #   - multi-word given: "Buse Nur"
             is_first_name = bool(re.match(
-                r"^[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,20}$", next_part
+                r"^[A-ZÇĞİÖŞÜ][a-zçğıöşü]*(?:-[A-ZÇĞİÖŞÜa-zçğıöşü]+)?"
+                r"(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]*(?:-[A-ZÇĞİÖŞÜa-zçğıöşü]+)?)?\.?$",
+                next_part,
             ))
             if is_initials or is_first_name:
                 authors.append(f"{part}, {next_part}")
                 i += 2
                 continue
-        if len(part) > 2:  # Skip lone initials
+        if len(part) > 1:  # Skip lone single-char initials (keep 2-char surnames like "Fu", "Li")
             authors.append(part)
         i += 1
 

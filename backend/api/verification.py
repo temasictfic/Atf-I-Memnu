@@ -6,9 +6,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.websocket import manager
-from api.parsing import pdf_store
+from api.parsing import load_sources_for_pdf
 from config import settings
-from models.verification_result import VerificationResult
+from models.source import SourceRectangle
+from models.verification_result import VerificationResult, MatchResult
 
 router = APIRouter()
 
@@ -99,19 +100,30 @@ async def start_batch_verification(request: VerifyBatchRequest):
     return {"job_id": job_id}
 
 
+def _load_sources_or_empty(pdf_id: str) -> list[SourceRectangle]:
+    """Load cached sources for a PDF. Used everywhere pdf_store was used before."""
+    sources = load_sources_for_pdf(pdf_id)
+    return sources if sources is not None else []
+
+
 async def _verify_batch(job_id: str, pdf_ids: list[str], texts: dict[str, str], excluded_ids: set[str]):
     from services.verification_orchestrator import verify_pdf_sources_filtered
+    from services.search_settings import get_max_concurrent_pdfs
 
     await manager.send_log("info", f"Starting batch verification for {len(pdf_ids)} PDFs")
 
-    tasks = []
-    for pdf_id in pdf_ids:
-        if pdf_id not in pdf_store:
-            continue
-        tasks.append(verify_pdf_sources_filtered(
-            pdf_id, pdf_store[pdf_id]["sources"], verify_results, texts, excluded_ids
-        ))
+    pdf_semaphore = asyncio.Semaphore(get_max_concurrent_pdfs())
 
+    async def verify_with_limit(pid: str):
+        sources = _load_sources_or_empty(pid)
+        if not sources:
+            return
+        async with pdf_semaphore:
+            await verify_pdf_sources_filtered(
+                pid, sources, verify_results, texts, excluded_ids
+            )
+
+    tasks = [asyncio.create_task(verify_with_limit(pid)) for pid in pdf_ids]
     await asyncio.gather(*tasks, return_exceptions=True)
 
     # Save results to disk cache
@@ -134,15 +146,20 @@ async def start_verification(request: VerifyRequest):
 
 async def _verify_all_pdfs(job_id: str, pdf_ids: list[str]):
     from services.verification_orchestrator import verify_pdf_sources
+    from services.search_settings import get_max_concurrent_pdfs
 
     await manager.send_log("info", f"Starting verification for {len(pdf_ids)} PDFs")
 
-    tasks = []
-    for pdf_id in pdf_ids:
-        if pdf_id not in pdf_store:
-            continue
-        tasks.append(verify_pdf_sources(pdf_id, pdf_store[pdf_id]["sources"], verify_results))
+    pdf_semaphore = asyncio.Semaphore(get_max_concurrent_pdfs())
 
+    async def verify_with_limit(pid: str):
+        sources = _load_sources_or_empty(pid)
+        if not sources:
+            return
+        async with pdf_semaphore:
+            await verify_pdf_sources(pid, sources, verify_results)
+
+    tasks = [asyncio.create_task(verify_with_limit(pid)) for pid in pdf_ids]
     await asyncio.gather(*tasks, return_exceptions=True)
 
     # Save results to disk cache
@@ -156,22 +173,23 @@ async def _verify_all_pdfs(job_id: str, pdf_ids: list[str]):
 
 @router.post("/verify/pdf/{pdf_id}")
 async def reverify_pdf(pdf_id: str):
-    if pdf_id not in pdf_store:
+    sources = _load_sources_or_empty(pdf_id)
+    if not sources:
         raise HTTPException(status_code=404, detail="PDF not found")
 
     from services.verification_orchestrator import verify_pdf_sources
 
     job_id = str(uuid.uuid4())[:8]
-    asyncio.create_task(verify_pdf_sources(pdf_id, pdf_store[pdf_id]["sources"], verify_results))
+    asyncio.create_task(verify_pdf_sources(pdf_id, sources, verify_results))
     return {"job_id": job_id}
 
 
 @router.post("/verify/source/{pdf_id}/{source_id}")
 async def reverify_source(pdf_id: str, source_id: str, request: VerifySourceRequest):
-    if pdf_id not in pdf_store:
+    sources = _load_sources_or_empty(pdf_id)
+    if not sources:
         raise HTTPException(status_code=404, detail="PDF not found")
 
-    sources = pdf_store[pdf_id]["sources"]
     source = next((s for s in sources if s.id == source_id), None)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
@@ -285,3 +303,102 @@ async def override_status(pdf_id: str, source_id: str, request: OverrideRequest)
     _save_verify_cache(pdf_id, verify_results[pdf_id])
 
     return {"success": True}
+
+
+class ScholarCandidate(BaseModel):
+    title: str
+    authors: list[str] = []
+    year: int | None = None
+    doi: str | None = None
+    url: str = ""
+
+
+class ScoreScholarRequest(BaseModel):
+    pdf_id: str
+    source_id: str
+    source_text: str
+    candidates: list[ScholarCandidate]
+
+
+@router.post("/verify/score-scholar")
+async def score_scholar(request: ScoreScholarRequest):
+    """Score Google Scholar candidates against a source and merge into results."""
+    from services.source_extractor import extract_source_fields
+    from services.match_scorer import score_match, determine_verification_status
+
+    parsed = await extract_source_fields(request.source_text)
+
+    scholar_matches: list[MatchResult] = []
+    search_url = f"https://scholar.google.com/scholar?q={request.source_text[:200]}"
+
+    for cand in request.candidates:
+        match = score_match(parsed, {
+            "title": cand.title,
+            "authors": cand.authors,
+            "year": cand.year,
+            "doi": cand.doi,
+            "url": cand.url,
+            "database": "Google Scholar",
+            "search_url": search_url,
+        })
+        scholar_matches.append(match)
+
+    if not scholar_matches:
+        return {"updated": False, "result": None}
+
+    best_scholar = max(scholar_matches, key=lambda m: m.score)
+
+    # Merge into existing results
+    existing = verify_results.get(request.pdf_id, {}).get(request.source_id)
+    if existing is None:
+        return {"updated": False, "result": None}
+
+    # Append scholar matches to all_results
+    existing.all_results.extend(scholar_matches)
+    if "Google Scholar" not in existing.databases_searched:
+        existing.databases_searched.append("Google Scholar")
+
+    # Update best_match if scholar result is better
+    if existing.best_match is None or best_scholar.score > existing.best_match.score:
+        existing.best_match = best_scholar
+
+    # Re-sort all_results by score
+    existing.all_results.sort(key=lambda m: m.score, reverse=True)
+
+    # Re-determine status with potentially new best match
+    status, problem_tags = determine_verification_status(
+        parsed, existing.best_match, existing.url_liveness
+    )
+    existing.status = status
+    existing.problem_tags = problem_tags
+
+    # Persist and broadcast
+    _save_verify_cache(request.pdf_id, verify_results[request.pdf_id])
+
+    await manager.broadcast("verify_source_done", {
+        "pdf_id": request.pdf_id,
+        "source_id": request.source_id,
+        "status": status,
+        "problem_tags": problem_tags,
+        "url_liveness": existing.url_liveness,
+        "best_match": existing.best_match.model_dump() if existing.best_match else None,
+        "all_results": [m.model_dump() for m in existing.all_results],
+    })
+
+    # Recalculate and broadcast PDF counts
+    results = verify_results[request.pdf_id]
+    found = sum(1 for r in results.values() if r.status == "found")
+    problematic = sum(1 for r in results.values() if r.status == "problematic")
+    not_found = sum(1 for r in results.values() if r.status == "not_found")
+
+    await manager.broadcast("verify_pdf_updated", {
+        "pdf_id": request.pdf_id,
+        "found": found,
+        "problematic": problematic,
+        "not_found": not_found,
+    })
+
+    return {
+        "updated": True,
+        "result": existing.model_dump(),
+    }
