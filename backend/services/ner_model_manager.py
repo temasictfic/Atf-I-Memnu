@@ -1,13 +1,14 @@
-"""Singleton lazy-loading manager for the citation-parser NER model.
+"""Singleton manager for the bundled citation-parser NER model.
 
-Loads a bundled fine-tuned INT8 ONNX model when available (much faster on
-CPU and ~4x smaller on disk), falling back to the upstream HF Hub model if
-the bundled path is empty or missing.
+Loads the bundled fine-tuned INT8 ONNX model at startup and automatically
+detects GPU acceleration when available:
+  - DirectML (Windows, any DirectX 12 GPU)
+  - CUDA (NVIDIA GPUs)
+  - Falls back to CPU otherwise
 """
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -38,19 +39,51 @@ def get_pipeline_sync() -> Any | None:
     return _pipeline
 
 
-def _load_local_ort_pipeline(local_path: str) -> Any:
-    """Load a local ONNX NER model via optimum + transformers pipeline."""
+def _detect_ort_provider() -> str:
+    """Detect the best available ONNX Runtime execution provider."""
+    try:
+        import onnxruntime as ort
+
+        available = ort.get_available_providers()
+        logger.info("ONNX Runtime available providers: %s", available)
+        if "DmlExecutionProvider" in available:
+            logger.info("GPU detected: using DirectML execution provider")
+            return "DmlExecutionProvider"
+        if "CUDAExecutionProvider" in available:
+            logger.info("GPU detected: using CUDA execution provider")
+            return "CUDAExecutionProvider"
+    except Exception as exc:
+        logger.debug("Could not query ONNX Runtime providers: %s", exc)
+    logger.info("No GPU provider found; using CPU execution provider")
+    return "CPUExecutionProvider"
+
+
+def _load_pipeline_sync() -> Any:
+    """Load the bundled ONNX NER pipeline (blocking, call from executor)."""
     from optimum.onnxruntime import ORTModelForTokenClassification
     from transformers import AutoTokenizer, pipeline as hf_pipeline
+
+    local_path = settings.ner_local_model_path
+    if not local_path or not Path(local_path).exists():
+        raise RuntimeError(
+            f"Bundled NER model not found at {local_path!r}. "
+            "Ensure the model is included in the application package."
+        )
 
     path = Path(local_path)
     onnx_files = sorted(path.glob("*.onnx"))
     if not onnx_files:
-        raise RuntimeError(f"no .onnx files found in {path}")
+        raise RuntimeError(f"No .onnx files found in {path}")
     file_name = onnx_files[0].name
 
-    logger.info("Loading local ONNX NER model: %s (file=%s)", path, file_name)
-    model = ORTModelForTokenClassification.from_pretrained(str(path), file_name=file_name)
+    provider = _detect_ort_provider()
+    logger.info(
+        "Loading ONNX NER model: %s (file=%s, provider=%s)",
+        path, file_name, provider,
+    )
+    model = ORTModelForTokenClassification.from_pretrained(
+        str(path), file_name=file_name, provider=provider,
+    )
     tokenizer = AutoTokenizer.from_pretrained(str(path))
     ner_pipeline = hf_pipeline(
         "ner",
@@ -58,45 +91,8 @@ def _load_local_ort_pipeline(local_path: str) -> Any:
         tokenizer=tokenizer,
         aggregation_strategy="simple",
     )
-    logger.info("Local ONNX NER pipeline loaded")
+    logger.info("ONNX NER pipeline loaded (provider=%s)", provider)
     return ner_pipeline
-
-
-def _load_hub_pipeline() -> Any:
-    """Fallback: load the upstream HF Hub SIRIS model."""
-    from transformers import pipeline as hf_pipeline
-
-    models_dir = str(settings.get_models_dir())
-    os.environ.setdefault("HF_HOME", models_dir)
-
-    model_name = settings.ner_model_name
-    logger.info("Loading HF Hub NER pipeline: %s (cache: %s)", model_name, models_dir)
-    ner_pipeline = hf_pipeline(
-        "ner",
-        model=model_name,
-        aggregation_strategy="simple",
-    )
-    logger.info("HF Hub NER pipeline loaded successfully")
-    return ner_pipeline
-
-
-def _load_pipeline_sync() -> Any:
-    """Load the NER pipeline (blocking, call from executor).
-
-    Prefers a bundled local ONNX model if one is configured and present,
-    otherwise falls back to the HF Hub model.
-    """
-    local_path = settings.ner_local_model_path
-    if local_path and Path(local_path).exists():
-        try:
-            return _load_local_ort_pipeline(local_path)
-        except Exception as exc:
-            logger.warning(
-                "Failed to load local ONNX model at %s (%s); falling back to HF Hub",
-                local_path,
-                exc,
-            )
-    return _load_hub_pipeline()
 
 
 async def get_pipeline() -> Any | None:
@@ -129,3 +125,21 @@ async def get_pipeline() -> Any | None:
             return None
         finally:
             _loading = False
+
+
+async def preload_pipeline() -> None:
+    """Preload the NER model in the background so the first request is fast.
+
+    Called during application startup. Failures are logged but do not
+    prevent the app from starting — extraction falls back to regex.
+    """
+    if not settings.ner_enabled:
+        logger.info("NER disabled, skipping model preload")
+        return
+
+    logger.info("Preloading NER model in background…")
+    result = await get_pipeline()
+    if result is not None:
+        logger.info("NER model preloaded successfully")
+    else:
+        logger.warning("NER model preload failed; extraction will fall back to regex")

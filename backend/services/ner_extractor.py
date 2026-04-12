@@ -148,19 +148,35 @@ def _split_authors_by_comma(text: str) -> list[str]:
     # Filter empty parts from double-comma artifacts (e.g., "A., , B")
     parts = [p.strip() for p in text.split(",") if p.strip()]
     authors = []
+    # Recognize "Surname Init(s)" Vancouver-complete entry to avoid over-pairing.
+    complete_vanc_re = re.compile(
+        r"^[A-Z\u00C0-\u024F][a-z\u00E0-\u024F]+"
+        r"(?:[-\s][A-Z\u00C0-\u024F][a-z\u00E0-\u024F]+)*"
+        r"\s+[A-Z\u00C0-\u024F](?:\.?[A-Z\u00C0-\u024F]){0,3}\.?$"
+    )
     i = 0
     while i < len(parts):
         part = parts[i]
+        if complete_vanc_re.match(part):
+            authors.append(part)
+            i += 1
+            continue
         if i + 1 < len(parts):
             next_part = parts[i + 1].strip()
-            # Next part is initials (e.g., "A. S.", "K.", "Ş.", "İ.")
+            # Next part is initials (1-4 letters, dots/hyphens optional)
             is_initials = bool(re.match(
-                r"^[A-Z\u00C0-\u024F][.\s]*[A-Z\u00C0-\u024F]?[.\s]*[A-Z\u00C0-\u024F]?\.?$",
+                r"^[A-Z\u00C0-\u024F](?:[.\-\s]*[A-Z\u00C0-\u024F]){0,3}\.?$",
                 next_part,
             ))
-            # Next part is a short first name
+            # Next part is a given-name section (plain, hyphenated with
+            # uppercase after hyphen like "Ying-Chun", or first + middle
+            # initial like "Julian P.")
             is_first_name = bool(re.match(
-                r"^[A-Z\u00C0-\u024F][a-z\u00E0-\u024F]{1,15}$", next_part
+                r"^[A-Z\u00C0-\u024F][a-z\u00E0-\u024F]*"
+                r"(?:-[A-Za-z\u00C0-\u024F\u00E0-\u024F]+)?"
+                r"(?:\s+[A-Z\u00C0-\u024F][a-z\u00E0-\u024F]*"
+                r"(?:-[A-Za-z\u00C0-\u024F\u00E0-\u024F]+)?)?\.?$",
+                next_part,
             ))
             if is_initials or is_first_name:
                 authors.append(f"{part}, {next_part}")
