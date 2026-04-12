@@ -56,15 +56,15 @@ function getBackendLaunchCommand(port: number): { command: string, args: string[
   }
 
   const mainPy = join(getBackendPath(), 'main.py')
+  const venvPython = join(getBackendPath(), '.venv', 'Scripts', 'python.exe')
+  if (!existsSync(venvPython)) {
+    throw new Error(
+      `Backend venv not found at ${venvPython}. Run "uv sync" inside backend/.`
+    )
+  }
   return {
-    command: 'uv',
-    args: [
-      'run', 'python',
-      '-u',
-      '-X', 'utf8',
-      mainPy,
-      '--port', String(port)
-    ]
+    command: venvPython,
+    args: ['-u', '-X', 'utf8', mainPy, '--port', String(port)]
   }
 }
 
@@ -145,63 +145,30 @@ export function getPythonBackendPort(): number | null {
   return backendPort
 }
 
-export async function stopPythonBackend(): Promise<void> {
+/**
+ * Synchronously kill the backend process tree.
+ *
+ * Electron does NOT await async event handlers (window-all-closed,
+ * before-quit), so any async cleanup gets interrupted when the app
+ * exits.  This function uses synchronous taskkill to guarantee the
+ * process tree is dead before Electron shuts down.
+ */
+export function stopPythonBackend(): void {
   if (healthCheckTimer) {
     clearInterval(healthCheckTimer)
     healthCheckTimer = null
   }
 
-  if (!pythonProcess) return
+  if (!pythonProcess?.pid) return
 
   const pid = pythonProcess.pid
-  const port = backendPort
-  console.log('Stopping Python backend...')
+  console.log(`Stopping Python backend (PID ${pid})…`)
 
-  // Phase 1: Graceful shutdown via HTTP endpoint
-  // Triggers lifespan teardown and uvicorn graceful stop
-  if (port !== null) {
-    try {
-      await fetch(`http://localhost:${port}/api/shutdown`, {
-        method: 'POST',
-        signal: AbortSignal.timeout(3000)
-      })
-      console.log('Shutdown endpoint called successfully')
-
-      // Wait up to 5 seconds for the process to exit gracefully
-      const exited = await new Promise<boolean>((resolve) => {
-        const timeout = setTimeout(() => resolve(false), 5000)
-        if (pythonProcess) {
-          pythonProcess.on('exit', () => {
-            clearTimeout(timeout)
-            resolve(true)
-          })
-        } else {
-          clearTimeout(timeout)
-          resolve(true)
-        }
-      })
-
-      if (exited) {
-        console.log('Python backend stopped gracefully')
-        pythonProcess = null
-        backendPort = null
-        return
-      }
-      console.log('Graceful shutdown timed out, proceeding to force kill')
-    } catch {
-      console.log('Graceful shutdown request failed, proceeding to force kill')
-    }
-  }
-
-  // Phase 2: Force-kill the entire process tree
-  // taskkill /F /T /PID kills the process and ALL its descendants
-  if (pid) {
-    try {
-      execSync(`taskkill /F /T /PID ${pid}`, { timeout: 5000 })
-      console.log(`Force-killed process tree for PID ${pid}`)
-    } catch {
-      // Process may have already exited
-    }
+  try {
+    execSync(`taskkill /F /T /PID ${pid}`, { timeout: 5000 })
+    console.log(`Force-killed process tree for PID ${pid}`)
+  } catch {
+    // Process may have already exited
   }
 
   pythonProcess = null
