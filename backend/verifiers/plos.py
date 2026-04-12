@@ -10,29 +10,30 @@ from urllib.parse import quote
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from services.search_settings import get_client_timeout
+from verifiers._http import get_session
 
 PLOS_API = "https://api.plos.org/search"
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
-    """Search PLOS by DOI or title."""
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            # Priority 1: DOI lookup
-            if source.doi:
-                result = await _search_query(session, f'id:"{source.doi}"', source)
-                if result and result.score >= 0.5:
-                    return result
+    """Search PLOS by DOI or title.
 
-            # Priority 2: Title search
-            query = source.title
-            if not query:
-                return None
+    Errors propagate to the orchestrator so they're surfaced as
+    ``db_status: "error"`` rather than silently ``not_found``.
+    """
+    session = get_session()
+    # Priority 1: DOI lookup
+    if source.doi:
+        result = await _search_query(session, f'id:"{source.doi}"', source)
+        if result and result.score >= 0.5:
+            return result
 
-            return await _search_query(session, f'title:"{query}"', source)
-    except Exception:
+    # Priority 2: Title search
+    query = source.title
+    if not query:
         return None
+
+    return await _search_query(session, f'title:"{query}"', source)
 
 
 async def _search_query(
@@ -48,21 +49,18 @@ async def _search_query(
         "rows": "5",
     }
 
-    try:
-        async with session.get(PLOS_API, params=params) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            docs = data.get("response", {}).get("docs", [])
+    async with session.get(PLOS_API, params=params) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+        docs = data.get("response", {}).get("docs", [])
 
-            best: MatchResult | None = None
-            for item in docs[:5]:
-                match = _item_to_match(item, source)
-                if match and (best is None or match.score > best.score):
-                    best = match
-            return best
-    except Exception:
-        return None
+        best: MatchResult | None = None
+        for item in docs[:5]:
+            match = _item_to_match(item, source)
+            if match and (best is None or match.score > best.score):
+                best = match
+        return best
 
 
 def _item_to_match(item: dict, source: ParsedSource) -> MatchResult | None:

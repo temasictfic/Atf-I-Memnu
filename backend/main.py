@@ -24,6 +24,8 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     print("Atf-ı Memnu backend shutting down")
+    from verifiers._http import close_session
+    await close_session()
 
 
 app = FastAPI(title="Atf-ı Memnu API", version="1.0.0", lifespan=lifespan)

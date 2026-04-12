@@ -10,29 +10,30 @@ from urllib.parse import quote
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from services.search_settings import get_client_timeout
+from verifiers._http import get_session
 
 SEARCH_API = "https://openlibrary.org/search.json"
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
-    """Search Open Library by ISBN, DOI, or title."""
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            # Priority 1: DOI lookup
-            if source.doi:
-                result = await _search_query(session, {"q": source.doi}, source)
-                if result and result.score >= 0.5:
-                    return result
+    """Search Open Library by ISBN, DOI, or title.
 
-            # Priority 3: Title search
-            query = source.title
-            if not query:
-                return None
+    Errors propagate to the orchestrator so they're surfaced as
+    ``db_status: "error"`` rather than silently ``not_found``.
+    """
+    session = get_session()
+    # Priority 1: DOI lookup
+    if source.doi:
+        result = await _search_query(session, {"q": source.doi}, source)
+        if result and result.score >= 0.5:
+            return result
 
-            return await _search_query(session, {"title": query}, source)
-    except Exception:
+    # Priority 2: Title search
+    query = source.title
+    if not query:
         return None
+
+    return await _search_query(session, {"title": query}, source)
 
 
 async def _search_query(
@@ -43,21 +44,18 @@ async def _search_query(
     """Execute an Open Library search and return the best match."""
     params = {**params, "limit": "5", "fields": "title,author_name,first_publish_year,isbn,key,publisher,subject"}
 
-    try:
-        async with session.get(SEARCH_API, params=params) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            docs = data.get("docs", [])
+    async with session.get(SEARCH_API, params=params) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+        docs = data.get("docs", [])
 
-            best: MatchResult | None = None
-            for item in docs[:5]:
-                match = _item_to_match(item, source)
-                if match and (best is None or match.score > best.score):
-                    best = match
-            return best
-    except Exception:
-        return None
+        best: MatchResult | None = None
+        for item in docs[:5]:
+            match = _item_to_match(item, source)
+            if match and (best is None or match.score > best.score):
+                best = match
+        return best
 
 
 def _item_to_match(item: dict, source: ParsedSource) -> MatchResult | None:

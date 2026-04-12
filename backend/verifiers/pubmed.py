@@ -11,30 +11,31 @@ from urllib.parse import quote
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from services.search_settings import get_client_timeout
+from verifiers._http import get_session
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
-    """Search PubMed by DOI or title."""
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            # Priority 1: DOI lookup
-            if source.doi:
-                result = await _search_query(session, f'{source.doi}[doi]', source, api_key)
-                if result and result.score >= 0.5:
-                    return result
+    """Search PubMed by DOI or title.
 
-            # Priority 2: Title search
-            query = source.title
-            if not query:
-                return None
+    Errors propagate so the orchestrator can surface them as
+    ``db_status: "error"`` instead of silently returning ``not_found``.
+    """
+    session = get_session()
+    # Priority 1: DOI lookup
+    if source.doi:
+        result = await _search_query(session, f'{source.doi}[doi]', source, api_key)
+        if result and result.score >= 0.5:
+            return result
 
-            return await _search_query(session, f'{query}[Title]', source, api_key)
-    except Exception:
+    # Priority 2: Title search
+    query = source.title
+    if not query:
         return None
+
+    return await _search_query(session, f'{query}[Title]', source, api_key)
 
 
 async def _search_query(
@@ -53,42 +54,39 @@ async def _search_query(
     if api_key:
         params["api_key"] = api_key
 
-    try:
-        # Step 1: ESearch to get PMIDs
-        async with session.get(ESEARCH_URL, params=params) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            id_list = data.get("esearchresult", {}).get("idlist", [])
-            if not id_list:
-                return None
+    # Step 1: ESearch to get PMIDs
+    async with session.get(ESEARCH_URL, params=params) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+        id_list = data.get("esearchresult", {}).get("idlist", [])
+        if not id_list:
+            return None
 
-        # Step 2: ESummary to get metadata
-        summary_params: dict[str, str] = {
-            "db": "pubmed",
-            "id": ",".join(id_list),
-            "retmode": "json",
-        }
-        if api_key:
-            summary_params["api_key"] = api_key
+    # Step 2: ESummary to get metadata
+    summary_params: dict[str, str] = {
+        "db": "pubmed",
+        "id": ",".join(id_list),
+        "retmode": "json",
+    }
+    if api_key:
+        summary_params["api_key"] = api_key
 
-        async with session.get(ESUMMARY_URL, params=summary_params) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            results = data.get("result", {})
+    async with session.get(ESUMMARY_URL, params=summary_params) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+        results = data.get("result", {})
 
-            best: MatchResult | None = None
-            for pmid in id_list:
-                item = results.get(pmid)
-                if not item or isinstance(item, str):
-                    continue
-                match = _item_to_match(item, pmid, source)
-                if match and (best is None or match.score > best.score):
-                    best = match
-            return best
-    except Exception:
-        return None
+        best: MatchResult | None = None
+        for pmid in id_list:
+            item = results.get(pmid)
+            if not item or isinstance(item, str):
+                continue
+            match = _item_to_match(item, pmid, source)
+            if match and (best is None or match.score > best.score):
+                best = match
+        return best
 
 
 def _item_to_match(item: dict, pmid: str, source: ParsedSource) -> MatchResult | None:
