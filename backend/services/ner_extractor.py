@@ -1,5 +1,6 @@
 """Extract structured citation fields using SIRIS-Lab/citation-parser-ENTITY NER model."""
 
+import asyncio
 import logging
 import re
 from collections import defaultdict
@@ -26,14 +27,19 @@ async def extract_fields_ner(raw_text: str) -> ParsedSource | None:
         return None
 
     try:
-        return _extract(pipeline, raw_text)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _extract, pipeline, raw_text)
     except Exception as e:
         logger.warning("NER extraction failed: %s", e)
         return None
 
 
 def _extract(pipeline, raw_text: str) -> ParsedSource:
-    """Run the NER pipeline and map results to ParsedSource."""
+    """Run the NER pipeline and map results to ParsedSource.
+
+    Synchronous — always call via ``run_in_executor`` from async code so
+    the CPU/GPU forward pass does not block the event loop.
+    """
     raw_entities = pipeline(raw_text)
 
     # Group entities by label, using original text offsets

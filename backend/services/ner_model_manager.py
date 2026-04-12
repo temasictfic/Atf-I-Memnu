@@ -222,11 +222,14 @@ def _load_pipeline_sync() -> Any:
     tokenizer.enable_truncation(max_length=_MAX_SEQ_LEN)
 
     provider = _detect_ort_provider()
+    # Always include CPU as a fallback so a broken GPU driver or model-op
+    # incompatibility degrades instead of disabling NER for the session.
+    providers = [provider, "CPUExecutionProvider"] if provider != "CPUExecutionProvider" else [provider]
     logger.info(
-        "Loading ONNX NER model: %s (file=%s, provider=%s)",
-        path, onnx_file.name, provider,
+        "Loading ONNX NER model: %s (file=%s, providers=%s)",
+        path, onnx_file.name, providers,
     )
-    session = ort.InferenceSession(str(onnx_file), providers=[provider])
+    session = ort.InferenceSession(str(onnx_file), providers=providers)
     logger.info("ONNX NER pipeline loaded (provider=%s)", provider)
     return NerPipeline(session, tokenizer, id2label)
 
@@ -251,7 +254,7 @@ async def get_pipeline() -> Any | None:
         _loading = True
         _load_error = None
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             _pipeline = await loop.run_in_executor(None, _load_pipeline_sync)
             return _pipeline
         except Exception as e:
