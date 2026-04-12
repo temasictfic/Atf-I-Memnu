@@ -33,6 +33,15 @@ def get_max_concurrent_sources_per_pdf() -> int:
     return max(1, min(configured, 20))
 
 
+def get_max_concurrent_pdfs() -> int:
+    """Return effective PDF-level concurrency limit for batch verification."""
+    try:
+        configured = int(get_current_settings().max_concurrent_pdfs)
+    except Exception:
+        configured = int(app_config.max_concurrent_pdfs)
+    return max(1, min(configured, 10))
+
+
 def get_client_timeout(multiplier: float = 1.0) -> aiohttp.ClientTimeout:
     """Build an aiohttp timeout using the effective search timeout."""
     total = int(round(get_search_timeout_seconds() * max(multiplier, 0.1)))

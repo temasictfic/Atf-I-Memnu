@@ -12,6 +12,9 @@ extraResources:
     to: backend
     filter:
       - '**/*'
+electronLanguages:
+  - en-US
+  - tr
 win:
   icon: icon.ico
   target:

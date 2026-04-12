@@ -124,6 +124,11 @@
   flex-shrink: 0;
 }
 .sort-btn-grow { flex: 1; justify-content: flex-start; }
+.sort-btn-numbered {
+  width: 22px;
+  justify-content: center;
+  flex-shrink: 0;
+}
 .sort-btn-count {
   min-width: 32px;
   justify-content: center;
@@ -196,6 +201,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #44403c;
+}
+.pdf-numbered-col {
+  width: 22px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.numbered-tag {
+  font-size: 9px;
+  font-weight: 700;
+  color: #0369a1;
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
+  border-radius: 3px;
+  padding: 0 3px;
+  letter-spacing: 0.3px;
 }
 .pdf-count {
   font-size: 11px;
@@ -690,6 +712,89 @@
   border: 1px solid #fecaca;
 }
 .btn-detail-remove:hover { background: #fef2f2; }
+
+/* Parsed fields display */
+.fields-loading {
+  font-size: 11px;
+  color: #a8a29e;
+  padding: 8px 0;
+}
+.parsed-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid #f5f5f4;
+}
+.field-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #a8a29e;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+  width: 52px;
+}
+.field-value {
+  font-size: 11px;
+  color: #44403c;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.field-link {
+  font-size: 11px;
+  color: #d97706;
+  text-decoration: none;
+  word-break: break-all;
+  line-height: 1.4;
+}
+.field-link:hover {
+  text-decoration: underline;
+  color: #b45309;
+}
+.extraction-method-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: #0369a1;
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
+  border-radius: 999px;
+  padding: 1px 6px;
+  letter-spacing: 0.3px;
+}
+.confidence-value {
+  font-size: 10px;
+  color: #a8a29e;
+  font-weight: 600;
+}
+
+/* Raw text collapsible */
+.raw-text-section {
+  margin-top: 6px;
+}
+.raw-text-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #78716c;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.raw-text-toggle:hover { color: #44403c; }
+.raw-text-toggle-icon {
+  font-size: 8px;
+}
 
 /* Multi-page continuation rects */
 .source-rect-continuation {

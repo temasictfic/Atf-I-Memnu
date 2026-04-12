@@ -7,14 +7,60 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 project_root = Path(SPEC).resolve().parent
 backend_dir = project_root
 
+# Hidden imports for servers and ML runtime. Uvicorn/fastapi use dynamic
+# import strings; onnxruntime/tokenizers are safer to force-include so
+# PyInstaller's static analysis doesn't miss native module loaders.
 hiddenimports = sorted(
     set(
         collect_submodules("uvicorn")
         + collect_submodules("fastapi")
+        + collect_submodules("onnxruntime")
+        + ["tokenizers"]
     )
 )
 
+# Bundled data: certifi root certs + the fine-tuned INT8 NER model. The
+# model is placed under `models/citation-ner-int8/` inside the frozen
+# bundle so config.py's `_MEIPASS / models / citation-ner-int8` lookup
+# resolves it.
+ner_model_dir = backend_dir / "models" / "citation-ner-int8"
 datas = collect_data_files("certifi")
+if not ner_model_dir.exists():
+    raise SystemExit(
+        f"NER model dir missing at {ner_model_dir}. "
+        "Ensure git LFS has pulled the model before building."
+    )
+# Guard against checking out the LFS pointer (~130 B) instead of the real
+# ~125 MB ONNX file. CI without `lfs: true` would otherwise ship a broken
+# build that fails only at runtime.
+onnx_path = ner_model_dir / "model_quantized.onnx"
+if not onnx_path.exists() or onnx_path.stat().st_size < 1_000_000:
+    size = onnx_path.stat().st_size if onnx_path.exists() else 0
+    raise SystemExit(
+        f"NER model at {onnx_path} looks like an LFS pointer (size={size} B). "
+        "Run `git lfs pull` before building."
+    )
+datas += [
+    (str(p), "models/citation-ner-int8")
+    for p in ner_model_dir.iterdir()
+    if p.is_file()
+]
+
+# Exclude the heavy ML frameworks we deliberately do not use. Without these
+# excludes PyInstaller will still try to bundle torch / tensorflow / jax if
+# any stray metadata references them, adding ~1 GB each.
+excludes = [
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "tensorflow",
+    "jax",
+    "flax",
+    "transformers",
+    "optimum",
+    "optimum.onnxruntime",
+    "optimum_onnx",
+]
 
 a = Analysis(
     [str(backend_dir / "main.py")],
@@ -25,12 +71,15 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludes,
     noarchive=False,
     optimize=0,
 )
 pyz = PYZ(a.pure)
 
+# UPX is disabled: it routinely corrupts onnxruntime's DirectML DLLs and is
+# a major antivirus false-positive trigger on Windows. The bundle is small
+# enough without UPX and runs reliably.
 exe = EXE(
     pyz,
     a.scripts,
@@ -40,7 +89,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -53,7 +102,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name="atfi-memnu-backend",
 )

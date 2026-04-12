@@ -1,4 +1,4 @@
-import { getBackendBaseUrl, getBackendBaseUrlSync } from './backend-endpoint'
+import { getBackendBaseUrl } from './backend-endpoint'
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const baseUrl = await getBackendBaseUrl()
@@ -17,34 +17,30 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return res.json()
 }
 
-export function pageImageUrl(pdfId: string, pageNum: number): string {
-  const baseUrl = getBackendBaseUrlSync()
-  if (!baseUrl) return ''
-  return `${baseUrl}/api/parse/page-image/${pdfId}/${pageNum}`
-}
-
 export const api = {
   // Health
   health: () => request<{ status: string }>('GET', '/api/health'),
 
-  // Parsing
-  parseDirectory: (directory: string) =>
-    request<{ job_id: string }>('POST', '/api/parse', { directory }),
-
-  parseFiles: (filePaths: string[]) =>
-    request<{ job_id: string }>('POST', '/api/parse', { file_paths: filePaths }),
-
-  parseStatus: (jobId: string) =>
-    request<{ pdfs: Array<{ id: string; name: string; status: string; source_count: number }> }>('GET', `/api/parse/status/${jobId}`),
-
-  getPages: (pdfId: string) =>
-    request<{ pages: Array<import('./types').PageData> }>('GET', `/api/parse/pages/${pdfId}`),
-
+  // Source cache persistence — the backend no longer parses PDFs; these
+  // endpoints read and write the `{output_dir}/cache/{pdf_id}.json` files
+  // that the client-side orchestrator populates after parsing.
   getSources: (pdfId: string) =>
-    request<{ sources: Array<import('./types').SourceRectangle> }>('GET', `/api/parse/sources/${pdfId}`),
+    request<{
+      sources: Array<import('./types').SourceRectangle>
+      cached: boolean
+      numbered?: boolean
+      approved?: boolean
+    }>('GET', `/api/parse/sources/${pdfId}`),
 
-  updateSources: (pdfId: string, sources: Array<import('./types').SourceRectangle>) =>
-    request<{ success: boolean }>('PUT', `/api/parse/sources/${pdfId}`, { sources }),
+  updateSources: (
+    pdfId: string,
+    sources: Array<import('./types').SourceRectangle>,
+    numbered?: boolean,
+  ) =>
+    request<{ success: boolean }>('PUT', `/api/parse/sources/${pdfId}`, {
+      sources,
+      ...(numbered !== undefined ? { numbered } : {}),
+    }),
 
   approvePdf: (pdfId: string) =>
     request<{ success: boolean }>('POST', `/api/parse/approve/${pdfId}`),
@@ -52,11 +48,12 @@ export const api = {
   unapprovePdf: (pdfId: string) =>
     request<{ success: boolean }>('POST', `/api/parse/unapprove/${pdfId}`),
 
-  revertPdf: (pdfId: string) =>
-    request<{ sources: Array<import('./types').SourceRectangle> }>('POST', `/api/parse/revert/${pdfId}`),
+  removePdf: (pdfId: string) =>
+    request<{ success: boolean }>('DELETE', `/api/parse/pdf/${pdfId}`),
 
-  extractText: (pdfId: string, page: number, x0: number, y0: number, x1: number, y1: number) =>
-    request<{ text: string }>('POST', `/api/parse/extract-text/${pdfId}`, { page, x0, y0, x1, y1 }),
+  // NER field extraction — the only remaining backend-side PDF-ish work.
+  extractFields: (text: string) =>
+    request<import('./types').ParsedSource>('POST', '/api/parse/extract-fields', { text }),
 
   getLastDirectory: () =>
     request<{ directory: string }>('GET', '/api/parse/last-directory'),
@@ -89,8 +86,13 @@ export const api = {
   verifyResults: (pdfId: string) =>
     request<{ results: Record<string, import('./types').VerificationResult> }>('GET', `/api/verify/results/${pdfId}`),
 
-  overrideStatus: (pdfId: string, sourceId: string, status: 'green' | 'yellow' | 'red' | 'black') =>
+  overrideStatus: (pdfId: string, sourceId: string, status: 'found' | 'problematic' | 'not_found') =>
     request<{ success: boolean }>('PUT', `/api/verify/override/${pdfId}/${sourceId}`, { status }),
+
+  scoreScholar: (pdfId: string, sourceId: string, sourceText: string, candidates: import('./types').ScholarCandidate[]) =>
+    request<import('./types').ScoreScholarResponse>('POST', '/api/verify/score-scholar', {
+      pdf_id: pdfId, source_id: sourceId, source_text: sourceText, candidates,
+    }),
 
   // Settings
   getSettings: () =>

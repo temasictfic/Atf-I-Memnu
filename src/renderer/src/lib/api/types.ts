@@ -5,6 +5,7 @@ export interface PdfDocument {
   path: string
   status: 'pending' | 'parsing' | 'parsed' | 'approved' | 'error'
   source_count: number
+  numbered: boolean
   error?: string
 }
 
@@ -32,8 +33,23 @@ export interface PageData {
   height: number
 }
 
+// Parsed source fields (NER extraction result)
+export interface ParsedSource {
+  raw_text: string
+  title: string
+  authors: string[]
+  year?: number
+  url?: string
+  source?: string
+  citation_format?: string
+  extraction_method: string
+  parse_confidence: number
+}
+
 // Verification types
-export type VerifyStatus = 'green' | 'yellow' | 'red' | 'black' | 'pending' | 'in_progress'
+export type VerifyStatus = 'found' | 'problematic' | 'not_found' | 'pending' | 'in_progress'
+
+export type ProblemTag = '!authors' | '!doi/arXiv' | '!url' | '!year' | '!publication'
 
 export interface MatchResult {
   database: string
@@ -48,13 +64,15 @@ export interface MatchResult {
     title_similarity: number
     author_match: number
     year_match: number
-    journal_match: number
+    url_match: boolean
   }
 }
 
 export interface VerificationResult {
   source_id: string
   status: VerifyStatus
+  problem_tags: string[]
+  url_liveness: Record<string, boolean>
   best_match?: MatchResult
   all_results: MatchResult[]
   databases_searched: string[]
@@ -62,10 +80,9 @@ export interface VerificationResult {
 
 export interface PdfVerificationSummary {
   pdf_id: string
-  green: number
-  yellow: number
-  red: number
-  black: number
+  found: number
+  problematic: number
+  not_found: number
   in_progress: number
   total: number
   completed: boolean
@@ -81,11 +98,15 @@ export interface DatabaseConfig {
 }
 
 export interface AppSettings {
+  last_directory?: string
+  annotated_pdf_dir?: string
   databases: DatabaseConfig[]
   api_keys?: Record<string, string>
   search_timeout: number
   max_concurrent_apis: number
   max_concurrent_sources_per_pdf: number
+  max_concurrent_pdfs: number
+  auto_scholar_after_verify?: boolean
 }
 
 // WebSocket event types
@@ -130,4 +151,19 @@ export interface ParseStatusResponse {
 
 export interface VerifyResponse {
   job_id: string
+}
+
+// Google Scholar scan types
+export interface ScholarCandidate {
+  title: string
+  authors: string[]
+  year?: number
+  doi?: string
+  url: string
+  snippet?: string
+}
+
+export interface ScoreScholarResponse {
+  updated: boolean
+  result: VerificationResult | null
 }

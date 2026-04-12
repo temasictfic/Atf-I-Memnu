@@ -4,12 +4,15 @@ import { api } from '../api/rest-client'
 
 const defaultDatabases: DatabaseConfig[] = [
   { id: 'crossref', name: 'Crossref', enabled: true, tier: 1, type: 'api' },
-  { id: 'openalex', name: 'OpenAlex', enabled: true, tier: 1, type: 'api' },
   { id: 'arxiv', name: 'arXiv', enabled: true, tier: 1, type: 'api' },
   { id: 'semantic_scholar', name: 'Semantic Scholar', enabled: true, tier: 1, type: 'api' },
+  { id: 'openalex', name: 'OpenAlex', enabled: true, tier: 1, type: 'api' },
+  { id: 'pubmed', name: 'PubMed', enabled: true, tier: 1, type: 'api' },
   { id: 'europe_pmc', name: 'Europe PMC', enabled: true, tier: 1, type: 'api' },
+  { id: 'plos', name: 'PLOS', enabled: true, tier: 1, type: 'api' },
+  { id: 'open_library', name: 'Open Library', enabled: true, tier: 1, type: 'api' },
   { id: 'trdizin', name: 'TRDizin', enabled: true, tier: 1, type: 'api' },
-  { id: 'duckduckgo', name: 'DuckDuckGo', enabled: false, tier: 2, type: 'api' },
+  { id: 'core', name: 'CORE', enabled: false, tier: 1, type: 'api' },
 ]
 
 interface SettingsState {
@@ -21,6 +24,7 @@ interface SettingsState {
   toggleDatabase: (dbId: string) => void
   addDatabase: (db: DatabaseConfig) => void
   removeDatabase: (dbId: string) => void
+  moveDatabase: (dbId: string, direction: 'up' | 'down') => void
   updateApiKey: (key: string, value: string) => void
   addInstance: (engine: string, url: string) => void
   removeInstance: (engine: string, url: string) => void
@@ -50,11 +54,14 @@ function _debouncedSave(get: () => SettingsState) {
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   saveStatus: 'idle' as const,
   settings: {
+    last_directory: '',
+    annotated_pdf_dir: '',
     databases: defaultDatabases,
     api_keys: {},
     search_timeout: 30,
     max_concurrent_apis: 5,
     max_concurrent_sources_per_pdf: 3,
+    max_concurrent_pdfs: 2,
   },
 
   loadSettings: async () => {
@@ -109,6 +116,19 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         databases: state.settings.databases.filter(db => db.id !== dbId),
       },
     }))
+    _debouncedSave(get)
+  },
+
+  moveDatabase: (dbId: string, direction: 'up' | 'down') => {
+    set(state => {
+      const dbs = [...state.settings.databases]
+      const idx = dbs.findIndex(db => db.id === dbId)
+      if (idx < 0) return state
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1
+      if (targetIdx < 0 || targetIdx >= dbs.length) return state
+      ;[dbs[idx], dbs[targetIdx]] = [dbs[targetIdx], dbs[idx]]
+      return { settings: { ...state.settings, databases: dbs } }
+    })
     _debouncedSave(get)
   },
 

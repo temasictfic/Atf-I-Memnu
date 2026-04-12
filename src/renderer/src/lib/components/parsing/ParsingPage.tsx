@@ -6,6 +6,7 @@ import {
   useRef,
   useCallback,
 } from "react";
+import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { usePdfStore } from "../../stores/pdf-store";
 import {
   useSourcesStore,
@@ -21,10 +22,28 @@ import {
   approveSources,
   unapproveSources,
   clearSourcesForPdf,
+  mergeWithClosest,
 } from "../../stores/sources-store";
 import { clearVerificationForPdf } from "../../stores/verification-store";
-import type { SourceRectangle, PageData } from "../../api/types";
-import { api, pageImageUrl } from "../../api/rest-client";
+import type { SourceRectangle, PageData, ParsedSource } from "../../api/types";
+import { api } from "../../api/rest-client";
+import { extractTextInBbox } from "../../pdf/extract-text";
+import { getOrLoadDocument } from "../../pdf/document-cache";
+import {
+  addNote,
+  getNotes,
+  removeNote,
+  setActiveColor,
+  setActiveKind,
+  updateNote,
+  useNotesStore,
+  DEFAULT_CALLOUT_FONT_SIZE,
+  CALLOUT_FONT_SIZE_MIN,
+  CALLOUT_FONT_SIZE_MAX,
+} from "../../stores/notes-store";
+import { useSettingsStore } from "../../stores/settings-store";
+import { NotesLayer } from "./NotesLayer";
+import { PdfPageCanvas } from "./PdfPageCanvas";
 import styles from "./ParsingPage.module.css";
 
 const statusOrder: Record<string, number> = {
@@ -34,6 +53,14 @@ const statusOrder: Record<string, number> = {
   pending: 3,
   error: 4,
 };
+
+function buildDefaultSavePath(dir: string | undefined, filename: string): string {
+  const trimmed = dir?.trim()
+  if (!trimmed) return filename
+  const sep = trimmed.includes('\\') ? '\\' : '/'
+  const stripped = trimmed.replace(/[\\/]+$/, '')
+  return `${stripped}${sep}${filename}`
+}
 
 function statusIcon(status: string): string {
   switch (status) {
@@ -65,6 +92,7 @@ function statusColorStyle(status: string): string {
 
 export default function ParsingPage() {
   const allPdfs = usePdfStore((s) => s.pdfs);
+  const pdfPathsById = usePdfStore((s) => s.pathsById);
   const selectedPdfId = usePdfStore((s) => s.selectedPdfId);
   const loading = usePdfStore((s) => s.loading);
   const selectPdf = usePdfStore((s) => s.selectPdf);
@@ -75,6 +103,16 @@ export default function ParsingPage() {
 
   const sourcesByPdf = useSourcesStore((s) => s.sourcesByPdf);
   const historyByPdf = useSourcesStore((s) => s.historyByPdf);
+
+  const notesByPdf = useNotesStore((s) => s.notesByPdf);
+  const activeNoteKind = useNotesStore((s) => s.activeKind);
+  const activeNoteColor = useNotesStore((s) => s.activeColor);
+  const notes = useMemo(
+    () => (selectedPdfId ? (notesByPdf[selectedPdfId] ?? []) : []),
+    [notesByPdf, selectedPdfId],
+  );
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   const selectedPdf = useMemo(
     () => allPdfs.find((p) => p.id === selectedPdfId),
@@ -94,14 +132,32 @@ export default function ParsingPage() {
   // Local state
   const [pages, setPages] = useState<PageData[]>([]);
   const [loadingPages, setLoadingPages] = useState(false);
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [scale, setScale] = useState(1);
   const [containerWidth, setContainerWidth] = useState(0);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [manualCounter, setManualCounter] = useState(0);
+  const [parsedFields, setParsedFields] = useState<ParsedSource | null>(null);
+  const [parsedFieldsLoading, setParsedFieldsLoading] = useState(false);
+  // Keyed by the raw source text, NOT the source ID. When the user edits a
+  // rectangle (draws, moves, resizes, manually re-extracts) the text
+  // changes, so keying by text means edits naturally miss the cache and
+  // we re-run NER extraction. Re-selecting the same source still hits.
+  const parsedFieldsCache = useRef<Record<string, ParsedSource>>({});
+  const [rawTextExpanded, setRawTextExpanded] = useState(true);
 
   // Refs for interaction state (not reactive, no re-render needed)
   const viewerRef = useRef<HTMLDivElement>(null);
   const loadedPdfIdRef = useRef<string | null>(null);
+  // Monotonic counter bumped on every `loadPdfPages` call. Each load captures
+  // its own generation at entry and re-checks after every `await`; if the
+  // ref moves ahead, a newer load has started and the older one must abort
+  // and destroy any pdfjs-dist objects it's already created. Without this,
+  // rapid PDF switches leak PDFDocumentProxy instances into the pdfjs worker.
+  const loadGenerationRef = useRef(0);
+  // Set by loadPdfPages when a new batch of pages is about to mount; the
+  // useLayoutEffect below consumes it to apply fit-to-width before paint.
+  const pendingFitRef = useRef(false);
   const suppressPageClickRef = useRef(false);
   const dragIntentRef = useRef<{
     sourceId: string;
@@ -137,6 +193,12 @@ export default function ParsingPage() {
   const toggleSort = toggleParsingSort;
 
   const sortedPdfs = useMemo(() => {
+    // While an import batch is running, preserve insertion order (which
+    // matches the user's alphabetical file selection). The default sort key
+    // is `numbered`, and parse completions flip PDFs from unnumbered to
+    // numbered one by one, which caused the list to jump around mid-import.
+    if (loading) return allPdfs;
+
     const list = [...allPdfs];
     const dir = sortAsc ? 1 : -1;
     list.sort((a, b) => {
@@ -145,10 +207,30 @@ export default function ParsingPage() {
         return (
           dir * ((statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9))
         );
+      if (sortKey === "numbered") {
+        // Unnumbered first (ascending): unnumbered=0, numbered=1
+        const diff = (a.numbered ? 1 : 0) - (b.numbered ? 1 : 0);
+        if (diff !== 0) return dir * diff;
+        return a.name.localeCompare(b.name);
+      }
       return dir * (a.source_count - b.source_count);
     });
     return list;
-  }, [allPdfs, sortKey, sortAsc]);
+  }, [allPdfs, sortKey, sortAsc, loading]);
+
+  // Scroll-based virtualisation: only mount PdfPageCanvas for pages whose
+  // scaled bounds intersect the visible viewport (plus a 1-page buffer).
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+
+  useEffect(() => {
+    const el = viewerRef.current;
+    if (!el) return;
+    setViewportHeight(el.clientHeight);
+    const onScroll = () => setScrollTop(el.scrollTop);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [selectedPdfId, pages.length, loadingPages]);
 
   // Page layout computations
   const maxPageWidth = useMemo(
@@ -175,10 +257,48 @@ export default function ParsingPage() {
   );
   const zoomPercent = Math.round(scale * 100);
 
-  // Auto fit-to-width
-  useEffect(() => {
-    if (fitScale > 0 && pages.length > 0) setScale(fitScale);
-  }, [fitScale, pages.length]);
+  // Determine which page indices are within the visible scroll viewport
+  // (plus a 1-page buffer above/below) so we can skip rendering off-screen
+  // pages entirely.
+  const visiblePageIndices = useMemo(() => {
+    if (pages.length === 0 || viewportHeight === 0) return new Set<number>();
+    const vTop = scrollTop / scale;
+    const vBottom = (scrollTop + viewportHeight) / scale;
+    const visible = new Set<number>();
+    for (let i = 0; i < pages.length; i++) {
+      const pTop = pageOffsets[i];
+      const pBottom = pTop + pages[i].height;
+      // 1-page buffer: include neighbouring pages so they're ready when
+      // the user scrolls a little further.
+      const bufferAbove = i > 0 ? pages[i - 1].height : 0;
+      const bufferBelow = i < pages.length - 1 ? pages[i + 1].height : 0;
+      if (pBottom + bufferBelow >= vTop && pTop - bufferAbove <= vBottom) {
+        visible.add(i);
+      }
+    }
+    return visible;
+  }, [pages, pageOffsets, scrollTop, viewportHeight, scale]);
+
+  // Auto fit-to-width on new PDF load. Must be useLayoutEffect (not useEffect)
+  // so the setScale flush happens *before* the browser paints — otherwise
+  // React commits the new pages at the previous scale, paints once, then
+  // re-renders with the corrected scale, producing a visible "100% → fit"
+  // jump. Only runs when pendingFitRef is set (i.e. right after loadPdfPages
+  // commits new pages), so user-initiated zoom isn't overwritten.
+  useLayoutEffect(() => {
+    if (!pendingFitRef.current) return;
+    if (pages.length === 0) return;
+    const container = viewerRef.current;
+    if (!container) return;
+    const cw = container.clientWidth;
+    const maxW = Math.max(...pages.map((p) => p.width));
+    if (cw > 0 && maxW > 0) {
+      setScale(Math.min((cw - 40) / maxW, 2));
+      pendingFitRef.current = false;
+    }
+    // If cw is still 0 (container not laid out yet), leave the flag set so
+    // the next render triggered by containerWidth changing will retry.
+  }, [pages, containerWidth]);
 
   // ResizeObserver
   useEffect(() => {
@@ -189,7 +309,10 @@ export default function ParsingPage() {
     }
     setContainerWidth(el.clientWidth);
     const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) setContainerWidth(entry.contentRect.width);
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+        setViewportHeight(entry.contentRect.height);
+      }
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -210,18 +333,101 @@ export default function ParsingPage() {
     }
   }, [selectedPdfId, selectedPdf?.status]);
 
+  // On unmount we just drop our reference — the doc itself is owned by
+  // document-cache.ts, which manages its lifetime via the LRU. Destroying
+  // it here would evict a potentially-cached doc out from under the cache.
+  useEffect(() => {
+    return () => {
+      setPdfDoc(null);
+    };
+  }, []);
+
   async function loadPdfPages(pdfId: string) {
+    const myGen = ++loadGenerationRef.current;
+    const isStale = () => loadGenerationRef.current !== myGen;
+
     setLoadingPages(true);
     setSelectedSourceId(null);
+    // NOTE: we do NOT clear pdfDoc/pages here. Leaving the previous view
+    // mounted avoids a blank-flash on switch and lets React.memo preserve
+    // unrelated children. When the new doc is ready we swap in a single
+    // state update below.
     try {
-      const result = await api.getPages(pdfId);
-      setPages(result.pages);
-      await loadSources(pdfId);
+      const localPath = pdfPathsById[pdfId];
+      if (!localPath) {
+        console.warn(
+          `[ParsingPage] no local path for ${pdfId}; cannot render`,
+        );
+        if (!isStale()) {
+          setPages([]);
+          setPdfDoc(null);
+        }
+        return;
+      }
+
+      // Pull the doc from the LRU cache — on a cache hit this resolves
+      // synchronously from memory with no IPC / no worker round-trip, so
+      // switching between recently-viewed PDFs feels instant. On a miss
+      // it reads the file, parses, and probes first+last page dimensions
+      // in parallel with the pdfjs worker.
+      const entry = await getOrLoadDocument(localPath);
+
+      // Guard against rapid PDF switches — if a newer load has started, or
+      // the store has moved to a different PDF entirely, leave the cached
+      // entry alone (the cache owns its lifetime) and bail.
+      if (isStale() || usePdfStore.getState().selectedPdfId !== pdfId) {
+        return;
+      }
+
+      // Uniform-page fast path. If the first and last pages match (the
+      // common case for academic papers), every page uses the first-page
+      // dimensions. If they differ, we set the last page to its actual
+      // size and leave the interior pages at the first-page size — a
+      // minor layout inaccuracy only visible for genuinely non-uniform
+      // documents, which this app rarely encounters.
+      const pageDataList: PageData[] = Array.from(
+        { length: entry.numPages },
+        (_, i) => ({
+          page_num: i,
+          width: entry.firstPageWidth,
+          height: entry.firstPageHeight,
+        }),
+      );
+      if (entry.lastPageDimensions && entry.numPages > 1) {
+        pageDataList[entry.numPages - 1] = {
+          page_num: entry.numPages - 1,
+          width: entry.lastPageDimensions.width,
+          height: entry.lastPageDimensions.height,
+        };
+      }
+
+      // Mark this load as needing an initial fit; the useLayoutEffect below
+      // picks it up after React commits the new pages to the DOM and applies
+      // the fit-to-width scale before the browser paints — so there is no
+      // visible "100% then fit" jump when switching PDFs.
+      pendingFitRef.current = true;
+      setPages(pageDataList);
+      setPdfDoc(entry.doc);
+
+      // Sources: the orchestrator has already populated the local store on
+      // import, but if the user opens a PDF that was imported in a prior
+      // session the store may be empty — fall back to the cache endpoint
+      // in that case. This mirrors the old `getSources` seeding.
+      if (!isStale() && !useSourcesStore.getState().sourcesByPdf[pdfId]) {
+        await loadSources(pdfId);
+      }
     } catch (e) {
       console.error("Failed to load PDF pages:", e);
-      setPages([]);
+      if (!isStale()) {
+        setPages([]);
+        setPdfDoc(null);
+        // Surface the error to the user instead of a silent blank viewer.
+        window.alert(
+          `Failed to open PDF: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     } finally {
-      setLoadingPages(false);
+      if (!isStale()) setLoadingPages(false);
     }
   }
 
@@ -248,7 +454,7 @@ export default function ParsingPage() {
 
   function handleRemovePdf(pdfId: string) {
     const pdf = allPdfs.find((p) => p.id === pdfId);
-    if (!pdf || pdf.status === "parsing") return;
+    if (!pdf) return;
 
     if (selectedPdfId === pdfId) {
       setSelectedSourceId(null);
@@ -288,7 +494,11 @@ export default function ParsingPage() {
 
   function handleRevert() {
     if (!selectedPdfId) return;
-    revert(selectedPdfId);
+    const pdfId = selectedPdfId;
+    revert(pdfId);
+    void saveSources(pdfId).catch((err) => {
+      console.error("Undo save failed:", err);
+    });
   }
 
   async function handleRevertToOriginal() {
@@ -392,23 +602,190 @@ export default function ParsingPage() {
     }
   }, [scale]);
 
-  // Text extraction
+  // Notes: highlight creation from text selection.
+  //
+  // Listens for pointerup anywhere on the viewer; if a non-collapsed selection
+  // exists, walks its client rects, groups them by which page the rect lies
+  // in, converts screen coords into page-local pixel coords (SCALE space),
+  // and creates one highlight note per page with `quads` for each line.
+  useEffect(() => {
+    if (activeNoteKind !== "highlight") return;
+    const container = viewerRef.current;
+    if (!container || !selectedPdfId || !pdfDoc) return;
+
+    function handlePointerUp() {
+      if (!selectedPdfId || !container) return;
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      const clientRects = Array.from(range.getClientRects()).filter(
+        (r) => r.width > 1 && r.height > 1,
+      );
+      if (clientRects.length === 0) return;
+
+      // Each page wrapper is tagged with data-page-num via the PDF render loop.
+      const pageEls = Array.from(
+        container.querySelectorAll<HTMLElement>("[data-page-num]"),
+      );
+      if (pageEls.length === 0) return;
+
+      interface PageHit {
+        pageNum: number;
+        quads: { x0: number; y0: number; x1: number; y1: number }[];
+      }
+      const byPage = new Map<number, PageHit>();
+
+      for (const rect of clientRects) {
+        // Find the topmost page element whose bounding rect contains this rect's center.
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        let hostEl: HTMLElement | null = null;
+        for (const el of pageEls) {
+          const r = el.getBoundingClientRect();
+          if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) {
+            hostEl = el;
+            break;
+          }
+        }
+        if (!hostEl) continue;
+        const pageNum = Number(hostEl.dataset.pageNum);
+        if (Number.isNaN(pageNum)) continue;
+        const hostRect = hostEl.getBoundingClientRect();
+        // The page wrapper is sized `page.width * scale` × `page.height * scale`
+        // (see render loop), so dividing client-space coords by the current
+        // scale yields pixel coords in SCALE space — the same coordinate
+        // space used by SourceRectangle bboxes and stored notes.
+        const quad = {
+          x0: (rect.left - hostRect.left) / scaleRef.current,
+          y0: (rect.top - hostRect.top) / scaleRef.current,
+          x1: (rect.right - hostRect.left) / scaleRef.current,
+          y1: (rect.bottom - hostRect.top) / scaleRef.current,
+        };
+        const existing = byPage.get(pageNum);
+        if (existing) existing.quads.push(quad);
+        else byPage.set(pageNum, { pageNum, quads: [quad] });
+      }
+
+      for (const hit of byPage.values()) {
+        const bbox = hit.quads.reduce(
+          (acc, q) => ({
+            x0: Math.min(acc.x0, q.x0),
+            y0: Math.min(acc.y0, q.y0),
+            x1: Math.max(acc.x1, q.x1),
+            y1: Math.max(acc.y1, q.y1),
+          }),
+          hit.quads[0],
+        );
+        const text = selection.toString().trim();
+        addNote({
+          pdfId: selectedPdfId,
+          pageNum: hit.pageNum,
+          kind: "highlight",
+          bbox,
+          quads: hit.quads,
+          text,
+          color: useNotesStore.getState().activeColor,
+        });
+      }
+
+      selection.removeAllRanges();
+    }
+
+    container.addEventListener("pointerup", handlePointerUp);
+    return () => container.removeEventListener("pointerup", handlePointerUp);
+  }, [activeNoteKind, selectedPdfId, pdfDoc]);
+
+  function handleCreateCallout(
+    pageNum: number,
+    bbox: { x0: number; y0: number; x1: number; y1: number },
+  ) {
+    if (!selectedPdfId) return;
+    // Create the callout with empty text and auto-select it so the inline
+    // editor in the toolbar focuses. Electron disables window.prompt(),
+    // so the editing UX lives in-page.
+    const note = addNote({
+      pdfId: selectedPdfId,
+      pageNum,
+      kind: "callout",
+      bbox,
+      text: "",
+      color: useNotesStore.getState().activeColor,
+    });
+    setSelectedNoteId(note.id);
+  }
+
+  function handleDeleteSelectedNote() {
+    if (!selectedPdfId || !selectedNoteId) return;
+    removeNote(selectedPdfId, selectedNoteId);
+    setSelectedNoteId(null);
+  }
+
+  function handleUpdateSelectedNoteText(text: string) {
+    if (!selectedPdfId || !selectedNoteId) return;
+    updateNote(selectedPdfId, selectedNoteId, { text });
+  }
+
+  const selectedNote = useMemo(
+    () => notes.find((n) => n.id === selectedNoteId) ?? null,
+    [notes, selectedNoteId],
+  );
+
+  async function handleExportAnnotatedPdf() {
+    if (!selectedPdfId) return;
+    const localPath = pdfPathsById[selectedPdfId];
+    if (!localPath) {
+      console.warn(
+        "[ParsingPage] cannot export: original PDF path not known for",
+        selectedPdfId,
+      );
+      return;
+    }
+    const pdfNotes = getNotes(selectedPdfId);
+    if (pdfNotes.length === 0) {
+      window.alert("No notes to export.");
+      return;
+    }
+    setExportingPdf(true);
+    try {
+      const defaultName = `${selectedPdfId}-annotated.pdf`;
+      const configuredDir = useSettingsStore
+        .getState()
+        .settings.annotated_pdf_dir?.trim();
+      const defaultPath = buildDefaultSavePath(configuredDir, defaultName);
+      const target = await window.electronAPI.showSaveAs({
+        title: "Save annotated PDF",
+        defaultPath,
+        filters: [{ name: "PDF Files", extensions: ["pdf"] }],
+      });
+      if (!target) return;
+      const bytes = await window.electronAPI.readPdfFile(localPath);
+      // Lazy-load pdf-lib + fontkit (~1.2 MB) only on first export.
+      const { writeNotesToPdf } = await import("../../pdf/annotation-writer");
+      const annotated = await writeNotesToPdf(bytes, pdfNotes);
+      await window.electronAPI.writePdfFile(target, annotated);
+    } catch (err) {
+      console.error("[ParsingPage] annotated PDF export failed:", err);
+      window.alert(
+        `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setExportingPdf(false);
+    }
+  }
+
+  // Text extraction — pulls text from the already-loaded pdfjs-dist document
+  // for the given bbox. Replaces the old backend /api/parse/extract-text call.
   async function extractAndSetText(
     pdfId: string,
     sourceId: string,
     bbox: { x0: number; y0: number; x1: number; y1: number; page: number },
   ) {
+    const doc = pdfDocRef.current;
+    if (!doc) return;
     try {
-      const result = await api.extractText(
-        pdfId,
-        bbox.page,
-        bbox.x0,
-        bbox.y0,
-        bbox.x1,
-        bbox.y1,
-      );
-      if (result.text) {
-        updateRectangle(pdfId, sourceId, { text: result.text });
+      const text = await extractTextInBbox(doc, bbox.page, bbox);
+      if (text) {
+        updateRectangle(pdfId, sourceId, { text });
         saveSources(pdfId);
       }
     } catch (e) {
@@ -423,6 +800,8 @@ export default function ParsingPage() {
   selectedPdfIdRef.current = selectedPdfId;
   const pageOffsetsRef = useRef(pageOffsets);
   pageOffsetsRef.current = pageOffsets;
+  const pdfDocRef = useRef(pdfDoc);
+  pdfDocRef.current = pdfDoc;
 
   function onRectMouseDown(e: React.MouseEvent, source: SourceRectangle) {
     if (e.button !== 0) return;
@@ -560,21 +939,20 @@ export default function ParsingPage() {
     }
 
     if (hadDrag && pdfId && dragIntentRef.current) {
-      saveSources(pdfId);
+      const draggedId = dragIntentRef.current.sourceId;
+      void saveSources(pdfId).catch((e) => {
+        console.error("Drag save failed:", e);
+      });
       const currentSources =
         useSourcesStore.getState().sourcesByPdf[pdfId] ?? [];
-      const movedSource = currentSources.find(
-        (s) => s.id === dragIntentRef.current!.sourceId,
-      );
+      const movedSource = currentSources.find((s) => s.id === draggedId);
       if (movedSource)
-        extractAndSetText(
-          pdfId,
-          dragIntentRef.current.sourceId,
-          movedSource.bbox,
-        );
+        extractAndSetText(pdfId, draggedId, movedSource.bbox);
     }
     if (hadResize && pdfId) {
-      saveSources(pdfId);
+      void saveSources(pdfId).catch((e) => {
+        console.error("Resize save failed:", e);
+      });
       const currentSources =
         useSourcesStore.getState().sourcesByPdf[pdfId] ?? [];
       const resizedSource = currentSources.find(
@@ -673,6 +1051,17 @@ export default function ParsingPage() {
       e.preventDefault();
       handleRevert();
     }
+    if (e.key === " " && selectedSourceId && selectedPdfId) {
+      e.preventDefault();
+      const pdfId = selectedPdfId;
+      const newId = mergeWithClosest(pdfId, selectedSourceId);
+      if (newId) {
+        setSelectedSourceId(newId);
+        void saveSources(pdfId).catch((err) => {
+          console.error("Merge save failed:", err);
+        });
+      }
+    }
   }
 
   const selectedSource = useMemo(
@@ -683,6 +1072,42 @@ export default function ParsingPage() {
     [sources, selectedSourceId],
   );
   const selectedSourceStatus = selectedSource?.status ?? null;
+
+  // Fetch parsed fields when a source is selected (debounced 300ms, cached)
+  useEffect(() => {
+    const text = selectedSource?.text;
+    if (!selectedSource || !text) {
+      setParsedFields(null);
+      return;
+    }
+
+    // Check cache by text — edits to a rectangle change the text, so a
+    // stale cached result can never shadow fresh text.
+    const cached = parsedFieldsCache.current[text];
+    if (cached) {
+      setParsedFields(cached);
+      setParsedFieldsLoading(false);
+      return;
+    }
+
+    setParsedFieldsLoading(true);
+    const timer = setTimeout(() => {
+      api
+        .extractFields(text)
+        .then((result) => {
+          parsedFieldsCache.current[text] = result;
+          setParsedFields(result);
+        })
+        .catch(() => {
+          setParsedFields(null);
+        })
+        .finally(() => {
+          setParsedFieldsLoading(false);
+        });
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [selectedSource?.id, selectedSource?.text]);
 
   const HANDLES = ["n", "s", "w", "e", "nw", "ne", "sw", "se"] as const;
 
@@ -748,6 +1173,18 @@ export default function ParsingPage() {
               )}
             </button>
             <button
+              className={`${styles["sort-btn"]} ${styles["sort-btn-numbered"]} ${sortKey === "numbered" ? styles["sort-active"] : ""}`}
+              onClick={() => toggleSort("numbered")}
+              title="Sort by numbered (unnumbered first)"
+            >
+              N
+              {sortKey === "numbered" && (
+                <span className={styles["sort-arrow"]}>
+                  {sortAsc ? "\u2191" : "\u2193"}
+                </span>
+              )}
+            </button>
+            <button
               className={`${styles["sort-btn"]} ${styles["sort-btn-count"]} ${sortKey === "count" ? styles["sort-active"] : ""}`}
               onClick={() => toggleSort("count")}
               title="Sort by source count"
@@ -762,7 +1199,7 @@ export default function ParsingPage() {
           </div>
         )}
 
-        <div className={styles["pdf-list"]} data-scrollable>
+        <div className={styles["pdf-list"]}>
           {allPdfs.length === 0 ? (
             <div className={styles["empty-state"]}>
               <div className={styles["empty-icon"]}>&#x1F4C4;</div>
@@ -783,14 +1220,9 @@ export default function ParsingPage() {
                   }}
                 >
                   <span
-                    className={`${styles["pdf-status"]} ${pdf.status !== "parsing" ? styles["pdf-status-removable"] : ""}`}
-                    title={
-                      pdf.status === "parsing"
-                        ? "Cannot remove while parsing"
-                        : "Remove from list"
-                    }
+                    className={`${styles["pdf-status"]} ${styles["pdf-status-removable"]}`}
+                    title="Remove from list"
                     onClick={(e) => {
-                      if (pdf.status === "parsing") return;
                       e.preventDefault();
                       e.stopPropagation();
                       handleRemovePdf(pdf.id);
@@ -802,14 +1234,17 @@ export default function ParsingPage() {
                     >
                       {statusIcon(pdf.status)}
                     </span>
-                    {pdf.status !== "parsing" && (
-                      <span className={styles["pdf-status-remove"]}>
-                        &times;
-                      </span>
-                    )}
+                    <span className={styles["pdf-status-remove"]}>
+                      &times;
+                    </span>
                   </span>
                   <span className={styles["pdf-name"]} title={pdf.name}>
                     {pdf.name}
+                  </span>
+                  <span className={styles["pdf-numbered-col"]}>
+                    {pdf.numbered && (
+                      <span className={styles["numbered-tag"]}>N</span>
+                    )}
                   </span>
                   <span className={styles["pdf-count"]}>{pdf.source_count}</span>
                 </button>
@@ -894,6 +1329,10 @@ export default function ParsingPage() {
                         <span className={styles["hint-desc"]}>Remove source</span>
                       </div>
                       <div className={styles["hint-row"]}>
+                        <span className={styles["hint-keys"]}>Space</span>
+                        <span className={styles["hint-desc"]}>Merge with closest</span>
+                      </div>
+                      <div className={styles["hint-row"]}>
                         <span className={styles["hint-keys"]}>Ctrl + Z</span>
                         <span className={styles["hint-desc"]}>Undo</span>
                       </div>
@@ -907,7 +1346,21 @@ export default function ParsingPage() {
               </div>
 
               <div className={styles["toolbar-group-right"]}>
-                <span className={styles["count-badge"]}>{sources.length} sources</span>
+                <button
+                  className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                  onClick={() =>
+                    setActiveKind(activeNoteKind === null ? "highlight" : null)
+                  }
+                  style={
+                    activeNoteKind !== null
+                      ? { background: activeNoteColor }
+                      : undefined
+                  }
+                  disabled={!pdfDoc}
+                  title="Toggle notes mode"
+                >
+                  Notes{notes.length > 0 ? ` (${notes.length})` : ""}
+                </button>
                 <button
                   className={`${styles["toolbar-approve-btn"]} ${isApproved ? styles["toolbar-approved"] : ""}`}
                   onClick={handleApprove}
@@ -918,6 +1371,7 @@ export default function ParsingPage() {
               </div>
             </div>
 
+
             {/* Continuous document view */}
             <div
               className={styles["viewer-content"]}
@@ -925,13 +1379,16 @@ export default function ParsingPage() {
               data-scrollable
               role="button"
               tabIndex={0}
-              aria-label="Document view (press Enter or Space to clear selection)"
+              aria-label="Document view"
               onClick={onPageClick}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
+                if (e.key === "Enter") {
                   e.preventDefault();
                   onPageClick();
                 }
+                // Space is handled by the parent onKeyDown:
+                // - if a source is selected: merge with closest
+                // - otherwise: do nothing (let parent handle clearing if needed)
               }}
             >
               <div
@@ -947,23 +1404,48 @@ export default function ParsingPage() {
               >
                 {pages.map((page, idx) => (
                   <div key={page.page_num}>
-                    <img
-                      src={
-                        selectedPdfId
-                          ? pageImageUrl(selectedPdfId, page.page_num)
-                          : ""
-                      }
-                      alt={`Page ${page.page_num + 1}`}
-                      style={{
-                        position: "absolute",
-                        top: pageOffsets[idx] * scale,
-                        left: ((maxPageWidth - page.width) / 2) * scale,
-                        width: page.width * scale,
-                        height: page.height * scale,
-                        display: "block",
-                      }}
-                      draggable={false}
-                    />
+                    {pdfDoc && (
+                      <div
+                        data-page-num={page.page_num}
+                        style={{
+                          position: "absolute",
+                          top: pageOffsets[idx] * scale,
+                          left: ((maxPageWidth - page.width) / 2) * scale,
+                          width: page.width * scale,
+                          height: page.height * scale,
+                        }}
+                      >
+                        {visiblePageIndices.has(idx) && (
+                          <PdfPageCanvas
+                            doc={pdfDoc}
+                            pageNum={page.page_num + 1}
+                            zoom={scale}
+                          />
+                        )}
+                        <NotesLayer
+                          // Notes are only visible while in notes mode, so
+                          // they aren't cluttered by (or visually collide
+                          // with) the yellow source-rectangle overlays.
+                          notes={
+                            activeNoteKind !== null
+                              ? notes.filter(
+                                  (n) => n.pageNum === page.page_num,
+                                )
+                              : []
+                          }
+                          scale={scale}
+                          activeKind={activeNoteKind}
+                          activeColor={activeNoteColor}
+                          pageWidth={page.width}
+                          pageHeight={page.height}
+                          onCreateCallout={(bbox) =>
+                            handleCreateCallout(page.page_num, bbox)
+                          }
+                          onSelectNote={setSelectedNoteId}
+                          selectedNoteId={selectedNoteId}
+                        />
+                      </div>
+                    )}
                     {idx > 0 && (
                       <div
                         className={styles["page-boundary"]}
@@ -973,8 +1455,11 @@ export default function ParsingPage() {
                         }}
                       />
                     )}
-                    {/* Source rectangles for this page */}
-                    {sourcesForPage(page.page_num).map((source) => (
+                    {/* Source rectangles for this page — hidden while in
+                        notes mode so they don't intercept text-selection
+                        drags or callout draws. */}
+                    {activeNoteKind === null &&
+                      sourcesForPage(page.page_num).map((source) => (
                       <div
                         key={source.id}
                         className={`${styles["source-rect"]} ${selectedSourceId === source.id ? styles["source-selected"] : ""}`}
@@ -1004,32 +1489,33 @@ export default function ParsingPage() {
                           ))}
                       </div>
                     ))}
-                    {/* Multi-page continuation bboxes */}
-                    {extraBboxesForPage(page.page_num).map(
-                      ({ source, bbox }) => (
-                        <div
-                          key={`${source.id}_page${bbox.page}`}
-                          className={`${styles["source-rect"]} ${styles["source-rect-continuation"]} ${selectedSourceId === source.id ? styles["source-selected"] : ""}`}
-                          style={{
-                            left: bbox.x0 * scale,
-                            top: (pageOffsets[idx] + bbox.y0) * scale,
-                            width: (bbox.x1 - bbox.x0) * scale,
-                            height: (bbox.y1 - bbox.y0) * scale,
-                          }}
-                          title={source.text || "(no text)"}
-                          onMouseDown={(e) => onRectMouseDown(e, source)}
-                        >
-                          <span
-                            className={`${styles["ref-label"]} ${styles["ref-label-cont"]}`}
+                    {/* Multi-page continuation bboxes — also hidden in notes mode. */}
+                    {activeNoteKind === null &&
+                      extraBboxesForPage(page.page_num).map(
+                        ({ source, bbox }) => (
+                          <div
+                            key={`${source.id}_page${bbox.page}`}
+                            className={`${styles["source-rect"]} ${styles["source-rect-continuation"]} ${selectedSourceId === source.id ? styles["source-selected"] : ""}`}
+                            style={{
+                              left: bbox.x0 * scale,
+                              top: (pageOffsets[idx] + bbox.y0) * scale,
+                              width: (bbox.x1 - bbox.x0) * scale,
+                              height: (bbox.y1 - bbox.y0) * scale,
+                            }}
+                            title={source.text || "(no text)"}
+                            onMouseDown={(e) => onRectMouseDown(e, source)}
                           >
-                            {source.ref_number != null
-                              ? `[${source.ref_number}]`
-                              : "[+]"}{" "}
-                            &#x21B5;
-                          </span>
-                        </div>
-                      ),
-                    )}
+                            <span
+                              className={`${styles["ref-label"]} ${styles["ref-label-cont"]}`}
+                            >
+                              {source.ref_number != null
+                                ? `[${source.ref_number}]`
+                                : "[+]"}{" "}
+                              &#x21B5;
+                            </span>
+                          </div>
+                        ),
+                      )}
                   </div>
                 ))}
               </div>
@@ -1050,9 +1536,226 @@ export default function ParsingPage() {
         )}
       </section>
 
-      {/* Right Panel: Actions & Source Detail */}
+      {/* Right Panel: Actions & Source Detail (or Notes when notes mode is on) */}
       <aside className={styles["actions-panel"]}>
-        {selectedPdf ? (
+        {selectedPdf && activeNoteKind !== null ? (
+          <>
+            <div className={styles["panel-header"]}>
+              <h2 className={styles["panel-title"]}>
+                Notes{notes.length > 0 ? ` (${notes.length})` : ""}
+              </h2>
+            </div>
+
+            <div
+              className={styles["actions-content"]}
+              style={{ display: "flex", flexDirection: "column", gap: 12, padding: 12 }}
+            >
+              {/* Tool toggles */}
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                  onClick={() => setActiveKind("highlight")}
+                  style={{
+                    flex: 1,
+                    background:
+                      activeNoteKind === "highlight" ? activeNoteColor : undefined,
+                  }}
+                  title="Highlight: select text to create"
+                >
+                  Highlight
+                </button>
+                <button
+                  className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                  onClick={() => setActiveKind("callout")}
+                  style={{
+                    flex: 1,
+                    background:
+                      activeNoteKind === "callout" ? activeNoteColor : undefined,
+                  }}
+                  title="Callout: drag to draw a box"
+                >
+                  Callout
+                </button>
+              </div>
+
+              {/* Color picker + preset swatches */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <input
+                  type="color"
+                  value={activeNoteColor}
+                  onChange={(e) => setActiveColor(e.target.value)}
+                  title="Note color"
+                  style={{
+                    width: 32,
+                    height: 24,
+                    border: "1px solid #d4d4d8",
+                    background: "transparent",
+                    padding: 0,
+                  }}
+                />
+                {["#fde68a", "#a7f3d0", "#bae6fd", "#fbcfe8", "#fed7aa"].map(
+                  (swatch) => (
+                    <button
+                      key={swatch}
+                      onClick={() => setActiveColor(swatch)}
+                      title={swatch}
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: 3,
+                        border:
+                          activeNoteColor.toLowerCase() === swatch
+                            ? "2px solid #111"
+                            : "1px solid #d4d4d8",
+                        background: swatch,
+                        cursor: "pointer",
+                      }}
+                    />
+                  ),
+                )}
+              </div>
+
+              {/* Selected-note inline editor */}
+              {selectedNote ? (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    padding: 8,
+                    border: "1px solid #e4e4e7",
+                    borderRadius: 4,
+                  }}
+                >
+                  <span style={{ fontSize: 11, color: "#71717a" }}>
+                    {selectedNote.kind === "callout" ? "Callout" : "Highlight"}{" "}
+                    · Page {selectedNote.pageNum + 1}
+                  </span>
+                  <textarea
+                    value={selectedNote.text}
+                    onChange={(e) =>
+                      handleUpdateSelectedNoteText(e.target.value)
+                    }
+                    placeholder={
+                      selectedNote.kind === "callout"
+                        ? "Callout text (Enter for new line)…"
+                        : "Optional comment…"
+                    }
+                    autoFocus
+                    rows={4}
+                    style={{
+                      padding: "4px 8px",
+                      border: "1px solid #d4d4d8",
+                      borderRadius: 4,
+                      fontSize: 12,
+                      resize: "vertical",
+                      fontFamily: "inherit",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  />
+                  {selectedNote.kind === "callout" && selectedPdfId && (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        fontSize: 11,
+                      }}
+                    >
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 4,
+                          color: "#71717a",
+                        }}
+                      >
+                        Size
+                        <input
+                          type="number"
+                          min={CALLOUT_FONT_SIZE_MIN}
+                          max={CALLOUT_FONT_SIZE_MAX}
+                          value={
+                            selectedNote.fontSize ?? DEFAULT_CALLOUT_FONT_SIZE
+                          }
+                          onChange={(e) => {
+                            const next = Math.max(
+                              CALLOUT_FONT_SIZE_MIN,
+                              Math.min(
+                                CALLOUT_FONT_SIZE_MAX,
+                                Number(e.target.value) ||
+                                  DEFAULT_CALLOUT_FONT_SIZE,
+                              ),
+                            );
+                            updateNote(selectedPdfId, selectedNote.id, {
+                              fontSize: next,
+                            });
+                          }}
+                          style={{
+                            width: 48,
+                            padding: "2px 4px",
+                            border: "1px solid #d4d4d8",
+                            borderRadius: 4,
+                            fontSize: 12,
+                          }}
+                        />
+                      </label>
+                      <button
+                        onClick={() =>
+                          updateNote(selectedPdfId, selectedNote.id, {
+                            bold: !selectedNote.bold,
+                          })
+                        }
+                        title="Toggle bold"
+                        style={{
+                          padding: "2px 8px",
+                          border: "1px solid #d4d4d8",
+                          borderRadius: 4,
+                          background: selectedNote.bold ? "#1f2937" : "#fff",
+                          color: selectedNote.bold ? "#fff" : "#111",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        B
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                    onClick={handleDeleteSelectedNote}
+                  >
+                    Delete note
+                  </button>
+                </div>
+              ) : (
+                <span style={{ color: "#a8a29e", fontSize: 12 }}>
+                  {activeNoteKind === "highlight"
+                    ? "Select text to highlight."
+                    : "Drag a box to place a callout."}
+                </span>
+              )}
+
+              {/* Export */}
+              <button
+                className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                onClick={handleExportAnnotatedPdf}
+                disabled={exportingPdf || notes.length === 0 || !pdfDoc}
+                title="Save a copy of the PDF with notes baked in"
+                style={{ marginTop: "auto" }}
+              >
+                {exportingPdf ? "Exporting…" : "Export PDF"}
+              </button>
+            </div>
+          </>
+        ) : selectedPdf ? (
           <>
             <div className={styles["panel-header"]}>
               <div className={styles["source-detail-heading"]}>
@@ -1096,8 +1799,82 @@ export default function ParsingPage() {
                       &#x2715;
                     </button>
                   </div>
-                  <div className={styles["detail-text-display"]}>
-                    {selectedSource.text || "(no text detected)"}
+
+                  {/* Extracted fields */}
+                  {parsedFieldsLoading && (
+                    <div className={styles["fields-loading"]}>Extracting fields...</div>
+                  )}
+                  {parsedFields && !parsedFieldsLoading && (
+                    <div className={styles["parsed-fields"]}>
+                      {parsedFields.title && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>Title</span>
+                          <span className={styles["field-value"]}>{parsedFields.title}</span>
+                        </div>
+                      )}
+                      {parsedFields.authors.length > 0 && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>Authors</span>
+                          <span className={styles["field-value"]}>
+                            {parsedFields.authors.join(", ")}
+                          </span>
+                        </div>
+                      )}
+                      {parsedFields.year && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>Year</span>
+                          <span className={styles["field-value"]}>{parsedFields.year}</span>
+                        </div>
+                      )}
+                      {parsedFields.source && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>Source</span>
+                          <span className={styles["field-value"]}>{parsedFields.source}</span>
+                        </div>
+                      )}
+                      {parsedFields.url && (
+                        <div className={styles["field-row"]}>
+                          <span className={styles["field-label"]}>URL</span>
+                          <a
+                            className={styles["field-link"]}
+                            href={parsedFields.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {parsedFields.url.length > 50
+                              ? parsedFields.url.slice(0, 50) + "..."
+                              : parsedFields.url}
+                          </a>
+                        </div>
+                      )}
+                      <div className={styles["field-row"]}>
+                        <span className={styles["field-label"]}>Method</span>
+                        <span className={styles["extraction-method-badge"]}>
+                          {parsedFields.extraction_method.toUpperCase()}
+                        </span>
+                        <span className={styles["confidence-value"]}>
+                          {Math.round(parsedFields.parse_confidence * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Collapsible raw text */}
+                  <div className={styles["raw-text-section"]}>
+                    <button
+                      className={styles["raw-text-toggle"]}
+                      onClick={() => setRawTextExpanded((v) => !v)}
+                    >
+                      <span className={styles["raw-text-toggle-icon"]}>
+                        {rawTextExpanded ? "\u25BC" : "\u25B6"}
+                      </span>
+                      Raw Text
+                    </button>
+                    {rawTextExpanded && (
+                      <div className={styles["detail-text-display"]}>
+                        {selectedSource.text || "(no text detected)"}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

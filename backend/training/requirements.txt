@@ -1,0 +1,11 @@
+transformers==4.46.3
+datasets==3.1.0
+evaluate==0.4.3
+seqeval==1.2.2
+accelerate==1.1.1
+torch==2.5.1
+optimum[onnxruntime]==1.23.3
+onnx==1.17.0
+onnxruntime==1.20.1
+psutil==6.1.0
+numpy==2.1.3

@@ -19,6 +19,23 @@ const electronAPI = {
   openExternal: (url: string): Promise<void> => {
     return ipcRenderer.invoke('shell:openExternal', url)
   },
+  readPdfFile: (filePath: string): Promise<Uint8Array> => {
+    return ipcRenderer.invoke('pdf:read', filePath)
+  },
+  writePdfFile: (filePath: string, bytes: Uint8Array): Promise<void> => {
+    return ipcRenderer.invoke('pdf:write', filePath, bytes)
+  },
+  listPdfsInDirectory: (directory: string): Promise<string[]> => {
+    return ipcRenderer.invoke('pdf:listDirectory', directory)
+  },
+  showSaveAs: (options?: {
+    title?: string
+    defaultPath?: string
+    buttonLabel?: string
+    filters?: Array<{ name: string; extensions: string[] }>
+  }): Promise<string | null> => {
+    return ipcRenderer.invoke('dialog:showSaveAs', options)
+  },
   openCacheFolder: (): Promise<{ ok: boolean; path: string; error: string | null }> => {
     return ipcRenderer.invoke('shell:openCacheFolder')
   },

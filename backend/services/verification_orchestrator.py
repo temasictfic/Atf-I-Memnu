@@ -9,13 +9,14 @@ from api.websocket import manager
 from models.settings import DatabaseConfig
 from models.source import SourceRectangle, ParsedSource
 from models.verification_result import VerificationResult, MatchResult
-from services.match_scorer import determine_status
+from services.match_scorer import determine_verification_status
 from services.search_settings import (
     get_max_concurrent_apis,
     get_max_concurrent_sources_per_pdf,
     get_search_timeout_seconds,
 )
 from services.source_extractor import extract_source_fields
+from services.url_checker import check_urls, is_doi_or_arxiv_url
 from utils.text_cleaning import clean_reference_text, strip_reference_noise
 
 
@@ -56,7 +57,10 @@ def _build_search_url(db_name: str, parsed: ParsedSource) -> str:
         "Semantic Scholar": f"https://www.semanticscholar.org/search?q={quote(query)}",
         "Europe PMC": f"https://europepmc.org/search?query={quote(query)}",
         "TRDizin": f"https://search.trdizin.gov.tr/tr/yayin/ara?q={quote(query, safe=',')}&order=publicationYear-DESC&page=1&limit=20",
-        "DuckDuckGo": f"https://duckduckgo.com/?q={quote(query)}",
+        "PubMed": f"https://pubmed.ncbi.nlm.nih.gov/?term={quote(query)}",
+        "CORE": f"https://core.ac.uk/search?q={quote(query)}",
+        "PLOS": f"https://journals.plos.org/plosone/search?q={quote(query)}",
+        "Open Library": f"https://openlibrary.org/search?q={quote(query)}",
     }
     return urls.get(db_name, "")
 
@@ -104,17 +108,15 @@ async def verify_pdf_sources(
 
         # Calculate final counts (works for both normal and cancelled runs)
         results = results_store.get(pdf_id, {})
-        green = sum(1 for r in results.values() if r.status == "green")
-        yellow = sum(1 for r in results.values() if r.status == "yellow")
-        red = sum(1 for r in results.values() if r.status == "red")
-        black = sum(1 for r in results.values() if r.status == "black")
+        found = sum(1 for r in results.values() if r.status == "found")
+        problematic = sum(1 for r in results.values() if r.status == "problematic")
+        not_found = sum(1 for r in results.values() if r.status == "not_found")
 
         await manager.broadcast("verify_pdf_done", {
             "pdf_id": pdf_id,
-            "green": green,
-            "yellow": yellow,
-            "red": red,
-            "black": black,
+            "found": found,
+            "problematic": problematic,
+            "not_found": not_found,
         })
 
         # Persist results to disk cache
@@ -154,17 +156,15 @@ async def verify_single_source(
 
     # Recalculate counts
     results = results_store.get(pdf_id, {})
-    green = sum(1 for r in results.values() if r.status == "green")
-    yellow = sum(1 for r in results.values() if r.status == "yellow")
-    red = sum(1 for r in results.values() if r.status == "red")
-    black = sum(1 for r in results.values() if r.status == "black")
+    found = sum(1 for r in results.values() if r.status == "found")
+    problematic = sum(1 for r in results.values() if r.status == "problematic")
+    not_found = sum(1 for r in results.values() if r.status == "not_found")
 
     await manager.broadcast("verify_pdf_updated", {
         "pdf_id": pdf_id,
-        "green": green,
-        "yellow": yellow,
-        "red": red,
-        "black": black,
+        "found": found,
+        "problematic": problematic,
+        "not_found": not_found,
     })
 
     # Persist updated results to disk cache
@@ -199,6 +199,11 @@ async def _verify_source(
 
     all_matches: list[MatchResult] = []
     databases_searched: list[str] = []
+    parsed: ParsedSource | None = None
+    url_liveness: dict[str, bool] = {}
+    # Tracked here (not inside `try`) so the `finally` block can reach it
+    # even if cancellation lands before we assign inside the try.
+    url_check_task: asyncio.Task | None = None
 
     try:
         # Load settings for API keys and enabled databases
@@ -210,7 +215,7 @@ async def _verify_source(
         api_semaphore = asyncio.Semaphore(get_max_concurrent_apis())
 
         # Parse source text into structured fields
-        parsed = extract_source_fields(source_text)
+        parsed = await extract_source_fields(source_text)
 
         if parsed.doi:
             await manager.send_log("info", f"DOI found: {parsed.doi}", pdf_id=pdf_id, source_id=source_id)
@@ -226,9 +231,16 @@ async def _verify_source(
                 pdf_id=pdf_id,
                 source_id=source_id,
             )
-            # Use aggressively cleaned raw text for broader fallback queries.
             cleaned_query = clean_reference_text(source_text)
             parsed.title = cleaned_query[:200].strip()
+
+        # Kick off URL liveness check in parallel with the database searches.
+        # Skips doi.org / arxiv.org URLs (validated via API verifiers).
+        urls_to_check: list[str] = []
+        if parsed.url and not is_doi_or_arxiv_url(parsed.url):
+            urls_to_check.append(parsed.url)
+        if urls_to_check:
+            url_check_task = asyncio.create_task(check_urls(urls_to_check))
 
         # Phase 1: Tier 1 APIs (parallel)
         tier1_results = await _run_tier1_apis(
@@ -243,22 +255,12 @@ async def _verify_source(
         all_matches.extend(tier1_results["matches"])
         databases_searched.extend(tier1_results["searched"])
 
-        # Check if we have a green match already
-        best_score = max((m.score for m in all_matches), default=0)
-        if best_score >= 0.65:
-            return
-
-        # Phase 2: Tier 2 Meta-search fallback (DuckDuckGo)
-        tier2_results = await _run_tier2_fallback(
-            pdf_id,
-            source_id,
-            parsed,
-            enabled_db_configs,
-            api_semaphore,
-            search_timeout,
-        )
-        all_matches.extend(tier2_results["matches"])
-        databases_searched.extend(tier2_results["searched"])
+        # Wait for URL check to complete (with bounded timeout)
+        if url_check_task is not None:
+            try:
+                url_liveness = await asyncio.wait_for(url_check_task, timeout=12.0)
+            except (asyncio.TimeoutError, Exception):
+                url_liveness = {u: False for u in urls_to_check}
 
     except asyncio.CancelledError:
         await manager.send_log("info", f"Source {source_id} verification cancelled",
@@ -267,8 +269,22 @@ async def _verify_source(
         await manager.send_log("error", f"Source {source_id} verification error: {e}",
                               pdf_id=pdf_id, source_id=source_id)
     finally:
+        # Cancel the fire-and-forget URL liveness check so it stops making
+        # HTTP requests as soon as the source-level task is cancelled. Without
+        # this, `check_urls` runs to its ~10s timeout in the background even
+        # after the user has clicked Stop.
+        if url_check_task is not None and not url_check_task.done():
+            url_check_task.cancel()
+            try:
+                await url_check_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
         # Always finalize — guarantees verify_source_done is sent
-        await _finalize_result(results_store, pdf_id, source_id, all_matches, databases_searched)
+        await _finalize_result(
+            results_store, pdf_id, source_id, parsed, all_matches,
+            databases_searched, url_liveness,
+        )
 
 
 async def _run_tier1_apis(
@@ -287,21 +303,31 @@ async def _run_tier1_apis(
     from verifiers.semantic_scholar import search as semantic_search
     from verifiers.europe_pmc import search as europe_pmc_search
     from verifiers.trdizin import search as trdizin_search
+    from verifiers.pubmed import search as pubmed_search
+    from verifiers.core import search as core_search
+    from verifiers.plos import search as plos_search
+    from verifiers.open_library import search as open_library_search
 
-    # (settings database id, display name, search function)
-    all_verifiers = [
-        ("crossref", "Crossref", crossref_search),
-        ("openalex", "OpenAlex", openalex_search),
-        ("arxiv", "arXiv", arxiv_search),
-        ("semantic_scholar", "Semantic Scholar", semantic_search),
-        ("europe_pmc", "Europe PMC", europe_pmc_search),
-        ("trdizin", "TRDizin", trdizin_search),
-    ]
-    verifiers = [
-        (db_id, display_name, fn)
-        for db_id, display_name, fn in all_verifiers
-        if db_id in enabled_db_configs
-    ]
+    # Map database id → (display name, search function)
+    verifier_registry = {
+        "crossref": ("Crossref", crossref_search),
+        "openalex": ("OpenAlex", openalex_search),
+        "arxiv": ("arXiv", arxiv_search),
+        "semantic_scholar": ("Semantic Scholar", semantic_search),
+        "europe_pmc": ("Europe PMC", europe_pmc_search),
+        "trdizin": ("TRDizin", trdizin_search),
+        "pubmed": ("PubMed", pubmed_search),
+        "core": ("CORE", core_search),
+        "plos": ("PLOS", plos_search),
+        "open_library": ("Open Library", open_library_search),
+    }
+
+    # Build verifier list in the order defined by user settings
+    verifiers = []
+    for db_id in enabled_db_configs:
+        entry = verifier_registry.get(db_id)
+        if entry:
+            verifiers.append((db_id, entry[0], entry[1]))
 
     matches: list[MatchResult] = []
     searched: list[str] = []
@@ -312,6 +338,8 @@ async def _run_tier1_apis(
             api_key_names = {
                 "openalex": "openalex",
                 "semantic_scholar": "semantic_scholar",
+                "pubmed": "pubmed",
+                "core": "core",
             }
             api_key_name = api_key_names.get(db_id)
             api_key = (api_keys.get(api_key_name, "") or "").strip() if api_key_name else None
@@ -377,66 +405,6 @@ async def _run_tier1_apis(
     return {"matches": matches, "searched": searched}
 
 
-async def _run_tier2_fallback(
-    pdf_id: str,
-    source_id: str,
-    parsed: ParsedSource,
-    enabled_db_configs: dict[str, DatabaseConfig],
-    api_semaphore: asyncio.Semaphore,
-    search_timeout: int,
-) -> dict[str, Any]:
-    """Run Tier 2 meta-search engine as final fallback (DuckDuckGo)."""
-    if "duckduckgo" not in enabled_db_configs:
-        return {"matches": [], "searched": []}
-
-    from verifiers.meta_search import search_duckduckgo
-
-    matches: list[MatchResult] = []
-    searched: list[str] = []
-
-    async with api_semaphore:
-        fallback_url = _build_search_url("DuckDuckGo", parsed)
-        try:
-            await manager.broadcast("verify_db_checking", {
-                "pdf_id": pdf_id, "source_id": source_id, "database": "DuckDuckGo",
-            })
-            result = await asyncio.wait_for(search_duckduckgo(parsed), timeout=search_timeout)
-            searched.append("DuckDuckGo")
-            found = result is not None and result.score >= 0.5
-
-            await manager.broadcast("verify_db_checked", {
-                "pdf_id": pdf_id,
-                "source_id": source_id,
-                "database": "DuckDuckGo",
-                "found": found,
-                "match": result.model_dump() if result else None,
-                "db_status": "found" if found else "not_found",
-                "search_url": (result.search_url if result else None) or fallback_url,
-            })
-
-            if result and result.score > 0:
-                matches.append(result)
-        except asyncio.TimeoutError:
-            searched.append("DuckDuckGo")
-            await manager.send_log("warning", "DuckDuckGo timed out",
-                                  pdf_id=pdf_id, source_id=source_id, database="DuckDuckGo")
-            await manager.broadcast("verify_db_checked", {
-                "pdf_id": pdf_id, "source_id": source_id, "database": "DuckDuckGo",
-                "found": False, "db_status": "timeout", "search_url": fallback_url,
-            })
-        except Exception as e:
-            searched.append("DuckDuckGo")
-            await manager.send_log("warning", f"DuckDuckGo search failed: {e}",
-                                  pdf_id=pdf_id, source_id=source_id, database="DuckDuckGo")
-            await manager.broadcast("verify_db_checked", {
-                "pdf_id": pdf_id, "source_id": source_id, "database": "DuckDuckGo",
-                "found": False, "db_status": "error",
-                "error_message": str(e)[:200], "search_url": fallback_url,
-            })
-
-    return {"matches": matches, "searched": searched}
-
-
 async def verify_pdf_sources_filtered(
     pdf_id: str,
     sources: list[SourceRectangle],
@@ -462,17 +430,34 @@ async def _finalize_result(
     results_store: dict,
     pdf_id: str,
     source_id: str,
+    parsed: ParsedSource | None,
     all_matches: list[MatchResult],
     databases_searched: list[str],
+    url_liveness: dict[str, bool] | None = None,
 ):
-    """Finalize the verification result for a source."""
+    """Finalize the verification result for a source.
+
+    Picks the best candidate by composite score, then runs the new 3-category
+    status determination (found / problematic / not_found) with problem tags.
+    """
+    url_liveness = url_liveness or {}
+
+    # Best candidate is the highest-scoring match (composite of title+author).
     best_match = max(all_matches, key=lambda m: m.score) if all_matches else None
-    best_score = best_match.score if best_match else 0.0
-    status = determine_status(best_score)
+
+    if parsed is not None:
+        status, problem_tags = determine_verification_status(
+            parsed, best_match, url_liveness
+        )
+    else:
+        # Failure to parse → fall back to not_found
+        status, problem_tags = "not_found", []
 
     result = VerificationResult(
         source_id=source_id,
         status=status,
+        problem_tags=problem_tags,
+        url_liveness=url_liveness,
         best_match=best_match,
         all_results=sorted(all_matches, key=lambda m: m.score, reverse=True),
         databases_searched=databases_searched,
@@ -483,6 +468,8 @@ async def _finalize_result(
         "pdf_id": pdf_id,
         "source_id": source_id,
         "status": status,
+        "problem_tags": problem_tags,
+        "url_liveness": url_liveness,
         "best_match": best_match.model_dump() if best_match else None,
         "all_results": [m.model_dump() for m in result.all_results],
     })

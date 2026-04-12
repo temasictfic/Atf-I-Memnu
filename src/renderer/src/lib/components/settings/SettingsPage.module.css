@@ -116,6 +116,35 @@
 .db-info { flex: 1; }
 .db-name { font-size: 13px; color: #292524; display: block; }
 .db-type { font-size: 10px; color: #a8a29e; }
+.db-order {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a8a29e;
+  min-width: 18px;
+  text-align: center;
+  user-select: none;
+}
+.db-reorder {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.db-reorder-btn {
+  width: 18px;
+  height: 14px;
+  border: none;
+  background: transparent;
+  color: #a8a29e;
+  cursor: pointer;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.15s ease;
+}
+.db-reorder-btn:hover:not(:disabled) { color: #292524; background: #f5f5f4; }
+.db-reorder-btn:disabled { opacity: 0.25; cursor: default; }
 .db-remove {
   width: 24px;
   height: 24px;

@@ -15,9 +15,19 @@ async def lifespan(app: FastAPI):
     # Startup
     print(f"Atf-ı Memnu backend starting on port {settings.port}")
     Path(settings.output_dir).mkdir(parents=True, exist_ok=True)
+
+    # Preload NER model in the background so the first extraction is instant
+    import asyncio
+    from services.ner_model_manager import preload_pipeline
+    asyncio.create_task(preload_pipeline())
+
     yield
     # Shutdown
     print("Atf-ı Memnu backend shutting down")
+    from verifiers._http import close_session
+    from services.ner_model_manager import shutdown_inference_executor
+    await close_session()
+    shutdown_inference_executor()
 
 
 app = FastAPI(title="Atf-ı Memnu API", version="1.0.0", lifespan=lifespan)
