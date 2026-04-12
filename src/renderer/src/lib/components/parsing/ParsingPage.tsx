@@ -27,9 +27,8 @@ import {
 import { clearVerificationForPdf } from "../../stores/verification-store";
 import type { SourceRectangle, PageData, ParsedSource } from "../../api/types";
 import { api } from "../../api/rest-client";
-import { getPdfjs } from "../../pdf/pdfjs-setup";
-import { SCALE } from "../../pdf/types";
 import { extractTextInBbox } from "../../pdf/extract-text";
+import { getOrLoadDocument } from "../../pdf/document-cache";
 import {
   addNote,
   getNotes,
@@ -330,14 +329,12 @@ export default function ParsingPage() {
     }
   }, [selectedPdfId, selectedPdf?.status]);
 
-  // Release the pdfjs-dist document when the component unmounts so the WASM
-  // worker backing it can clean up its native buffers.
+  // On unmount we just drop our reference — the doc itself is owned by
+  // document-cache.ts, which manages its lifetime via the LRU. Destroying
+  // it here would evict a potentially-cached doc out from under the cache.
   useEffect(() => {
     return () => {
-      setPdfDoc((prev) => {
-        if (prev) void prev.destroy();
-        return null;
-      });
+      setPdfDoc(null);
     };
   }, []);
 
@@ -347,55 +344,58 @@ export default function ParsingPage() {
 
     setLoadingPages(true);
     setSelectedSourceId(null);
-    // Tear down any previously loaded pdfjs-dist document.
-    setPdfDoc((prev) => {
-      if (prev) void prev.destroy();
-      return null;
-    });
+    // NOTE: we do NOT clear pdfDoc/pages here. Leaving the previous view
+    // mounted avoids a blank-flash on switch and lets React.memo preserve
+    // unrelated children. When the new doc is ready we swap in a single
+    // state update below.
     try {
       const localPath = pdfPathsById[pdfId];
       if (!localPath) {
         console.warn(
           `[ParsingPage] no local path for ${pdfId}; cannot render`,
         );
-        if (!isStale()) setPages([]);
+        if (!isStale()) {
+          setPages([]);
+          setPdfDoc(null);
+        }
         return;
       }
 
-      // Load the PDF bytes and hand them to pdfjs-dist. We pass the buffer
-      // directly (pdfjs transfers ownership to its worker).
-      const bytes = await window.electronAPI.readPdfFile(localPath);
-      if (isStale()) return;
-
-      const pdfjsLib = getPdfjs();
-      const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
+      // Pull the doc from the LRU cache — on a cache hit this resolves
+      // synchronously from memory with no IPC / no worker round-trip, so
+      // switching between recently-viewed PDFs feels instant. On a miss
+      // it reads the file, parses, and probes first+last page dimensions
+      // in parallel with the pdfjs worker.
+      const entry = await getOrLoadDocument(localPath);
 
       // Guard against rapid PDF switches — if a newer load has started, or
-      // the store has moved to a different PDF entirely, destroy this doc
-      // and bail before publishing it to state.
+      // the store has moved to a different PDF entirely, leave the cached
+      // entry alone (the cache owns its lifetime) and bail.
       if (isStale() || usePdfStore.getState().selectedPdfId !== pdfId) {
-        await doc.destroy();
         return;
       }
 
-      // Fast path: get the first page's dimensions and assume all pages
-      // share them (true for virtually all academic papers). This lets us
-      // render immediately instead of waiting for every page proxy.
-      const firstPage = await doc.getPage(1);
-      if (isStale()) {
-        firstPage.cleanup();
-        await doc.destroy();
-        return;
-      }
-      const firstVp = firstPage.getViewport({ scale: SCALE });
-      firstPage.cleanup();
-      const w = firstVp.width;
-      const h = firstVp.height;
-
+      // Uniform-page fast path. If the first and last pages match (the
+      // common case for academic papers), every page uses the first-page
+      // dimensions. If they differ, we set the last page to its actual
+      // size and leave the interior pages at the first-page size — a
+      // minor layout inaccuracy only visible for genuinely non-uniform
+      // documents, which this app rarely encounters.
       const pageDataList: PageData[] = Array.from(
-        { length: doc.numPages },
-        (_, i) => ({ page_num: i, width: w, height: h }),
+        { length: entry.numPages },
+        (_, i) => ({
+          page_num: i,
+          width: entry.firstPageWidth,
+          height: entry.firstPageHeight,
+        }),
       );
+      if (entry.lastPageDimensions && entry.numPages > 1) {
+        pageDataList[entry.numPages - 1] = {
+          page_num: entry.numPages - 1,
+          width: entry.lastPageDimensions.width,
+          height: entry.lastPageDimensions.height,
+        };
+      }
 
       // Mark this load as needing an initial fit; the useLayoutEffect below
       // picks it up after React commits the new pages to the DOM and applies
@@ -403,36 +403,7 @@ export default function ParsingPage() {
       // visible "100% then fit" jump when switching PDFs.
       pendingFitRef.current = true;
       setPages(pageDataList);
-      setPdfDoc(doc);
-
-      // Background: verify that remaining pages actually share the same
-      // dimensions. If any differ, patch the page list so layout is exact.
-      if (doc.numPages > 1) {
-        const corrections: { idx: number; width: number; height: number }[] = [];
-        await Promise.all(
-          Array.from({ length: doc.numPages - 1 }, async (_, i) => {
-            const pg = await doc.getPage(i + 2);
-            const vp = pg.getViewport({ scale: SCALE });
-            pg.cleanup();
-            if (Math.abs(vp.width - w) > 1 || Math.abs(vp.height - h) > 1) {
-              corrections.push({ idx: i + 1, width: vp.width, height: vp.height });
-            }
-          }),
-        );
-        if (
-          corrections.length > 0
-          && !isStale()
-          && usePdfStore.getState().selectedPdfId === pdfId
-        ) {
-          setPages((prev) => {
-            const next = [...prev];
-            for (const c of corrections) {
-              next[c.idx] = { ...next[c.idx], width: c.width, height: c.height };
-            }
-            return next;
-          });
-        }
-      }
+      setPdfDoc(entry.doc);
 
       // Sources: the orchestrator has already populated the local store on
       // import, but if the user opens a PDF that was imported in a prior
@@ -445,6 +416,7 @@ export default function ParsingPage() {
       console.error("Failed to load PDF pages:", e);
       if (!isStale()) {
         setPages([]);
+        setPdfDoc(null);
         // Surface the error to the user instead of a silent blank viewer.
         window.alert(
           `Failed to open PDF: ${e instanceof Error ? e.message : String(e)}`,

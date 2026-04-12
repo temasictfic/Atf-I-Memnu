@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { PdfDocument } from '../api/types'
 import { parseAndDetect } from '../pdf/orchestrator'
+import { clearDocumentCache, evictDocument } from '../pdf/document-cache'
 import { setSources } from './sources-store'
 import { wsClient } from '../api/ws-client'
 
@@ -184,6 +185,11 @@ export const usePdfStore = create<PdfState>()((set, _get) => ({
         }
       }
 
+      // Drop the cached pdfjs doc for this file so pdfjs worker memory is
+      // released instead of waiting for LRU eviction.
+      const removedPath = state.pathsById[pdfId]
+      if (removedPath) evictDocument(removedPath)
+
       const { [pdfId]: _dropped, ...remainingPaths } = state.pathsById
       return {
         pdfs: remaining,
@@ -233,6 +239,7 @@ export const usePdfStore = create<PdfState>()((set, _get) => ({
   },
 
   clearPdfs: () => {
+    clearDocumentCache()
     set({ pdfs: [], pathsById: {}, selectedPdfId: null, loading: false })
   },
 }))
