@@ -33,7 +33,7 @@ jobs:
         run: npm ci
 
       - name: Sync backend environment
-        run: uv sync
+        run: uv sync --frozen
         working-directory: backend
 
       - name: Build backend executable

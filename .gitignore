@@ -37,6 +37,10 @@ bower_components
 # Compiled binary addons (https://nodejs.org/api/addons.html)
 build/Release
 
+# PyInstaller build/dist output (intermediate and final)
+backend/build/
+backend/dist/
+
 # Dependency directories
 node_modules/
 jspm_packages/
