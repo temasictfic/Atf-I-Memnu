@@ -25,7 +25,9 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("Atf-ı Memnu backend shutting down")
     from verifiers._http import close_session
+    from services.ner_model_manager import shutdown_inference_executor
     await close_session()
+    shutdown_inference_executor()
 
 
 app = FastAPI(title="Atf-ı Memnu API", version="1.0.0", lifespan=lifespan)

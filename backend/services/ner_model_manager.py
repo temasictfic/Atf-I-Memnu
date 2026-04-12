@@ -14,6 +14,7 @@ Execution provider is auto-detected:
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 from pathlib import Path
@@ -31,6 +32,30 @@ _load_error: str | None = None
 # RoBERTa's positional embedding is 514 (512 content + 2 special). Keep the
 # tokenizer capped at 512 total so input_ids never exceed the model window.
 _MAX_SEQ_LEN = 512
+
+# Single-worker executor used by ner_extractor to serialize every inference
+# call through one thread. The default asyncio executor has many workers, so
+# concurrent verify batches would call `session.run()` in parallel — which
+# is unsafe on DirectML (it crashes the Gather op in the position-embedding
+# layer under concurrent Run calls). One-at-a-time inference is also all a
+# single GPU can actually do, and the model is small (~30-80 ms/call on CPU,
+# ~15-40 ms on DirectML) so serializing doesn't bottleneck interactive use.
+_inference_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def get_inference_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Return the dedicated single-thread executor for NER inference.
+
+    Created lazily. Keeping it module-global means every call to the model
+    is serialized behind one worker thread, which is what ONNX Runtime's
+    DirectML provider requires for stability.
+    """
+    global _inference_executor
+    if _inference_executor is None:
+        _inference_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="ner-inference"
+        )
+    return _inference_executor
 
 
 def is_model_ready() -> bool:
@@ -225,13 +250,34 @@ def _load_pipeline_sync() -> Any:
     # Always include CPU as a fallback so a broken GPU driver or model-op
     # incompatibility degrades instead of disabling NER for the session.
     providers = [provider, "CPUExecutionProvider"] if provider != "CPUExecutionProvider" else [provider]
+
+    # Every NER call is routed through the single-worker _inference_executor,
+    # so there is never more than one `session.run()` in flight. Capping
+    # ORT's own thread pools to 1 matches that reality, avoids contending
+    # with ourselves, and reduces thread-count noise in PyInstaller builds.
+    session_options = ort.SessionOptions()
+    session_options.intra_op_num_threads = 1
+    session_options.inter_op_num_threads = 1
+
     logger.info(
         "Loading ONNX NER model: %s (file=%s, providers=%s)",
         path, onnx_file.name, providers,
     )
-    session = ort.InferenceSession(str(onnx_file), providers=providers)
+    session = ort.InferenceSession(
+        str(onnx_file),
+        sess_options=session_options,
+        providers=providers,
+    )
     logger.info("ONNX NER pipeline loaded (provider=%s)", provider)
     return NerPipeline(session, tokenizer, id2label)
+
+
+def shutdown_inference_executor() -> None:
+    """Drain the dedicated inference executor. Call from app shutdown."""
+    global _inference_executor
+    if _inference_executor is not None:
+        _inference_executor.shutdown(wait=False, cancel_futures=True)
+        _inference_executor = None
 
 
 async def get_pipeline() -> Any | None:

@@ -27,10 +27,17 @@ async def extract_fields_ner(raw_text: str) -> ParsedSource | None:
         return None
 
     try:
+        from services.ner_model_manager import get_inference_executor
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _extract, pipeline, raw_text)
+        return await loop.run_in_executor(
+            get_inference_executor(), _extract, pipeline, raw_text
+        )
     except Exception as e:
-        logger.warning("NER extraction failed: %s", e)
+        # Exception messages from ONNX Runtime's DirectML provider can
+        # contain non-UTF8 bytes (Windows system error text in the local
+        # codepage). Use repr() + type name to guarantee the log message
+        # is a safe ASCII/UTF8 Python string.
+        logger.warning("NER extraction failed: %s: %s", type(e).__name__, repr(e))
         return None
 
 
