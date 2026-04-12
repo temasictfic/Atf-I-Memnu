@@ -4,8 +4,10 @@
 // a URL usable at runtime.
 
 import * as pdfjsLib from 'pdfjs-dist'
+// Vite's `?url` copies the file verbatim — no minification — so we
+// explicitly pick the pre-minified worker shipped by pdfjs-dist.
 // @ts-expect-error Vite ?url import returns a string
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url'
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 let configured = false
 

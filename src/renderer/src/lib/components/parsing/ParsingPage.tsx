@@ -29,7 +29,6 @@ import type { SourceRectangle, PageData, ParsedSource } from "../../api/types";
 import { api } from "../../api/rest-client";
 import { getPdfjs } from "../../pdf/pdfjs-setup";
 import { SCALE } from "../../pdf/types";
-import { writeNotesToPdf } from "../../pdf/annotation-writer";
 import { extractTextInBbox } from "../../pdf/extract-text";
 import {
   addNote,
@@ -761,6 +760,8 @@ export default function ParsingPage() {
       });
       if (!target) return;
       const bytes = await window.electronAPI.readPdfFile(localPath);
+      // Lazy-load pdf-lib + fontkit (~1.2 MB) only on first export.
+      const { writeNotesToPdf } = await import("../../pdf/annotation-writer");
       const annotated = await writeNotesToPdf(bytes, pdfNotes);
       await window.electronAPI.writePdfFile(target, annotated);
     } catch (err) {
