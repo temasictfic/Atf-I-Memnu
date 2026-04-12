@@ -139,6 +139,10 @@ export default function ParsingPage() {
   const [manualCounter, setManualCounter] = useState(0);
   const [parsedFields, setParsedFields] = useState<ParsedSource | null>(null);
   const [parsedFieldsLoading, setParsedFieldsLoading] = useState(false);
+  // Keyed by the raw source text, NOT the source ID. When the user edits a
+  // rectangle (draws, moves, resizes, manually re-extracts) the text
+  // changes, so keying by text means edits naturally miss the cache and
+  // we re-run NER extraction. Re-selecting the same source still hits.
   const parsedFieldsCache = useRef<Record<string, ParsedSource>>({});
   const [rawTextExpanded, setRawTextExpanded] = useState(true);
 
@@ -454,11 +458,6 @@ export default function ParsingPage() {
 
     if (selectedPdfId === pdfId) {
       setSelectedSourceId(null);
-    }
-
-    const pdfSources = useSourcesStore.getState().sourcesByPdf[pdfId] ?? [];
-    for (const s of pdfSources) {
-      delete parsedFieldsCache.current[s.id];
     }
 
     clearSourcesForPdf(pdfId);
@@ -1076,25 +1075,27 @@ export default function ParsingPage() {
 
   // Fetch parsed fields when a source is selected (debounced 300ms, cached)
   useEffect(() => {
-    if (!selectedSource || !selectedSource.text) {
+    const text = selectedSource?.text;
+    if (!selectedSource || !text) {
       setParsedFields(null);
       return;
     }
 
-    const sourceId = selectedSource.id;
-
-    // Check cache
-    if (parsedFieldsCache.current[sourceId]) {
-      setParsedFields(parsedFieldsCache.current[sourceId]);
+    // Check cache by text — edits to a rectangle change the text, so a
+    // stale cached result can never shadow fresh text.
+    const cached = parsedFieldsCache.current[text];
+    if (cached) {
+      setParsedFields(cached);
+      setParsedFieldsLoading(false);
       return;
     }
 
     setParsedFieldsLoading(true);
     const timer = setTimeout(() => {
       api
-        .extractFields(selectedSource.text)
+        .extractFields(text)
         .then((result) => {
-          parsedFieldsCache.current[sourceId] = result;
+          parsedFieldsCache.current[text] = result;
           setParsedFields(result);
         })
         .catch(() => {
