@@ -18,6 +18,12 @@ function getBackendPath(): string {
 }
 
 async function findAvailablePort(): Promise<number> {
+  // NOTE: there is an inherent TOCTOU window between `server.close()` and
+  // uvicorn binding to the same port — the OS can reallocate it to another
+  // process in between. In practice this is extremely rare on a desktop
+  // app, but when it does happen the health-check loop times out after
+  // ~60 s with a confusing error. We accept the race here; the real fix
+  // is a socket-FD handoff which requires changes on the Python side too.
   return await new Promise((resolve, reject) => {
     const server = createServer()
     server.unref()
@@ -126,19 +132,35 @@ export async function startPythonBackend(): Promise<void> {
 }
 
 async function waitForHealth(port: number): Promise<void> {
+  let lastError: unknown = null
   for (let i = 0; i < MAX_HEALTH_RETRIES; i++) {
+    // Bail immediately if the subprocess has already exited — no point
+    // polling for a health endpoint on a dead process. This turns the
+    // "failed health check within timeout" error (up to 60 s of waiting)
+    // into an immediate, accurate "process exited on startup" error.
+    if (!pythonProcess || pythonProcess.exitCode !== null) {
+      throw new Error(
+        `Python backend exited during startup (exit code ${pythonProcess?.exitCode ?? 'unknown'}).`
+          + ' Check [Python STDERR] logs above for the failure reason'
+          + ' (port collision, missing DLL, LFS pointer file, etc.).'
+      )
+    }
     try {
       const response = await fetch(`http://localhost:${port}/api/health`)
       if (response.ok) {
         console.log('Python backend is healthy')
         return
       }
-    } catch {
-      // Backend not ready yet
+    } catch (err) {
+      lastError = err
+      // Backend not ready yet — keep polling
     }
     await new Promise(resolve => setTimeout(resolve, HEALTH_CHECK_INTERVAL))
   }
-  throw new Error(`Python backend failed health check within timeout on port ${port}`)
+  throw new Error(
+    `Python backend failed health check within ${MAX_HEALTH_RETRIES * HEALTH_CHECK_INTERVAL / 1000}s on port ${port}`
+      + (lastError instanceof Error ? ` (last error: ${lastError.message})` : '')
+  )
 }
 
 export function getPythonBackendPort(): number | null {
