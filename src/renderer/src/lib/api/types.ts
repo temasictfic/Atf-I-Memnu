@@ -98,11 +98,15 @@ export interface DatabaseConfig {
 }
 
 export interface AppSettings {
+  last_directory?: string
+  annotated_pdf_dir?: string
   databases: DatabaseConfig[]
   api_keys?: Record<string, string>
   search_timeout: number
   max_concurrent_apis: number
   max_concurrent_sources_per_pdf: number
+  max_concurrent_pdfs: number
+  auto_scholar_after_verify?: boolean
 }
 
 // WebSocket event types
@@ -147,4 +151,19 @@ export interface ParseStatusResponse {
 
 export interface VerifyResponse {
   job_id: string
+}
+
+// Google Scholar scan types
+export interface ScholarCandidate {
+  title: string
+  authors: string[]
+  year?: number
+  doi?: string
+  url: string
+  snippet?: string
+}
+
+export interface ScoreScholarResponse {
+  updated: boolean
+  result: VerificationResult | null
 }

@@ -199,6 +199,12 @@
   transition: all 0.1s;
 }
 .toolbar-btn:hover { border-color: #a8a29e; color: #44403c; }
+.toolbar-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.toolbar-btn-accent {
+  border-color: #d97706;
+  color: #d97706;
+}
+.toolbar-btn-accent:hover { background: #d97706; color: white; border-color: #d97706; }
 
 .toolbar-right { display: flex; align-items: center; gap: 6px; justify-self: end; }
 
@@ -525,6 +531,11 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.detail-body::-webkit-scrollbar {
+  display: none;
 }
 
 .detail-empty {
@@ -631,6 +642,12 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+.action-btn-accent {
+  border-color: #d97706;
+  color: #d97706;
+  background: transparent;
+}
+.action-btn-accent:hover { background: #d97706; color: white; }
 .detail-search-actions {
   display: flex;
   align-items: center;
@@ -790,4 +807,30 @@
 @keyframes verify-toast-in {
   from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Scholar scan progress bar */
+.scholar-scan-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: #eff6ff;
+  border-top: 1px solid #bfdbfe;
+  font-size: 12px;
+  color: #1d4ed8;
+}
+.scholar-scan-info {
+  flex: 1;
+  font-weight: 600;
+}
+
+/* Scholar CAPTCHA banner */
+.scholar-captcha-banner {
+  padding: 8px 16px;
+  background: #fef3c7;
+  border-top: 1px solid #fbbf24;
+  font-size: 12px;
+  font-weight: 600;
+  color: #92400e;
 }

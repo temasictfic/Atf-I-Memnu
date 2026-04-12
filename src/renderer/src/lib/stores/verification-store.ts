@@ -15,6 +15,12 @@ interface VerificationState {
   resultsByPdf: Record<string, Record<string, VerificationResult>>
   summaries: Record<string, PdfVerificationSummary>
   sourceProgress: Record<string, SourceVerifyProgress>
+  // Source IDs the user asked to cancel. The WS event listeners ignore
+  // late-arriving events (verify_started, verify_db_checking, verify_db_checked,
+  // verify_source_done) for these sources so optimistic cancel updates aren't
+  // overwritten by tasks that were mid-flight on the backend. Cleared per
+  // source when verification is restarted for that source.
+  cancelledSourceIds: Set<string>
   selectedSourceId: string | null
   verifyTexts: Record<string, string>
   sourceOriginalTexts: Record<string, string>
@@ -261,6 +267,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   resultsByPdf: {},
   summaries: {},
   sourceProgress: {},
+  cancelledSourceIds: new Set<string>(),
   selectedSourceId: null,
   verifyTexts: {},
   sourceOriginalTexts: {},
@@ -451,17 +458,27 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         const summaries = { ...state.summaries }
         const newProgress: Record<string, { currentDb: string | null; checkedDbs: DbCheckEntry[] }> = {}
         const newResults: Record<string, Record<string, VerificationResult>> = { ...state.resultsByPdf }
+        // Clear cancelled flags for sources we are about to re-run so late
+        // events from the *previous* run no longer suppress this new run.
+        const nextCancelled = new Set(state.cancelledSourceIds)
         for (const id of pdfIds) {
           summaries[id] = {
             pdf_id: id, found: 0, problematic: 0, not_found: 0,
             in_progress: 0, total: 0, completed: false,
           }
-          // Create progress + in_progress result for each enabled source
+          // Create progress + in_progress result for each enabled source.
+          // Preserve existing results for excluded (disabled) sources.
           const order = state.sourceOrder[id] ?? []
+          const prevPdfResults = state.resultsByPdf[id] ?? {}
           newResults[id] = {}
           for (const sourceId of order) {
-            if (excludedSet.has(sourceId)) continue
-            if (state.enabledSources[sourceId] === false) continue
+            if (excludedSet.has(sourceId) || state.enabledSources[sourceId] === false) {
+              if (prevPdfResults[sourceId]) {
+                newResults[id][sourceId] = prevPdfResults[sourceId]
+              }
+              continue
+            }
+            nextCancelled.delete(sourceId)
             newProgress[sourceId] = { currentDb: null, checkedDbs: [] }
             newResults[id][sourceId] = {
               source_id: sourceId,
@@ -473,7 +490,12 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             }
           }
         }
-        return { summaries, sourceProgress: newProgress, resultsByPdf: newResults }
+        return {
+          summaries,
+          sourceProgress: newProgress,
+          resultsByPdf: newResults,
+          cancelledSourceIds: nextCancelled,
+        }
       })
 
       const response = await api.verifyBatch(pdfIds, texts, excludedIds)
@@ -571,26 +593,31 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       // Init a mini batch for single verify logging
       initVerifyBatch(1, 1)
 
-      set(state => ({
-        resultsByPdf: {
-          ...state.resultsByPdf,
-          [pdfId]: {
-            ...(state.resultsByPdf[pdfId] ?? {}),
-            [sourceId]: {
-              source_id: sourceId,
-              status: 'in_progress' as VerifyStatus,
-              problem_tags: [],
-              url_liveness: {},
-              all_results: [],
-              databases_searched: [],
+      set(state => {
+        const nextCancelled = new Set(state.cancelledSourceIds)
+        nextCancelled.delete(sourceId)
+        return {
+          resultsByPdf: {
+            ...state.resultsByPdf,
+            [pdfId]: {
+              ...(state.resultsByPdf[pdfId] ?? {}),
+              [sourceId]: {
+                source_id: sourceId,
+                status: 'in_progress' as VerifyStatus,
+                problem_tags: [],
+                url_liveness: {},
+                all_results: [],
+                databases_searched: [],
+              },
             },
           },
-        },
-        sourceProgress: {
-          ...state.sourceProgress,
-          [sourceId]: { currentDb: null, checkedDbs: [] },
-        },
-      }))
+          sourceProgress: {
+            ...state.sourceProgress,
+            [sourceId]: { currentDb: null, checkedDbs: [] },
+          },
+          cancelledSourceIds: nextCancelled,
+        }
+      })
       await api.verifySource(pdfId, sourceId, sanitizeReferenceText(text ?? ''))
     } catch (e) {
       console.error('Failed to verify source:', e)
@@ -599,6 +626,13 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
 
   reverifyPdf: async (pdfId) => {
     try {
+      set(state => {
+        const nextCancelled = new Set(state.cancelledSourceIds)
+        for (const sourceId of state.sourceOrder[pdfId] ?? []) {
+          nextCancelled.delete(sourceId)
+        }
+        return { cancelledSourceIds: nextCancelled }
+      })
       await api.verifyPdf(pdfId)
     } catch (e) {
       console.error('Failed to verify PDF:', e)
@@ -632,6 +666,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const newResults = { ...state.resultsByPdf }
       const newSummaries = { ...state.summaries }
       const newProgress = { ...state.sourceProgress }
+      const nextCancelled = new Set(state.cancelledSourceIds)
       for (const pdfId of Object.keys(newResults)) {
         const pdfResults = { ...newResults[pdfId] }
         let changed = false
@@ -639,6 +674,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           if (pdfResults[sourceId].status === 'in_progress') {
             pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'not_found' as VerifyStatus }
             newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
+            nextCancelled.add(sourceId)
             changed = true
           }
         }
@@ -653,7 +689,12 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           newSummaries[pdfId] = { pdf_id: pdfId, found, problematic, not_found, in_progress: 0, total: Object.keys(pdfResults).length, completed: true }
         }
       }
-      return { resultsByPdf: newResults, summaries: newSummaries, sourceProgress: newProgress }
+      return {
+        resultsByPdf: newResults,
+        summaries: newSummaries,
+        sourceProgress: newProgress,
+        cancelledSourceIds: nextCancelled,
+      }
     })
     if (verifyBatch?.groupOpened) console.groupEnd()
     verifyBatch = null
@@ -664,15 +705,24 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
     set(state => {
       const pdfResults = { ...(state.resultsByPdf[pdfId] ?? {}) }
       const newProgress = { ...state.sourceProgress }
+      const nextCancelled = new Set(state.cancelledSourceIds)
       let changed = false
-      for (const sourceId of Object.keys(pdfResults)) {
-        if (pdfResults[sourceId].status === 'in_progress') {
+      // Cancel every source belonging to this PDF, not only the ones that
+      // are currently marked in_progress — a source whose `verify_started`
+      // event has not yet arrived on the client side would otherwise still
+      // flip to in_progress after the user hit Stop.
+      const allSourceIds = state.sourceOrder[pdfId] ?? Object.keys(pdfResults)
+      for (const sourceId of allSourceIds) {
+        nextCancelled.add(sourceId)
+        if (pdfResults[sourceId]?.status === 'in_progress') {
           pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'not_found' as VerifyStatus }
           newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
           changed = true
         }
       }
-      if (!changed) return state
+      if (!changed) {
+        return { cancelledSourceIds: nextCancelled }
+      }
       let found = 0, problematic = 0, not_found = 0
       for (const r of Object.values(pdfResults)) {
         if (r.status === 'found') found++
@@ -686,7 +736,12 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         id !== pdfId && Object.values(res).some(r => r.status === 'in_progress')
       )
       if (!anyStillRunning) stopPolling()
-      return { resultsByPdf: newResults, summaries: newSummaries, sourceProgress: newProgress }
+      return {
+        resultsByPdf: newResults,
+        summaries: newSummaries,
+        sourceProgress: newProgress,
+        cancelledSourceIds: nextCancelled,
+      }
     })
     try { await api.cancelPdfVerification(pdfId) } catch (e) { console.error('Failed to cancel PDF:', e) }
   },
@@ -696,6 +751,8 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const newResults = { ...state.resultsByPdf }
       const newSummaries = { ...state.summaries }
       const newProgress = { ...state.sourceProgress }
+      const nextCancelled = new Set(state.cancelledSourceIds)
+      nextCancelled.add(sourceId)
       let targetPdfId: string | null = null
       for (const pdfId of Object.keys(newResults)) {
         const pdfResults = newResults[pdfId]
@@ -706,7 +763,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           break
         }
       }
-      if (!targetPdfId) return state
+      if (!targetPdfId) return { cancelledSourceIds: nextCancelled }
       let found = 0, problematic = 0, not_found = 0
       for (const r of Object.values(newResults[targetPdfId])) {
         if (r.status === 'found') found++
@@ -714,7 +771,12 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         else if (r.status === 'not_found') not_found++
       }
       newSummaries[targetPdfId] = { pdf_id: targetPdfId, found, problematic, not_found, in_progress: Object.values(newResults[targetPdfId]).filter(r => r.status === 'in_progress').length, total: Object.keys(newResults[targetPdfId]).length, completed: Object.values(newResults[targetPdfId]).every(r => r.status !== 'in_progress') }
-      return { resultsByPdf: newResults, summaries: newSummaries, sourceProgress: newProgress }
+      return {
+        resultsByPdf: newResults,
+        summaries: newSummaries,
+        sourceProgress: newProgress,
+        cancelledSourceIds: nextCancelled,
+      }
     })
     try { await api.cancelSourceVerification(sourceId) } catch (e) { console.error('Failed to cancel source:', e) }
   },
@@ -764,6 +826,14 @@ export function initVerificationListeners(): () => void {
       const sourceId = data.source_id as string
       const pdfId = data.pdf_id as string
 
+      // Drop late events for sources the user has already cancelled — the
+      // backend task may still broadcast verify_started before the cancel
+      // reaches it, and we must not reset a cancelled source back to
+      // in_progress.
+      if (useVerificationStore.getState().cancelledSourceIds.has(sourceId)) {
+        return
+      }
+
       // Buffer logging
       if (verifyBatch) {
         if (!verifyBatch.groupOpened) {
@@ -807,6 +877,11 @@ export function initVerificationListeners(): () => void {
       const sourceId = data.source_id as string
       const db = data.database as string
 
+      // Skip late events for cancelled sources.
+      if (useVerificationStore.getState().cancelledSourceIds.has(sourceId)) {
+        return
+      }
+
       useVerificationStore.setState(state => ({
         sourceProgress: {
           ...state.sourceProgress,
@@ -823,7 +898,11 @@ export function initVerificationListeners(): () => void {
       const sourceId = data.source_id as string
       const dbName = data.database as string
       const dbStatus = (data.db_status as DbCheckStatus) || (data.found ? 'found' : 'not_found')
-      const found = data.found as boolean
+
+      // Skip late events for cancelled sources.
+      if (useVerificationStore.getState().cancelledSourceIds.has(sourceId)) {
+        return
+      }
 
       // Buffer logging
       if (verifyBatch) {
@@ -881,6 +960,19 @@ export function initVerificationListeners(): () => void {
       const pdfId = data.pdf_id as string
       const sourceId = data.source_id as string
       const status = data.status as string
+
+      // For cancelled sources, still accept verify_source_done — the backend's
+      // finally block sends real partial results that are more accurate than
+      // the optimistic not_found we set client-side. Remove from cancelled set
+      // so the final status from backend takes precedence.
+      const wasCancelled = useVerificationStore.getState().cancelledSourceIds.has(sourceId)
+      if (wasCancelled) {
+        useVerificationStore.setState(state => {
+          const next = new Set(state.cancelledSourceIds)
+          next.delete(sourceId)
+          return { cancelledSourceIds: next }
+        })
+      }
 
       // Buffer logging
       if (verifyBatch) {

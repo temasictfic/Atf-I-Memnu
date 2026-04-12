@@ -219,15 +219,24 @@ export function canRevert(pdfId: string): boolean {
 }
 
 export async function revertToOriginal(pdfId: string): Promise<void> {
+  // Originals were captured the first time sources were set for this PDF
+  // (see `setSources`). Use them directly and persist the reverted list to
+  // the backend cache so re-imports stay consistent.
+  const original = useSourcesStore.getState().originalSourcesByPdf[pdfId]
+  if (!original) {
+    console.warn(`[revertToOriginal] no original sources stored for ${pdfId}`)
+    return
+  }
+  const cloned = original.map(s => ({ ...s, bbox: { ...s.bbox } }))
+  useSourcesStore.setState(state => ({
+    sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: cloned },
+    historyByPdf: { ...state.historyByPdf, [pdfId]: [] },
+  }))
+  updateSourceCount(pdfId, cloned.length)
   try {
-    const response = await api.revertPdf(pdfId)
-    useSourcesStore.setState(state => ({
-      sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: response.sources },
-      historyByPdf: { ...state.historyByPdf, [pdfId]: [] },
-    }))
-    updateSourceCount(pdfId, response.sources.length)
+    await api.updateSources(pdfId, cloned)
   } catch (e) {
-    console.error('Failed to revert:', e)
+    console.error('Failed to persist revert:', e)
   }
 }
 
@@ -267,7 +276,13 @@ export async function unapproveSources(pdfId: string): Promise<void> {
 export async function loadSources(pdfId: string): Promise<void> {
   try {
     const response = await api.getSources(pdfId)
-    setSources(pdfId, response.sources)
+    // Only seed the store when the backend actually had a cache entry.
+    // Otherwise we'd overwrite freshly-detected client-side sources with []
+    // on the cold path where a PDF is opened before the orchestrator has
+    // finished persisting.
+    if (response.cached) {
+      setSources(pdfId, response.sources)
+    }
   } catch (e) {
     console.error('Failed to load sources:', e)
   }

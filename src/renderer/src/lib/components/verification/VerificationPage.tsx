@@ -3,14 +3,15 @@ import { usePdfStore } from '../../stores/pdf-store'
 import { useSourcesStore, loadSources as loadSourcesFn } from '../../stores/sources-store'
 import { useVerificationStore } from '../../stores/verification-store'
 import { useSettingsStore } from '../../stores/settings-store'
+import { useScholarScanStore } from '../../stores/scholar-scan-store'
+import { scholarScanner } from '../../services/scholar-scanner'
 import type { VerificationResult, MatchResult, DbCheckEntry } from '../../api/types'
 import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../../utils/reference-text'
 import styles from './VerificationPage.module.css'
 
 const ALL_DATABASES = [
   'Crossref', 'OpenAlex', 'arXiv', 'Semantic Scholar', 'Europe PMC',
-  'TRDizin',
-  'DuckDuckGo',
+  'TRDizin', 'PubMed', 'CORE', 'PLOS', 'Open Library',
 ]
 
 function statusColor(result: VerificationResult | undefined): string {
@@ -75,7 +76,10 @@ function buildDbSearchUrl(db: string, text: string): string {
     'Semantic Scholar': `https://www.semanticscholar.org/search?q=${q}`,
     'Europe PMC': `https://europepmc.org/search?query=${q}`,
     'TRDizin': `https://search.trdizin.gov.tr/tr/yayin/ara?q=${q.replace(/%2C/gi, ',')}&order=relevance-DESC&page=1&limit=5`,
-    'DuckDuckGo': `https://duckduckgo.com/?q=${q}`,
+    'PubMed': `https://pubmed.ncbi.nlm.nih.gov/?term=${q}`,
+    'CORE': `https://core.ac.uk/search?q=${q}`,
+    'PLOS': `https://journals.plos.org/plosone/search?q=${q}`,
+    'Open Library': `https://openlibrary.org/search?q=${q}`,
   }
   return urls[db] ?? ''
 }
@@ -134,6 +138,8 @@ export default function VerificationPage() {
   const verifyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const verifiedPdfIdsRef = useRef<Set<string>>(new Set())
   const prevInProgressRef = useRef<Record<string, boolean>>({})
+  // PDFs started via single-PDF verify (not Verify All) — auto-run GS when done
+  const autoGsPdfIdsRef = useRef<Set<string>>(new Set())
 
   // Track PDFs that are actively verifying (in_progress results exist)
   useEffect(() => {
@@ -155,6 +161,17 @@ export default function VerificationPage() {
         if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
         setVerifyToast(`Verification complete: ${name}`)
         verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+
+        // Auto-run GS for single-PDF verifications (if enabled in settings)
+        if (autoGsPdfIdsRef.current.has(pdfId)) {
+          autoGsPdfIdsRef.current.delete(pdfId)
+          const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
+          if (autoGs) {
+            setTimeout(() => {
+              useScholarScanStore.getState().startScanForPdf(pdfId)
+            }, 500)
+          }
+        }
       }
     }
     prevInProgressRef.current = Object.fromEntries(
@@ -325,8 +342,10 @@ export default function VerificationPage() {
 
   async function handleVerifyOrCancelPdf(pdfId: string) {
     if (isPdfVerifying(pdfId)) {
+      autoGsPdfIdsRef.current.delete(pdfId)
       await useVerificationStore.getState().cancelPdf(pdfId)
     } else {
+      autoGsPdfIdsRef.current.add(pdfId)
       await useVerificationStore.getState().startVerification([pdfId])
     }
   }
@@ -376,6 +395,100 @@ export default function VerificationPage() {
   const [browserZoomFactor, setBrowserZoomFactor] = useState(1)
   const browserZoomFactorRef = useRef(1)
   const preOverlaySortRef = useRef<{ key: CardSortMode; asc: boolean } | null>(null)
+
+  // --- Scholar scan ---
+  const scholarStatus = useScholarScanStore(s => s.status)
+  const scholarCurrentIndex = useScholarScanStore(s => s.currentIndex)
+  const scholarTotal = useScholarScanStore(s => s.totalInQueue)
+  const scholarFoundCount = useScholarScanStore(s => s.foundCount)
+  const scholarCaptchaUrl = useScholarScanStore(s => s.captchaUrl)
+
+  // Wire the hidden webview to the scanner via callback ref
+  const scholarScanWebviewRef = useCallback((node: any) => {
+    scholarScanner.setWebview(node)
+  }, [])
+
+  // Keep overlay webview ref in sync with the scanner — but never overwrite
+  // with null when it unmounts, so the scanner can still extract even if the
+  // user closes the overlay before auto-resume fires.
+  useEffect(() => {
+    if (browserWebviewRef.current) {
+      scholarScanner.setOverlayWebview(browserWebviewRef.current)
+    }
+  })
+
+  // Register close-overlay function for auto-close after CAPTCHA
+  useEffect(() => {
+    useScholarScanStore.getState().setCloseOverlayFn(() => {
+      setBrowserOverlayOpen(false)
+    })
+    return () => useScholarScanStore.getState().setCloseOverlayFn(null)
+  }, [])
+
+  // When CAPTCHA is detected, open the overlay with the CAPTCHA URL
+  useEffect(() => {
+    if (scholarStatus === 'captcha' && scholarCaptchaUrl) {
+      openOverlayWithUrl(scholarCaptchaUrl)
+    }
+  }, [scholarStatus, scholarCaptchaUrl])
+
+  // Auto-resume: detect when overlay navigates to a Scholar results page (CAPTCHA solved)
+  useEffect(() => {
+    if (scholarStatus !== 'captcha') return
+    const view = browserWebviewRef.current
+    if (!view) return
+
+    let resumed = false
+
+    const checkCaptchaSolved = async (): Promise<void> => {
+      if (resumed) return
+      try {
+        // Check current URL via JS (works regardless of event type)
+        const url: string = await view.executeJavaScript('window.location.href')
+        if (!url.includes('scholar.google.com')) return
+        if (url.includes('sorry.google.com')) return
+
+        // Verify CAPTCHA is actually gone by checking for results
+        const hasCaptcha = await view.executeJavaScript(`
+          !!document.querySelector('#gs_captcha_f, #gs_captcha_ccl, #captcha-form, #recaptcha')
+          || !!document.querySelector('iframe[src*="recaptcha"]')
+          || (document.body && document.body.innerText && (
+            document.body.innerText.includes('unusual traffic')
+            || document.body.innerText.includes('not a robot')
+          ))
+        `)
+        if (hasCaptcha) return
+
+        console.log('[Scholar] CAPTCHA solved detected, auto-resuming')
+        resumed = true
+        useScholarScanStore.getState().resumeAfterCaptcha()
+      } catch {
+        // webview might not be ready
+      }
+    }
+
+    const onPageLoaded = (): void => {
+      // Wait for page to fully render before checking
+      setTimeout(checkCaptchaSolved, 2000)
+    }
+
+    view.addEventListener('did-navigate', onPageLoaded)
+    view.addEventListener('did-navigate-in-page', onPageLoaded)
+    view.addEventListener('did-stop-loading', onPageLoaded)
+    return () => {
+      try {
+        view.removeEventListener('did-navigate', onPageLoaded)
+        view.removeEventListener('did-navigate-in-page', onPageLoaded)
+        view.removeEventListener('did-stop-loading', onPageLoaded)
+      } catch {}
+    }
+  }, [scholarStatus])
+
+  function handleScholarScanPdf(pdfId?: string) {
+    const id = pdfId ?? effectivePdfId
+    if (!id) return
+    useScholarScanStore.getState().startScanForPdf(id)
+  }
 
   const selectedSearchText = useMemo(() => {
     if (!selectedSourceId) return ''
@@ -830,16 +943,6 @@ export default function VerificationPage() {
               const summary = summaries[pdf.id]
               const pdfVerifying = isPdfVerifying(pdf.id)
               const hasPdfResults = Object.keys(resultsByPdf[pdf.id] ?? {}).length > 0
-              const sourceIds = (sourceOrder[pdf.id] ?? []).length > 0
-                ? (sourceOrder[pdf.id] ?? [])
-                : Object.keys(resultsByPdf[pdf.id] ?? {})
-              const canVerifyNonFound = !pdfVerifying && (
-                sourceIds.length === 0
-                || sourceIds.some(sourceId => {
-                  if (enabledSources[sourceId] === false) return false
-                  return resultsByPdf[pdf.id]?.[sourceId]?.status !== 'found'
-                })
-              )
               return (
                 <div
                   key={pdf.id}
@@ -866,12 +969,6 @@ export default function VerificationPage() {
                       <span className={`${styles['vc']} ${styles['vc-found']}`}>{summary.found}</span>
                       <span className={`${styles['vc']} ${styles['vc-problematic']}`}>{summary.problematic}</span>
                       <span className={`${styles['vc']} ${styles['vc-not-found']}`}>{summary.not_found}</span>
-                      <button
-                        className={`${styles['vi-verify-btn']} ${styles['vi-verify-nonfound-btn']} ${styles['vi-verify-nonfound-inline']}`}
-                        onClick={(e) => { e.stopPropagation(); handleVerifyNonFoundPdf(pdf.id) }}
-                        title="Verify only non-Found sources"
-                        disabled={!canVerifyNonFound}
-                      >NF</button>
                     </div>
                   )}
                 </div>
@@ -903,6 +1000,18 @@ export default function VerificationPage() {
                 >
                   {areAllSourcesEnabled ? 'Disable All' : 'Enable All'}
                 </button>
+                <button
+                  className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
+                  onClick={() => effectivePdfId && handleVerifyNonFoundPdf(effectivePdfId)}
+                  disabled={!effectivePdfId || (effectivePdfId ? isPdfVerifying(effectivePdfId) : true)}
+                  title="Verify only non-Found sources"
+                >NF</button>
+                <button
+                  className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
+                  onClick={() => handleScholarScanPdf()}
+                  disabled={scholarStatus === 'scanning' || !effectivePdfId}
+                  title="Google Scholar scan for non-Found sources"
+                >GS</button>
               </div>
               <div className={styles['toolbar-center']}>
                 <span className={styles['toolbar-count']}>{enabledCount}/{orderedSources.length} enabled</span>
@@ -1010,7 +1119,7 @@ export default function VerificationPage() {
                             <span className={styles['problem-tags']}>
                               {card.result && card.result.status !== 'found' && card.result.best_match && card.result.best_match.match_details.title_similarity > 0.75 && (
                                 <span className={styles['title-tag']} title={`Title similarity ${Math.round(card.result.best_match.match_details.title_similarity * 100)}%`}>
-                                  ~title
+                                  title: {Math.round(card.result.best_match.match_details.title_similarity * 100)}%
                                 </span>
                               )}
                               {card.result?.problem_tags?.map((tag) => (
@@ -1081,6 +1190,30 @@ export default function VerificationPage() {
                 )
               })}
             </div>
+
+            {/* Scholar scan progress bar */}
+            {(scholarStatus === 'scanning' || scholarStatus === 'captcha') && (
+              <div className={styles['scholar-scan-bar']}>
+                <span className={styles['scholar-scan-info']}>
+                  Scholar: {scholarCurrentIndex}/{scholarTotal} checked, {scholarFoundCount} gave results
+                </span>
+                {scholarStatus === 'captcha' && (
+                  <button className={styles['action-btn']} onClick={() => useScholarScanStore.getState().resumeAfterCaptcha()}>
+                    Resume
+                  </button>
+                )}
+                <button className={styles['action-btn']} onClick={() => useScholarScanStore.getState().cancelScan()}>
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {/* CAPTCHA banner */}
+            {scholarStatus === 'captcha' && (
+              <div className={styles['scholar-captcha-banner']}>
+                CAPTCHA detected — please solve it below. Scan will resume automatically, or click Resume.
+              </div>
+            )}
 
             {browserOverlayOpen && (
               <div className={styles['scholar-overlay']} style={{ height: `${browserOverlayHeight}px` }} ref={browserOverlayRef}>
@@ -1174,10 +1307,18 @@ export default function VerificationPage() {
                   className={styles['scholar-overlay-webview']}
                   src={browserOverlayUrl}
                   partition="persist:scholar-panel"
-                  allowpopups="true"
+                  allowpopups={true}
                 />
               </div>
             )}
+
+            {/* Hidden webview for Scholar scanner */}
+            <webview
+              ref={scholarScanWebviewRef}
+              src="about:blank"
+              partition="persist:scholar-panel"
+              style={{ position: 'fixed', left: '-9999px', top: '0', width: '1280px', height: '800px', opacity: 0, pointerEvents: 'none' } as React.CSSProperties}
+            />
           </>
         )}
       </section>
@@ -1234,44 +1375,10 @@ export default function VerificationPage() {
                   >Google Search</button>
                 </div>
 
-                {/* Problem tags + URL liveness */}
-                {r && r.problem_tags && r.problem_tags.length > 0 && (
-                  <div className={styles['detail-problems']}>
-                    <div className={styles['section-title']}>Problems</div>
-                    <ul className={styles['problem-list']}>
-                      {r.problem_tags.map((tag) => (
-                        <li key={tag} className={styles['problem-item']}>
-                          <span className={styles['problem-tag']}>{tag}</span>
-                          <span className={styles['problem-desc']}>{problemTagDescription(tag)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {r && r.url_liveness && Object.keys(r.url_liveness).length > 0 && (
-                  <div className={styles['detail-urls']}>
-                    <div className={styles['section-title']}>URL Status</div>
-                    <ul className={styles['url-list']}>
-                      {Object.entries(r.url_liveness).map(([url, alive]) => (
-                        <li key={url} className={styles['url-item']}>
-                          <span
-                            className={styles['url-dot']}
-                            style={{ background: alive ? '#22c55e' : '#ef4444' }}
-                            title={alive ? 'Reachable' : 'Dead link'}
-                          />
-                          <button className={styles['url-link']} onClick={() => openOverlayWithUrl(url)} title={url}>
-                            {url.length > 50 ? url.slice(0, 50) + '\u2026' : url}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
                 <div className={styles['section-header-row']}>
                   <div className={styles['section-title']}>Best Match</div>
                   <div className={styles['result-summary']}>
-                    <button className={styles['action-btn']} onClick={handleReverifyOrCancelSource} title={currentResult?.status === 'in_progress' ? "Stop verification" : "Verify this source"}>
+                    <button className={`${styles['action-btn']} ${styles['action-btn-accent']}`} onClick={handleReverifyOrCancelSource} title={currentResult?.status === 'in_progress' ? "Stop verification" : "Verify this source"}>
                       {currentResult?.status === 'in_progress' ? <><span>&#x25A0;</span> Stop</> : <><span>&#x21BB;</span> Verify</>}
                     </button>
                   </div>
@@ -1306,19 +1413,19 @@ export default function VerificationPage() {
                     {/* All database results */}
                     <div className={styles['section-title']}>Database Results</div>
                     <div className={styles['detail-db-list']}>
-                      {enabledDatabases.map(db => {
+                      {[...enabledDatabases, ...(r.databases_searched.includes('Google Scholar') ? ['Google Scholar'] : [])].map(db => {
                         const match = r.all_results.find((m: MatchResult) => m.database === db)
                         const searched = r.databases_searched.includes(db)
                         const dbCheck = selectedProgress?.checkedDbs.find(d => d.name === db)
-                        const sourceText = verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
-                        const linkUrl = buildDbSearchUrl(db, sourceText) || match?.search_url || dbCheck?.searchUrl
+                        const searchText = r.best_match?.title ?? verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
+                        const linkUrl = buildDbSearchUrl(db, searchText) || match?.search_url || dbCheck?.searchUrl
                         return (
                           <div key={db} className={styles['db-row']}>
                             <span className={styles['db-icon']} style={{ color: match ? dbScoreColor(match.score) : searched ? '#a8a29e' : '#d6d3d1' }}>
                               {match ? dbScoreIcon(match.score) : searched ? '\u2715' : '\u25CB'}
                             </span>
                             {linkUrl ? (
-                              <button className={`${styles['db-name']} ${styles['db-link']} ${!searched && !match ? styles['db-link-unsearched'] : ''}`} onClick={() => openExternal(linkUrl)}>{db}</button>
+                              <button className={`${styles['db-name']} ${styles['db-link']} ${!searched && !match ? styles['db-link-unsearched'] : ''}`} onClick={() => openOverlayWithUrl(linkUrl)}>{db}</button>
                             ) : (
                               <span className={styles['db-name']}>{db}</span>
                             )}
@@ -1331,6 +1438,26 @@ export default function VerificationPage() {
                         )
                       })}
                     </div>
+
+                    {r.url_liveness && Object.keys(r.url_liveness).length > 0 && (
+                      <div className={styles['detail-urls']}>
+                        <div className={styles['section-title']}>URL Status</div>
+                        <ul className={styles['url-list']}>
+                          {Object.entries(r.url_liveness).map(([url, alive]) => (
+                            <li key={url} className={styles['url-item']}>
+                              <span
+                                className={styles['url-dot']}
+                                style={{ background: alive ? '#22c55e' : '#ef4444' }}
+                                title={alive ? 'Reachable' : 'Dead link'}
+                              />
+                              <button className={styles['url-link']} onClick={() => openOverlayWithUrl(url)} title={url}>
+                                {url.length > 50 ? url.slice(0, 50) + '\u2026' : url}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </>
                 )}
               </>
