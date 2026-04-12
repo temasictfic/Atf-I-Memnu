@@ -13,7 +13,10 @@ Atf-ı Memnu is a desktop application designed to analyze, extract, and verify c
   - [OpenAlex](https://openalex.org/)
   - [Semantic Scholar](https://www.semanticscholar.org/)
   - [TR Dizin](https://trdizin.gov.tr/)
-  - [DuckDuckGo HTML Lite](https://duckduckgo.com/)
+  - [PubMed](https://pubmed.ncbi.nlm.nih.gov/)
+  - [CORE](https://core.ac.uk/)
+  - [PLOS](https://journals.plos.org/)
+  - [Open Library](https://openlibrary.org/)
 - **Real-time Progress:** Uses WebSockets to provide real-time feedback during the parsing and verification process.
 - **Modern Desktop UI:** Built with Electron and React for a smooth, cross-platform user experience.
 

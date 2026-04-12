@@ -53,3 +53,27 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #a8a29e;
 }
+
+/*
+ * pdfjs-dist text layer — explicitly enable text selection. The parsing page
+ * root sets `user-select: none` so drag gestures on source rectangles don't
+ * accidentally highlight anything; we need to opt the text layer back in so
+ * highlight notes can be created from real text selection.
+ *
+ * IMPORTANT: do NOT use `.textLayer *` — that would force `user-select: text`
+ * on the `.endOfContent` sentinel div that pdfjs-dist uses to cap selection
+ * at the page boundary. Scoping to `.textLayer` itself and its text-bearing
+ * `span`/`br` children preserves endOfContent's `user-select: none`, which
+ * is what stops a drag past the text from selecting the whole page.
+ */
+.textLayer {
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  user-select: text !important;
+}
+.textLayer span,
+.textLayer br {
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  user-select: text !important;
+}
