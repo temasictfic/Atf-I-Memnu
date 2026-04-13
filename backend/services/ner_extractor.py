@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from models.source import ParsedSource
 from utils.doi_extractor import extract_doi, extract_arxiv_id
-from utils.url_cleaner import clean_extracted_url, find_first_url
+from utils.url_cleaner import clean_extracted_url, find_best_url
 
 logger = logging.getLogger(__name__)
 
@@ -244,13 +244,20 @@ def _build_url(doi: str | None, arxiv_id: str | None,
 
     # Fall back to first URL from entities or regex. NER spans frequently
     # contain a literal space from a PDF line wrap, so route through the
-    # cleaner before returning.
+    # cleaner. NER also sometimes truncates the span at a domain boundary
+    # (`https://openaccess.thecvf` instead of the full path), so we always
+    # also extract from raw text and prefer whichever is longer when one is
+    # a prefix of the other.
+    raw_url = find_best_url(raw_text)
     for ent in link_entities:
         cleaned = clean_extracted_url(ent.get("text"))
-        if cleaned:
-            return cleaned
+        if not cleaned:
+            continue
+        if raw_url and raw_url.startswith(cleaned) and len(raw_url) > len(cleaned):
+            return raw_url
+        return cleaned
 
-    return find_first_url(raw_text)
+    return raw_url
 
 
 def _compute_confidence(

@@ -32,6 +32,9 @@ def clean_extracted_url(text: str | None) -> str | None:
     for tok in tokens[1:]:
         if not _URL_TOKEN_CHARS.fullmatch(tok):
             break
+        # Don't glue a separate URL onto this one — that's two refs, not a wrap.
+        if _URL_START.match(tok):
+            break
         # Trailing "-" is almost always a wrap point — URLs rarely end on a
         # hyphen — so accept any URL-shaped continuation. For other ambiguous
         # endings (slash, query separators) require the continuation to
@@ -59,3 +62,26 @@ def find_first_url(text: str | None) -> str | None:
     if not m:
         return None
     return clean_extracted_url(text[m.start():])
+
+
+def find_best_url(text: str | None) -> str | None:
+    """Find the most specific URL in free text.
+
+    A reference often contains multiple URLs (a bare domain followed by a
+    deeper link, or several archive copies). The longest one is almost
+    always the most useful — bare domains contribute nothing the deeper
+    link doesn't.
+    """
+    if not text:
+        return None
+    best: str | None = None
+    pos = 0
+    while True:
+        m = _URL_START.search(text, pos)
+        if not m:
+            break
+        cleaned = clean_extracted_url(text[m.start():])
+        if cleaned and (best is None or len(cleaned) > len(best)):
+            best = cleaned
+        pos = m.end()
+    return best
