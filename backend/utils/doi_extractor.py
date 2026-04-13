@@ -2,7 +2,8 @@
 
 import re
 
-DOI_BODY_PATTERN = r"10\.\d{4,9}/[A-Za-z0-9._;()/:+\-]+(?:\s+[A-Za-z0-9._;()/:+\-]+)*"
+DOI_BODY_PATTERN = r"10\.\d{4,9}/[A-Za-z0-9._;()/:+\-]+"
+_DOI_WRAP_TAIL = re.compile(r"\s+([A-Za-z0-9._;()/:+\-]+)")
 
 DOI_PATTERNS = [
     # Kurallar DOI Rule 4: "doi:" or "doi.org" format
@@ -13,19 +14,34 @@ DOI_PATTERNS = [
     re.compile(rf"({DOI_BODY_PATTERN})"),
 ]
 
+# Allow optional whitespace inside the ID body so wrap-broken arXiv IDs
+# (`2403. 12345`) still match. Whitespace is stripped after capture.
 ARXIV_PATTERNS = [
-    re.compile(r"10\.48550/arxiv\.(\d{4}\.\d{4,5}(?:v\d+)?)", re.IGNORECASE),
-    re.compile(r"arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5}(?:v\d+)?)", re.IGNORECASE),
-    re.compile(r"arXiv[:\s]*(\d{4}\.\d{4,5}(?:v\d+)?)", re.IGNORECASE),
+    re.compile(r"10\.48550/arxiv\.(\d{4}\s*\.\s*\d{4,5}(?:v\d+)?)", re.IGNORECASE),
+    re.compile(r"arxiv\.org/(?:abs|pdf)/(\d{4}\s*\.\s*\d{4,5}(?:v\d+)?)", re.IGNORECASE),
+    re.compile(r"arXiv[:\s]*(\d{4}\s*\.\s*\d{4,5}(?:v\d+)?)", re.IGNORECASE),
 ]
 
 
 def extract_doi(text: str) -> str | None:
-    """Extract a DOI from text, if present."""
+    """Extract a DOI from text, if present.
+
+    Rejoins one wrap-broken tail when the DOI body ends with `-` or `/`
+    (the chars where PDF line wraps are commonly hidden). Avoids the
+    greedier behavior of an unconditional `(\\s+\\w+)*` continuation,
+    which used to glue prose like ". Foo" into the DOI.
+    """
+    if not text:
+        return None
     for pattern in DOI_PATTERNS:
         match = pattern.search(text)
         if match:
-            return normalize_doi(match.group(1))
+            doi_body = match.group(1)
+            if doi_body.endswith(("-", "/")):
+                tail = _DOI_WRAP_TAIL.match(text, match.end(1))
+                if tail:
+                    doi_body += tail.group(1)
+            return normalize_doi(doi_body)
     return None
 
 
@@ -48,5 +64,5 @@ def extract_arxiv_id(text: str) -> str | None:
     for pattern in ARXIV_PATTERNS:
         match = pattern.search(text)
         if match:
-            return match.group(1)
+            return re.sub(r"\s+", "", match.group(1))
     return None

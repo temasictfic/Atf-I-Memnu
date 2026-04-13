@@ -7,6 +7,7 @@ from collections import defaultdict
 
 from models.source import ParsedSource
 from utils.doi_extractor import extract_doi, extract_arxiv_id
+from utils.url_cleaner import clean_extracted_url, find_first_url
 
 logger = logging.getLogger(__name__)
 
@@ -220,16 +221,16 @@ def _parse_year(entities: list[dict], raw_text: str) -> int | None:
 
 
 def _parse_doi(entities: list[dict], raw_text: str) -> str | None:
-    """Extract DOI from DOI entities, filtering noise."""
-    # First try entities with actual DOI patterns
+    """Extract DOI from DOI entities, filtering noise.
+
+    Routes through `extract_doi`/`normalize_doi` so wrap-broken DOIs
+    (`10.1038/s41598-023- 47595-7`) get rejoined instead of truncated.
+    """
     for ent in sorted(entities, key=lambda e: -e["score"]):
-        text = ent["text"].strip()
-        m = DOI_RE.search(text)
-        if m:
-            doi = m.group(0).rstrip(".,;:)]}\"'")
+        doi = extract_doi(ent.get("text") or "")
+        if doi:
             return doi
 
-    # Fallback: regex on raw text
     return extract_doi(raw_text)
 
 
@@ -241,17 +242,15 @@ def _build_url(doi: str | None, arxiv_id: str | None,
     if arxiv_id:
         return f"https://arxiv.org/abs/{arxiv_id}"
 
-    # Fall back to first URL from entities or regex
+    # Fall back to first URL from entities or regex. NER spans frequently
+    # contain a literal space from a PDF line wrap, so route through the
+    # cleaner before returning.
     for ent in link_entities:
-        text = ent["text"].strip().rstrip(".,;:)]}\"'")
-        if text.startswith("http"):
-            return text
+        cleaned = clean_extracted_url(ent.get("text"))
+        if cleaned:
+            return cleaned
 
-    m = URL_RE.search(raw_text)
-    if m:
-        return m.group(0).rstrip(".,;:)]}\"'")
-
-    return None
+    return find_first_url(raw_text)
 
 
 def _compute_confidence(

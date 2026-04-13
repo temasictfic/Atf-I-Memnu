@@ -11,10 +11,7 @@ from models.source import ParsedSource
 from services.citation_format_detector import CitationFormat, detect_format
 from utils.text_cleaning import strip_reference_noise
 from utils.doi_extractor import extract_doi, extract_arxiv_id
-
-
-# URL pattern
-URL_PATTERN = re.compile(r"https?://[^\s,;\"'}\]]+")
+from utils.url_cleaner import find_first_url
 
 # Year pattern
 YEAR_PATTERN = re.compile(r"\b((?:19|20)\d{2})\b")
@@ -52,9 +49,7 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
     elif arxiv_id:
         result.url = f"https://arxiv.org/abs/{arxiv_id}"
     else:
-        url_match = URL_PATTERN.search(text)
-        if url_match:
-            result.url = url_match.group(0).rstrip(".,;:)]}\"'")
+        result.url = find_first_url(text)
 
     # Detect citation format
     fmt, fmt_confidence = detect_format(text)
