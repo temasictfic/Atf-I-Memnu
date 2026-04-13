@@ -1020,27 +1020,53 @@ export function initVerificationListeners(): () => void {
 
       useVerificationStore.setState(state => {
         const existing = state.resultsByPdf[pdfId] ?? {}
+        const updatedPdfResults = {
+          ...existing,
+          [sourceId]: {
+            source_id: sourceId,
+            status: data.status as VerifyStatus,
+            problem_tags: (data.problem_tags as string[]) ?? [],
+            url_liveness: (data.url_liveness as Record<string, boolean>) ?? {},
+            best_match: data.best_match as any,
+            all_results: (data.all_results as any[]) ?? [],
+            databases_searched: existing[sourceId]?.databases_searched ?? [],
+          },
+        }
+
+        let found = 0, problematic = 0, not_found = 0, inProgress = 0
+        for (const r of Object.values(updatedPdfResults)) {
+          if (r.status === 'found') found++
+          else if (r.status === 'problematic') problematic++
+          else if (r.status === 'not_found') not_found++
+          else if (r.status === 'in_progress') inProgress++
+        }
+        const prevSummary = state.summaries[pdfId]
+        const total = prevSummary?.total && prevSummary.total > 0
+          ? prevSummary.total
+          : Object.keys(updatedPdfResults).length
+
         return {
           resultsByPdf: {
             ...state.resultsByPdf,
-            [pdfId]: {
-              ...existing,
-              [sourceId]: {
-                source_id: sourceId,
-                status: data.status as VerifyStatus,
-                problem_tags: (data.problem_tags as string[]) ?? [],
-                url_liveness: (data.url_liveness as Record<string, boolean>) ?? {},
-                best_match: data.best_match as any,
-                all_results: (data.all_results as any[]) ?? [],
-                databases_searched: existing[sourceId]?.databases_searched ?? [],
-              },
-            },
+            [pdfId]: updatedPdfResults,
           },
           sourceProgress: {
             ...state.sourceProgress,
             [sourceId]: {
               currentDb: null,
               checkedDbs: state.sourceProgress[sourceId]?.checkedDbs ?? [],
+            },
+          },
+          summaries: {
+            ...state.summaries,
+            [pdfId]: {
+              pdf_id: pdfId,
+              found,
+              problematic,
+              not_found,
+              in_progress: inProgress,
+              total,
+              completed: inProgress === 0 && (prevSummary?.completed ?? false),
             },
           },
         }

@@ -20,7 +20,7 @@ function statusColor(result: VerificationResult | undefined): string {
     case 'found': return '#22c55e'
     case 'problematic': return '#f59e0b'
     case 'not_found': return '#9ca3af'
-    case 'in_progress': return '#a8a29e'
+    case 'in_progress': return '#3b82f6'
     default: return '#a8a29e'
   }
 }
@@ -114,10 +114,10 @@ export default function VerificationPage() {
 
   const configuredDatabases = useSettingsStore(s => s.settings.databases)
   const enabledDatabases = useMemo(() => {
-    const enabledNames = new Set(
-      configuredDatabases.filter(db => db.enabled).map(db => db.name),
-    )
-    return ALL_DATABASES.filter(name => enabledNames.has(name))
+    const known = new Set(ALL_DATABASES)
+    return configuredDatabases
+      .filter(db => db.enabled && known.has(db.name))
+      .map(db => db.name)
   }, [configuredDatabases])
 
   const pdfs = useMemo(() => allPdfs.filter(p => p.status === 'approved'), [allPdfs])
@@ -136,47 +136,39 @@ export default function VerificationPage() {
   // Toast for verification completion – only for actual runs, not cached loads
   const [verifyToast, setVerifyToast] = useState<string | null>(null)
   const verifyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const verifiedPdfIdsRef = useRef<Set<string>>(new Set())
-  const prevInProgressRef = useRef<Record<string, boolean>>({})
+  // PDFs whose verification run we kicked off in this session and are still
+  // waiting to see complete. Adding a pdfId here arms the completion handler.
+  const pendingVerifyPdfIdsRef = useRef<Set<string>>(new Set())
   // PDFs started via single-PDF verify (not Verify All) — auto-run GS when done
   const autoGsPdfIdsRef = useRef<Set<string>>(new Set())
 
-  // Track PDFs that are actively verifying (in_progress results exist)
+  // Fire completion-time side effects (toast + auto Scholar scan) when a
+  // pending verification run transitions to completed. We trigger off
+  // `summary.completed` directly rather than an in_progress→0 edge because
+  // `verify_source_done` and `verify_pdf_done` arrive in separate ticks,
+  // and the edge is not observable in a single summaries snapshot.
   useEffect(() => {
-    const prev = prevInProgressRef.current
-    for (const [pdfId, summary] of Object.entries(summaries)) {
-      const wasInProgress = prev[pdfId]
-      const isInProgress = summary.in_progress > 0
+    for (const pdfId of Array.from(pendingVerifyPdfIdsRef.current)) {
+      const summary = summaries[pdfId]
+      if (!summary || !summary.completed || summary.in_progress > 0) continue
+      pendingVerifyPdfIdsRef.current.delete(pdfId)
 
-      // Mark as actively verified when we see in_progress results
-      if (isInProgress) {
-        verifiedPdfIdsRef.current.add(pdfId)
-      }
+      const pdf = allPdfs.find(p => p.id === pdfId)
+      const name = pdf?.name ?? 'PDF'
+      if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
+      setVerifyToast(`Verification complete: ${name}`)
+      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
 
-      // Show toast only when transitioning from in_progress to completed AND was actually verified
-      if (wasInProgress && summary.completed && !isInProgress && verifiedPdfIdsRef.current.has(pdfId)) {
-        verifiedPdfIdsRef.current.delete(pdfId)
-        const pdf = allPdfs.find(p => p.id === pdfId)
-        const name = pdf?.name ?? 'PDF'
-        if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
-        setVerifyToast(`Verification complete: ${name}`)
-        verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
-
-        // Auto-run GS for single-PDF verifications (if enabled in settings)
-        if (autoGsPdfIdsRef.current.has(pdfId)) {
-          autoGsPdfIdsRef.current.delete(pdfId)
-          const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
-          if (autoGs) {
-            setTimeout(() => {
-              useScholarScanStore.getState().startScanForPdf(pdfId)
-            }, 500)
-          }
+      if (autoGsPdfIdsRef.current.has(pdfId)) {
+        autoGsPdfIdsRef.current.delete(pdfId)
+        const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
+        if (autoGs) {
+          setTimeout(() => {
+            useScholarScanStore.getState().startScanForPdf(pdfId)
+          }, 500)
         }
       }
     }
-    prevInProgressRef.current = Object.fromEntries(
-      Object.entries(summaries).map(([id, s]) => [id, s.in_progress > 0])
-    )
   }, [summaries, allPdfs])
 
   const orderedSources = useMemo(() => {
@@ -336,16 +328,21 @@ export default function VerificationPage() {
       await useVerificationStore.getState().cancelAll()
     } else {
       const ids = pdfs.map(p => p.id)
-      if (ids.length > 0) await useVerificationStore.getState().startVerification(ids)
+      if (ids.length > 0) {
+        for (const id of ids) pendingVerifyPdfIdsRef.current.add(id)
+        await useVerificationStore.getState().startVerification(ids)
+      }
     }
   }
 
   async function handleVerifyOrCancelPdf(pdfId: string) {
     if (isPdfVerifying(pdfId)) {
       autoGsPdfIdsRef.current.delete(pdfId)
+      pendingVerifyPdfIdsRef.current.delete(pdfId)
       await useVerificationStore.getState().cancelPdf(pdfId)
     } else {
       autoGsPdfIdsRef.current.add(pdfId)
+      pendingVerifyPdfIdsRef.current.add(pdfId)
       await useVerificationStore.getState().startVerification([pdfId])
     }
   }
@@ -355,6 +352,7 @@ export default function VerificationPage() {
     await loadSourcesFn(pdfId)
     const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
     useVerificationStore.getState().initSourceVerifyState(pdfId, src)
+    pendingVerifyPdfIdsRef.current.add(pdfId)
     await useVerificationStore.getState().startVerificationNonFoundForPdf(pdfId)
   }
 
@@ -435,6 +433,7 @@ export default function VerificationPage() {
   // Auto-resume: detect when overlay navigates to a Scholar results page (CAPTCHA solved)
   useEffect(() => {
     if (scholarStatus !== 'captcha') return
+    if (!browserOverlayOpen) return
     const view = browserWebviewRef.current
     if (!view) return
 
@@ -443,21 +442,26 @@ export default function VerificationPage() {
     const checkCaptchaSolved = async (): Promise<void> => {
       if (resumed) return
       try {
-        // Check current URL via JS (works regardless of event type)
         const url: string = await view.executeJavaScript('window.location.href')
         if (!url.includes('scholar.google.com')) return
         if (url.includes('sorry.google.com')) return
 
-        // Verify CAPTCHA is actually gone by checking for results
-        const hasCaptcha = await view.executeJavaScript(`
-          !!document.querySelector('#gs_captcha_f, #gs_captcha_ccl, #captcha-form, #recaptcha')
-          || !!document.querySelector('iframe[src*="recaptcha"]')
-          || (document.body && document.body.innerText && (
-            document.body.innerText.includes('unusual traffic')
-            || document.body.innerText.includes('not a robot')
-          ))
+        // Require a POSITIVE signal that the results page has rendered, not
+        // merely the absence of a CAPTCHA element. Otherwise an in-flight
+        // navigation (empty document) reads as "solved" and we auto-resume
+        // while the webview is still loading the CAPTCHA page.
+        const state = await view.executeJavaScript(`
+          (function() {
+            var hasCaptcha = !!document.querySelector('#gs_captcha_f, #gs_captcha_ccl, #captcha-form, #recaptcha')
+              || !!document.querySelector('iframe[src*="recaptcha"]')
+            var txt = (document.body && document.body.innerText) || ''
+            if (txt.indexOf('unusual traffic') !== -1 || txt.indexOf('not a robot') !== -1) hasCaptcha = true
+            var hasResults = !!document.querySelector('#gs_res_ccl, #gs_res_ccl_mid, .gs_r, .gs_ri')
+            return { hasCaptcha: hasCaptcha, hasResults: hasResults, ready: document.readyState }
+          })()
         `)
-        if (hasCaptcha) return
+        if (!state || state.hasCaptcha || !state.hasResults) return
+        if (state.ready !== 'complete' && state.ready !== 'interactive') return
 
         console.log('[Scholar] CAPTCHA solved detected, auto-resuming')
         resumed = true
@@ -482,7 +486,7 @@ export default function VerificationPage() {
         view.removeEventListener('did-stop-loading', onPageLoaded)
       } catch {}
     }
-  }, [scholarStatus])
+  }, [scholarStatus, browserOverlayOpen])
 
   function handleScholarScanPdf(pdfId?: string) {
     const id = pdfId ?? effectivePdfId
@@ -538,7 +542,14 @@ export default function VerificationPage() {
   }, [selectedSourceId])
 
   function alignOverlayToSelectedCard() {
-    if (!selectedSourceId) return
+    if (!selectedSourceId) {
+      // Still size the overlay to its max even when no card is selected
+      // (e.g. Scholar CAPTCHA opens the overlay mid-scan).
+      window.requestAnimationFrame(() => {
+        setBrowserOverlayHeight(getOverlayMaxHeight())
+      })
+      return
+    }
     scrollSelectedCardToTop('auto')
 
     window.requestAnimationFrame(() => {
@@ -747,8 +758,11 @@ export default function VerificationPage() {
 
   useEffect(() => {
     if (!browserOverlayOpen) return
+    // Don't force-close during a Scholar CAPTCHA — the scan isn't tied to
+    // the currently selected card, so selectedSourceId may legitimately be null.
+    if (scholarStatus === 'captcha') return
     if (!selectedSourceId) setBrowserOverlayOpen(false)
-  }, [browserOverlayOpen, selectedSourceId])
+  }, [browserOverlayOpen, selectedSourceId, scholarStatus])
 
   useEffect(() => {
     if (browserOverlayOpen) return
@@ -1208,15 +1222,13 @@ export default function VerificationPage() {
               </div>
             )}
 
-            {/* CAPTCHA banner */}
-            {scholarStatus === 'captcha' && (
-              <div className={styles['scholar-captcha-banner']}>
-                CAPTCHA detected — please solve it below. Scan will resume automatically, or click Resume.
-              </div>
-            )}
-
             {browserOverlayOpen && (
               <div className={styles['scholar-overlay']} style={{ height: `${browserOverlayHeight}px` }} ref={browserOverlayRef}>
+                {scholarStatus === 'captcha' && (
+                  <div className={styles['scholar-captcha-banner']}>
+                    CAPTCHA detected — please solve it below. Scan will resume automatically, or close Webview and click Resume.
+                  </div>
+                )}
                 <div className={styles['scholar-overlay-resizer']} onMouseDown={startOverlayResize} title="Drag to resize">
                   <span className={styles['scholar-overlay-resizer-line']} />
                 </div>
