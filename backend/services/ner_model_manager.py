@@ -28,6 +28,11 @@ _pipeline: Any | None = None
 _pipeline_lock = asyncio.Lock()
 _loading = False
 _load_error: str | None = None
+# Set to True once `preload_pipeline()` has finished its attempts (whether
+# it succeeded or not). The `/api/ready` endpoint uses this to decide when
+# the backend is safe to receive real traffic — we wait for preload to
+# either populate the pipeline or commit to regex fallback.
+_preload_complete = False
 
 # RoBERTa's positional embedding is 514 (512 content + 2 special). Keep the
 # tokenizer capped at 512 total so input_ids never exceed the model window.
@@ -68,6 +73,16 @@ def is_loading() -> bool:
 
 def get_load_error() -> str | None:
     return _load_error
+
+
+def is_preload_complete() -> bool:
+    """True once `preload_pipeline()` has finished trying.
+
+    Use this (not `is_model_ready()`) for readiness probes — it returns
+    True both when preload succeeded and when it gave up and committed
+    to the regex fallback.
+    """
+    return _preload_complete
 
 
 def get_pipeline_sync() -> Any | None:
@@ -316,14 +331,42 @@ async def preload_pipeline() -> None:
 
     Called during application startup. Failures are logged but do not
     prevent the app from starting — extraction falls back to regex.
+
+    Retries once on failure with a short delay. This covers the first-
+    launch-after-auto-update race where DirectML's driver state is still
+    warming from the previous process, or the installer hasn't yet
+    flushed the 125 MB model file to disk. A single retry + 2 s pause
+    is enough to clear that window without adding meaningful startup
+    latency to a successful cold-start.
     """
+    global _preload_complete, _load_error
     if not settings.ner_enabled:
         logger.info("NER disabled, skipping model preload")
+        _preload_complete = True
         return
 
     logger.info("Preloading NER model in background…")
-    result = await get_pipeline()
-    if result is not None:
-        logger.info("NER model preloaded successfully")
-    else:
-        logger.warning("NER model preload failed; extraction will fall back to regex")
+    try:
+        result = await get_pipeline()
+        if result is not None:
+            logger.info("NER model preloaded successfully")
+            return
+
+        first_error = _load_error
+        logger.warning(
+            "NER model preload failed (%s); retrying in 2 s…", first_error
+        )
+        await asyncio.sleep(2)
+
+        result = await get_pipeline()
+        if result is not None:
+            logger.info("NER model preloaded successfully on retry")
+        else:
+            logger.warning(
+                "NER model preload failed after retry (%s); committing to regex fallback",
+                _load_error,
+            )
+    finally:
+        # Flip the readiness flag no matter what — /api/ready will now
+        # return 200 and the main process can unblock the UI.
+        _preload_complete = True

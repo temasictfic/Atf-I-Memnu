@@ -8,6 +8,10 @@ let pythonProcess: ChildProcess | null = null
 let backendPort: number | null = null
 const HEALTH_CHECK_INTERVAL = 2000
 const MAX_HEALTH_RETRIES = 30
+// /api/ready waits for the NER preload to resolve (~3-15 s cold, up to
+// ~30 s on slow disks after an auto-update). Give it a bigger retry
+// budget than the liveness check so we don't give up mid-init.
+const MAX_READY_RETRIES = 60
 let healthCheckTimer: ReturnType<typeof setInterval> | null = null
 
 function getBackendPath(): string {
@@ -122,13 +126,20 @@ export async function startPythonBackend(): Promise<void> {
     backendPort = null
   })
 
-  // Wait for backend to be healthy
+  // Phase 1: liveness — uvicorn is up.
   await waitForHealth(backendPort)
 
   // Health can be green while process exits immediately afterward.
   if (!pythonProcess || backendPort === null) {
     throw new Error(`Backend process exited during startup: ${backendExecutablePath}`)
   }
+
+  // Phase 2: readiness — NER preload has finished (either loaded the
+  // model or committed to regex fallback). Blocks the UI until this
+  // resolves so the user can't hit Verify while NER would silently
+  // fall through to regex on garbage queries — the symptom we've seen
+  // on the first launch after an auto-update.
+  await waitForReady(backendPort)
 }
 
 async function waitForHealth(port: number): Promise<void> {
@@ -160,6 +171,36 @@ async function waitForHealth(port: number): Promise<void> {
   throw new Error(
     `Python backend failed health check within ${MAX_HEALTH_RETRIES * HEALTH_CHECK_INTERVAL / 1000}s on port ${port}`
       + (lastError instanceof Error ? ` (last error: ${lastError.message})` : '')
+  )
+}
+
+async function waitForReady(port: number): Promise<void> {
+  for (let i = 0; i < MAX_READY_RETRIES; i++) {
+    if (!pythonProcess || pythonProcess.exitCode !== null) {
+      throw new Error(
+        `Python backend exited during NER preload (exit code ${pythonProcess?.exitCode ?? 'unknown'}).`
+          + ' Check [Python STDERR] logs above for the failure reason.'
+      )
+    }
+    try {
+      const response = await fetch(`http://localhost:${port}/api/ready`)
+      if (response.ok) {
+        const body = await response.json().catch(() => ({ ner: 'unknown' }))
+        console.log(`Python backend ready (NER: ${body.ner ?? 'unknown'})`)
+        return
+      }
+      // 503 = still initializing; keep polling silently
+    } catch {
+      // Connection dropped mid-poll — keep trying
+    }
+    await new Promise(resolve => setTimeout(resolve, HEALTH_CHECK_INTERVAL))
+  }
+  // Readiness never flipped — log a warning but continue anyway.
+  // /api/ready failing doesn't mean verification is broken; regex
+  // fallback still works. We'd rather let the user in with a degraded
+  // experience than hang forever at a splash screen.
+  console.warn(
+    `Python backend /api/ready did not return 200 within ${MAX_READY_RETRIES * HEALTH_CHECK_INTERVAL / 1000}s — continuing with degraded NER`
   )
 }
 
