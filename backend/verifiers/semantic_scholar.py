@@ -8,7 +8,7 @@ import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from services.search_settings import get_client_timeout
+from verifiers._http import get_session
 
 API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 
@@ -39,18 +39,15 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     if api_key:
         headers["x-api-key"] = api_key
 
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            best = await _fetch_best_match(session, params, source, headers)
+    session = get_session()
+    best = await _fetch_best_match(session, params, source, headers)
 
-            # Retry without year filter if it produced nothing.
-            if best is None and "year" in params:
-                params_no_year = {k: v for k, v in params.items() if k != "year"}
-                best = await _fetch_best_match(session, params_no_year, source, headers)
+    # Retry without year filter if it produced nothing.
+    if best is None and "year" in params:
+        params_no_year = {k: v for k, v in params.items() if k != "year"}
+        best = await _fetch_best_match(session, params_no_year, source, headers)
 
-            return best
-    except Exception:
-        return None
+    return best
 
 
 async def _fetch_best_match(
@@ -60,21 +57,18 @@ async def _fetch_best_match(
     headers: dict[str, str] | None = None,
 ) -> MatchResult | None:
     """Execute one S2 request and return the highest-scoring match."""
-    try:
-        async with session.get(API_URL, params=params, headers=headers or {}) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            papers = data.get("data", [])
+    async with session.get(API_URL, params=params, headers=headers or {}) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+        papers = data.get("data", [])
 
-            best: MatchResult | None = None
-            for paper in papers[:5]:
-                match = _paper_to_match(paper, source)
-                if match and (best is None or match.score > best.score):
-                    best = match
-            return best
-    except Exception:
-        return None
+        best: MatchResult | None = None
+        for paper in papers[:5]:
+            match = _paper_to_match(paper, source)
+            if match and (best is None or match.score > best.score):
+                best = match
+        return best
 
 
 def _paper_to_match(paper: dict[str, Any], source: ParsedSource) -> MatchResult | None:

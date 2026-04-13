@@ -10,8 +10,8 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from services.search_settings import get_client_timeout
 from utils.doi_extractor import extract_arxiv_id
+from verifiers._http import get_session
 
 ARXIV_API = "http://export.arxiv.org/api/query"
 NS = {"atom": "http://www.w3.org/2005/Atom"}
@@ -35,7 +35,12 @@ def _build_arxiv_query(source: ParsedSource, with_author: bool = True) -> str:
     title = source.title or source.raw_text[:200]
     # Remove characters that are Lucene field-separator or escape tokens.
     # The colon is the critical one (field:value syntax breaks phrase search).
-    sanitized = re.sub(r'[:\\"\\+\\-!\\(\\)\\{\\}\\[\\]\\^~\\*\\?/]', " ", title)
+    # The hyphen sits at the end of the character class on purpose — putting
+    # it mid-class would let the regex parser interpret it as a range
+    # (which it did until this fix — "bad character range \-!" swallowed
+    # by the old bare except and turning every arxiv title search into a
+    # silent no-op).
+    sanitized = re.sub(r'[:"+!(){}\[\]^~*?/\\-]', " ", title)
     sanitized = " ".join(sanitized.split())  # collapse whitespace
 
     parts = [f'ti:"{sanitized}"']
@@ -79,37 +84,34 @@ async def search(source: ParsedSource) -> MatchResult | None:
     # Throttle before any network activity.
     await rate_limiter.acquire("export.arxiv.org")
 
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            # ── Priority 1: direct lookup by embedded arXiv ID ──────────────
-            arxiv_id = extract_arxiv_id(source.url or "") or extract_arxiv_id(
-                source.raw_text
-            )
-            if arxiv_id:
-                # Strip any version suffix so the API returns the canonical
-                # record; the scored URL will also be version-free.
-                base_id = re.sub(r"v\d+$", "", arxiv_id)
-                result = await _lookup_by_id(session, base_id, source)
-                if result:
-                    return result
+    session = get_session()
+    # ── Priority 1: direct lookup by embedded arXiv ID ──────────────
+    arxiv_id = extract_arxiv_id(source.url or "") or extract_arxiv_id(
+        source.raw_text
+    )
+    if arxiv_id:
+        # Strip any version suffix so the API returns the canonical
+        # record; the scored URL will also be version-free.
+        base_id = re.sub(r"v\d+$", "", arxiv_id)
+        result = await _lookup_by_id(session, base_id, source)
+        if result:
+            return result
 
-            # ── Priority 2: title-based search ──────────────────────────────
-            if not (source.title or source.raw_text):
-                return None
-
-            best = await _fetch_best_match(
-                session, _build_arxiv_query(source, with_author=True), source
-            )
-
-            # Fallback: author filter may be wrong, retry without it.
-            if best is None:
-                best = await _fetch_best_match(
-                    session, _build_arxiv_query(source, with_author=False), source
-                )
-
-            return best
-    except Exception:
+    # ── Priority 2: title-based search ──────────────────────────────
+    if not (source.title or source.raw_text):
         return None
+
+    best = await _fetch_best_match(
+        session, _build_arxiv_query(source, with_author=True), source
+    )
+
+    # Fallback: author filter may be wrong, retry without it.
+    if best is None:
+        best = await _fetch_best_match(
+            session, _build_arxiv_query(source, with_author=False), source
+        )
+
+    return best
 
 
 async def _lookup_by_id(
@@ -118,15 +120,12 @@ async def _lookup_by_id(
     source: ParsedSource,
 ) -> MatchResult | None:
     """Fetch a single arXiv paper by its ID using the id_list parameter."""
-    try:
-        params = {"id_list": arxiv_id}
-        async with session.get(ARXIV_API, params=params) as resp:
-            if resp.status != 200:
-                return None
-            text = await resp.text()
-            return _parse_atom_response(text, source)
-    except Exception:
-        return None
+    params = {"id_list": arxiv_id}
+    async with session.get(ARXIV_API, params=params) as resp:
+        if resp.status != 200:
+            return None
+        text = await resp.text()
+        return _parse_atom_response(text, source)
 
 
 async def _fetch_best_match(
@@ -135,18 +134,15 @@ async def _fetch_best_match(
     source: ParsedSource,
 ) -> MatchResult | None:
     """Execute one arXiv title-search request and return the best match."""
-    try:
-        params = {
-            "search_query": search_query,
-            "max_results": "5",
-        }
-        async with session.get(ARXIV_API, params=params) as resp:
-            if resp.status != 200:
-                return None
-            text = await resp.text()
-            return _parse_atom_response(text, source)
-    except Exception:
-        return None
+    params = {
+        "search_query": search_query,
+        "max_results": "5",
+    }
+    async with session.get(ARXIV_API, params=params) as resp:
+        if resp.status != 200:
+            return None
+        text = await resp.text()
+        return _parse_atom_response(text, source)
 
 
 def _parse_atom_response(xml_text: str, source: ParsedSource) -> MatchResult | None:

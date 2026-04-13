@@ -8,7 +8,7 @@ import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from services.search_settings import get_client_timeout
+from verifiers._http import get_session
 
 TRDIZIN_API = "https://search.trdizin.gov.tr/api/defaultSearch/publication/"
 
@@ -28,25 +28,22 @@ async def search(source: ParsedSource) -> MatchResult | None:
 
     search_url = f"https://search.trdizin.gov.tr/tr/yayin/ara?q={quote(query, safe=',')}&order=relevance-DESC&page=1&limit=20"
 
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            async with session.get(TRDIZIN_API, params=params) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
+    session = get_session()
+    async with session.get(TRDIZIN_API, params=params) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
 
-                hits = data.get("hits", {}).get("hits", [])
-                if not hits:
-                    return None
+        hits = data.get("hits", {}).get("hits", [])
+        if not hits:
+            return None
 
-                best: MatchResult | None = None
-                for hit in hits[:5]:
-                    match = _hit_to_match(hit, source, search_url)
-                    if match and (best is None or match.score > best.score):
-                        best = match
-                return best
-    except Exception:
-        return None
+        best: MatchResult | None = None
+        for hit in hits[:5]:
+            match = _hit_to_match(hit, source, search_url)
+            if match and (best is None or match.score > best.score):
+                best = match
+        return best
 
 
 def _hit_to_match(hit: dict[str, Any], source: ParsedSource, search_url: str) -> MatchResult | None:

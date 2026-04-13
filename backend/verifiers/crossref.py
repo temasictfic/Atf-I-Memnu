@@ -9,7 +9,7 @@ import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from services.search_settings import get_client_timeout
+from verifiers._http import get_session
 
 CROSSREF_API = "https://api.crossref.org/works"
 HEADERS = {
@@ -22,17 +22,14 @@ async def search_by_doi(source: ParsedSource) -> MatchResult | None:
     if not source.doi:
         return None
 
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            url = f"{CROSSREF_API}/{quote(source.doi, safe='')}"
-            async with session.get(url, headers=HEADERS) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                item = data.get("message", {})
-                return _item_to_match(item, source)
-    except Exception:
-        return None
+    session = get_session()
+    url = f"{CROSSREF_API}/{quote(source.doi, safe='')}"
+    async with session.get(url, headers=HEADERS) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+        item = data.get("message", {})
+        return _item_to_match(item, source)
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
@@ -91,49 +88,46 @@ async def search(source: ParsedSource) -> MatchResult | None:
             f"from-pub-date:{source.year - 1},until-pub-date:{source.year + 1}"
         )
 
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            variants: list[dict[str, str]] = [params]
-            if "query.container-title" in params:
-                variants.append({k: v for k, v in params.items() if k != "query.container-title"})
-            if "query.author" in params:
-                variants.append({k: v for k, v in params.items() if k != "query.author"})
-            if "filter" in params:
-                variants.append({k: v for k, v in params.items() if k != "filter"})
-            if "query.author" in params and "filter" in params:
-                variants.append({
-                    k: v for k, v in params.items()
-                    if k not in {"query.author", "filter"}
-                })
-            if "query.container-title" in params and "filter" in params:
-                variants.append({
-                    k: v for k, v in params.items()
-                    if k not in {"query.container-title", "filter"}
-                })
-            if "query.container-title" in params and "query.author" in params:
-                variants.append({
-                    k: v for k, v in params.items()
-                    if k not in {"query.container-title", "query.author"}
-                })
-            if (
-                "query.container-title" in params
-                and "query.author" in params
-                and "filter" in params
-            ):
-                variants.append({
-                    k: v for k, v in params.items()
-                    if k not in {"query.container-title", "query.author", "filter"}
-                })
+    session = get_session()
+    variants: list[dict[str, str]] = [params]
+    if "query.container-title" in params:
+        variants.append({k: v for k, v in params.items() if k != "query.container-title"})
+    if "query.author" in params:
+        variants.append({k: v for k, v in params.items() if k != "query.author"})
+    if "filter" in params:
+        variants.append({k: v for k, v in params.items() if k != "filter"})
+    if "query.author" in params and "filter" in params:
+        variants.append({
+            k: v for k, v in params.items()
+            if k not in {"query.author", "filter"}
+        })
+    if "query.container-title" in params and "filter" in params:
+        variants.append({
+            k: v for k, v in params.items()
+            if k not in {"query.container-title", "filter"}
+        })
+    if "query.container-title" in params and "query.author" in params:
+        variants.append({
+            k: v for k, v in params.items()
+            if k not in {"query.container-title", "query.author"}
+        })
+    if (
+        "query.container-title" in params
+        and "query.author" in params
+        and "filter" in params
+    ):
+        variants.append({
+            k: v for k, v in params.items()
+            if k not in {"query.container-title", "query.author", "filter"}
+        })
 
-            best: MatchResult | None = None
-            for variant in variants:
-                result = await _fetch_best_match(session, variant, source)
-                if result and (best is None or result.score > best.score):
-                    best = result
+    best: MatchResult | None = None
+    for variant in variants:
+        result = await _fetch_best_match(session, variant, source)
+        if result and (best is None or result.score > best.score):
+            best = result
 
-            return best
-    except Exception:
-        return None
+    return best
 
 
 async def _fetch_best_match(
@@ -142,21 +136,18 @@ async def _fetch_best_match(
     source: ParsedSource,
 ) -> MatchResult | None:
     """Execute one Crossref API request and return the highest-scoring match."""
-    try:
-        async with session.get(CROSSREF_API, params=params, headers=HEADERS) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            items = data.get("message", {}).get("items", [])
+    async with session.get(CROSSREF_API, params=params, headers=HEADERS) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+        items = data.get("message", {}).get("items", [])
 
-            best: MatchResult | None = None
-            for item in items[:5]:
-                match = _item_to_match(item, source)
-                if match and (best is None or match.score > best.score):
-                    best = match
-            return best
-    except Exception:
-        return None
+        best: MatchResult | None = None
+        for item in items[:5]:
+            match = _item_to_match(item, source)
+            if match and (best is None or match.score > best.score):
+                best = match
+        return best
 
 
 def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | None:

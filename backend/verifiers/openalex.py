@@ -8,7 +8,7 @@ import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from services.search_settings import get_client_timeout
+from verifiers._http import get_session
 
 OPENALEX_API = "https://api.openalex.org/works"
 
@@ -39,19 +39,16 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
             f"to_publication_date:{source.year + 1}-12-31"
         )
 
-    try:
-        async with aiohttp.ClientSession(timeout=get_client_timeout()) as session:
-            best = await _fetch_best_match(session, params, source)
+    session = get_session()
+    best = await _fetch_best_match(session, params, source)
 
-            # If the year filter produced nothing (e.g. mis-parsed year),
-            # retry without it so we don't silently miss the correct paper.
-            if best is None and "filter" in params:
-                params_no_filter = {k: v for k, v in params.items() if k != "filter"}
-                best = await _fetch_best_match(session, params_no_filter, source)
+    # If the year filter produced nothing (e.g. mis-parsed year),
+    # retry without it so we don't silently miss the correct paper.
+    if best is None and "filter" in params:
+        params_no_filter = {k: v for k, v in params.items() if k != "filter"}
+        best = await _fetch_best_match(session, params_no_filter, source)
 
-            return best
-    except Exception:
-        return None
+    return best
 
 
 async def _fetch_best_match(
@@ -60,21 +57,18 @@ async def _fetch_best_match(
     source: ParsedSource,
 ) -> MatchResult | None:
     """Execute one OpenAlex request and return the highest-scoring match."""
-    try:
-        async with session.get(OPENALEX_API, params=params) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json()
-            results = data.get("results", [])
+    async with session.get(OPENALEX_API, params=params) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+        results = data.get("results", [])
 
-            best: MatchResult | None = None
-            for item in results[:5]:
-                match = _item_to_match(item, source)
-                if match and (best is None or match.score > best.score):
-                    best = match
-            return best
-    except Exception:
-        return None
+        best: MatchResult | None = None
+        for item in results[:5]:
+            match = _item_to_match(item, source)
+            if match and (best is None or match.score > best.score):
+                best = match
+        return best
 
 
 def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | None:
