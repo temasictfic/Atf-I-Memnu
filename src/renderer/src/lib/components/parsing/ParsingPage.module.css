@@ -7,6 +7,39 @@
 }
 .parsing-page:focus { outline: none; }
 
+/* Export-button success flash: green pulse for ~1.8 s after a
+   successful "Export PDF". The keyframes push background green in and
+   out with a subtle scale pop so the state change is obvious. */
+@keyframes export-success-pulse {
+  0% {
+    background: #22c55e;
+    color: #fff;
+    border-color: #16a34a;
+    transform: scale(1);
+  }
+  15% {
+    background: #22c55e;
+    color: #fff;
+    border-color: #16a34a;
+    transform: scale(1.04);
+  }
+  60% {
+    background: #22c55e;
+    color: #fff;
+    border-color: #16a34a;
+    transform: scale(1);
+  }
+  100% {
+    background: #dcfce7;
+    color: #16a34a;
+    border-color: #86efac;
+    transform: scale(1);
+  }
+}
+.export-success {
+  animation: export-success-pulse 1.8s ease-out forwards;
+}
+
 /* Shared panel styles */
 .panel-header {
   display: flex;
@@ -30,17 +63,71 @@
   color: #78716c;
   margin: 0;
 }
+.panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.panel-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  flex: 1;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #d6d3d1;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.panel-tab:hover {
+  color: #a8a29e;
+}
+.panel-tab-active {
+  color: #78716c;
+}
+.panel-tab-sep {
+  color: #d6d3d1;
+  font-weight: 400;
+  user-select: none;
+}
 .title-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  height: 28px;
+  box-sizing: border-box;
   font-size: 11px;
   font-weight: 600;
   color: #d97706;
   background: #fef3c7;
   padding: 1px 7px;
-  border-radius: 10px;
+  border: 1px solid #d97706;
+  border-radius: 4px;
   margin-left: 6px;
   letter-spacing: 0;
   text-transform: none;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.title-count[role="button"] {
+  cursor: pointer;
+  user-select: none;
+}
+.title-count[role="button"]:hover {
+  background: #d97706;
+  color: #fef3c7;
 }
 
 /* Left panel */
@@ -397,8 +484,9 @@
   font-size: 11px;
   font-weight: 600;
   color: #78716c;
-  min-width: 40px;
+  min-width: 44px;
   text-align: center;
+  cursor: pointer;
 }
 
 .viewer-content {

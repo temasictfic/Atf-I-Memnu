@@ -24,23 +24,35 @@ import {
   clearSourcesForPdf,
   mergeWithClosest,
 } from "../../stores/sources-store";
-import { clearVerificationForPdf } from "../../stores/verification-store";
+import {
+  clearVerificationForPdf,
+  useVerificationStore,
+} from "../../stores/verification-store";
 import type { SourceRectangle, PageData, ParsedSource } from "../../api/types";
 import { api } from "../../api/rest-client";
 import { extractTextInBbox } from "../../pdf/extract-text";
 import { getOrLoadDocument } from "../../pdf/document-cache";
 import {
   addNote,
+  beginNoteEdit,
   getNotes,
   removeNote,
+  resetNotes,
+  revertNotes,
   setActiveColor,
   setActiveKind,
+  setCalloutBold,
+  setCalloutFontSize,
+  setCalloutOpacity,
+  setCalloutTextColor,
   updateNote,
   useNotesStore,
   DEFAULT_CALLOUT_FONT_SIZE,
+  DEFAULT_CALLOUT_TEXT_COLOR,
   CALLOUT_FONT_SIZE_MIN,
   CALLOUT_FONT_SIZE_MAX,
 } from "../../stores/notes-store";
+import { generateAutoNotesForPdf } from "../../notes/auto-notes";
 import { useSettingsStore } from "../../stores/settings-store";
 import { NotesLayer } from "./NotesLayer";
 import { PdfPageCanvas } from "./PdfPageCanvas";
@@ -107,12 +119,96 @@ export default function ParsingPage() {
   const notesByPdf = useNotesStore((s) => s.notesByPdf);
   const activeNoteKind = useNotesStore((s) => s.activeKind);
   const activeNoteColor = useNotesStore((s) => s.activeColor);
+  const calloutOpacity = useNotesStore((s) => s.calloutOpacity);
+  const calloutTextColor = useNotesStore((s) => s.calloutTextColor);
+  const calloutDefaultFontSize = useNotesStore((s) => s.calloutFontSize);
+  const calloutDefaultBold = useNotesStore((s) => s.calloutBold);
   const notes = useMemo(
     () => (selectedPdfId ? (notesByPdf[selectedPdfId] ?? []) : []),
     [notesByPdf, selectedPdfId],
   );
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  // Bumped every time the user clicks a note (even re-clicks the same one),
+  // so the focus effect below re-runs and returns focus to the text editor.
+  const [noteFocusNonce, setNoteFocusNonce] = useState(0);
   const [exportingPdf, setExportingPdf] = useState(false);
+  // Transient success flag — set for ~1.8 s after a successful export so
+  // the Export PDF button can pulse a confirmation.
+  const [exportSuccess, setExportSuccess] = useState(false);
+  const noteEditorRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const handleSelectNote = useCallback((id: string) => {
+    setSelectedNoteId(id);
+    setNoteFocusNonce((n) => n + 1);
+    // Switch the right-panel tool to match the clicked note's kind so
+    // the "Highlight" / "Callout" sub-tabs, the default color, and the
+    // callout-only controls all reflect what the user just selected.
+    const s = useNotesStore.getState();
+    const pdfId = usePdfStore.getState().selectedPdfId;
+    if (!pdfId) return;
+    const note = s.notesByPdf[pdfId]?.find((n) => n.id === id);
+    if (!note) return;
+    if (s.activeKind !== note.kind) {
+      setActiveKind(note.kind);
+    }
+  }, []);
+
+  // Focus the callout text editor whenever a callout becomes selected (or
+  // the user re-clicks the same one). Highlights have no text editor, so
+  // they never steal focus. The textarea doesn't exist until after the
+  // next render, so the effect runs in post-commit.
+  useEffect(() => {
+    if (!selectedNoteId) return;
+    const note = notesByPdf[selectedPdfId ?? ""]?.find(
+      (n) => n.id === selectedNoteId,
+    );
+    if (note?.kind !== "callout") return;
+    noteEditorRef.current?.focus();
+  }, [noteFocusNonce, selectedNoteId, notesByPdf, selectedPdfId]);
+
+  // Document-level Delete handler for notes. Runs in the capture phase
+  // so we intercept the key *before* the callout textarea performs its
+  // forward-delete on a character, and call preventDefault. Only armed
+  // while Notes mode is active so it doesn't hijack Delete elsewhere.
+  //
+  // Del = remove the selected note entirely, even while typing in the
+  // callout text editor. Backspace is not intercepted, so it keeps
+  // working as a per-character delete inside the textarea.
+  useEffect(() => {
+    if (!selectedPdfId || !selectedNoteId || activeNoteKind === null) return;
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Delete") return;
+      e.preventDefault();
+      beginNoteEdit(selectedPdfId);
+      removeNote(selectedPdfId, selectedNoteId);
+      setSelectedNoteId(null);
+    };
+    document.addEventListener("keydown", onDocKeyDown, true);
+    return () =>
+      document.removeEventListener("keydown", onDocKeyDown, true);
+  }, [selectedPdfId, selectedNoteId, activeNoteKind]);
+
+  // Blur the note text editor when the user clicks anywhere that isn't
+  // the note's own element or the editor itself. Runs in the capture
+  // phase so React handlers calling stopPropagation on mousedown (e.g.
+  // NotesLayer draw/drag gestures) can't suppress it. The click still
+  // bubbles through normal handlers, which re-select the note and the
+  // focus-on-select effect above refocuses the textarea.
+  useEffect(() => {
+    if (!selectedNoteId) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const editor = noteEditorRef.current;
+      if (editor && editor.contains(target)) return;
+      // Data-attribute set on the rendered note element in NotesLayer.
+      if (target.closest(`[data-note-id="${selectedNoteId}"]`)) return;
+      if (editor && document.activeElement === editor) editor.blur();
+    };
+    document.addEventListener("mousedown", onDocMouseDown, true);
+    return () =>
+      document.removeEventListener("mousedown", onDocMouseDown, true);
+  }, [selectedNoteId]);
 
   const selectedPdf = useMemo(
     () => allPdfs.find((p) => p.id === selectedPdfId),
@@ -122,11 +218,25 @@ export default function ParsingPage() {
     () => (selectedPdfId ? (sourcesByPdf[selectedPdfId] ?? []) : []),
     [sourcesByPdf, selectedPdfId],
   );
-  const canRevertCurrent = useMemo(() => {
+  const notesHistoryByPdf = useNotesStore((s) => s.notesHistoryByPdf);
+  const canRevertSources = useMemo(() => {
     if (!selectedPdfId) return false;
     const h = historyByPdf[selectedPdfId];
     return h ? h.length > 0 : false;
   }, [historyByPdf, selectedPdfId]);
+  const canRevertNotesForCurrent = useMemo(() => {
+    if (!selectedPdfId) return false;
+    const h = notesHistoryByPdf[selectedPdfId];
+    return h ? h.length > 0 : false;
+  }, [notesHistoryByPdf, selectedPdfId]);
+  // Which history the Undo/Reset buttons act on depends on the active
+  // right-panel tab: Notes mode → notes history, Source Detail → sources.
+  const canRevertCurrent =
+    activeNoteKind !== null ? canRevertNotesForCurrent : canRevertSources;
+  const canResetCurrent =
+    activeNoteKind !== null
+      ? (selectedPdfId ? (notesByPdf[selectedPdfId]?.length ?? 0) > 0 : false)
+      : sources.length > 0;
   const isApproved = selectedPdf?.status === "approved";
 
   // Local state
@@ -470,6 +580,28 @@ export default function ParsingPage() {
     await toggleApproval(selectedPdfId);
   }
 
+  async function handleToggleAllApproval() {
+    const pdfs = usePdfStore
+      .getState()
+      .pdfs.filter((p) => p.status !== "pending" && p.status !== "parsing");
+    if (pdfs.length === 0) return;
+    // If every eligible PDF is already approved, unapprove them all.
+    // Otherwise approve every eligible PDF that isn't already approved.
+    const allApproved = pdfs.every((p) => p.status === "approved");
+    const targets = allApproved
+      ? pdfs
+      : pdfs.filter((p) => p.status !== "approved");
+    // Run sequentially — toggleApproval writes to the sources store per PDF,
+    // and parallel execution could race on the save endpoint.
+    for (const pdf of targets) {
+      try {
+        await toggleApproval(pdf.id);
+      } catch (err) {
+        console.error(`Failed to toggle approval for ${pdf.id}:`, err);
+      }
+    }
+  }
+
   async function toggleApproval(pdfId: string) {
     const pdf = usePdfStore.getState().pdfs.find((p) => p.id === pdfId);
     if (!pdf || pdf.status === "pending" || pdf.status === "parsing") return;
@@ -495,6 +627,13 @@ export default function ParsingPage() {
   function handleRevert() {
     if (!selectedPdfId) return;
     const pdfId = selectedPdfId;
+    // In Notes mode Undo pops the notes-history stack; otherwise it undoes
+    // the last source-rectangle edit (and triggers a save).
+    if (activeNoteKind !== null) {
+      revertNotes(pdfId);
+      setSelectedNoteId(null);
+      return;
+    }
     revert(pdfId);
     void saveSources(pdfId).catch((err) => {
       console.error("Undo save failed:", err);
@@ -503,6 +642,13 @@ export default function ParsingPage() {
 
   async function handleRevertToOriginal() {
     if (!selectedPdfId) return;
+    // Reset in Notes mode clears every note for the PDF (undoable via
+    // Undo); otherwise falls back to the sources "revert to original".
+    if (activeNoteKind !== null) {
+      resetNotes(selectedPdfId);
+      setSelectedNoteId(null);
+      return;
+    }
     await revertToOriginal(selectedPdfId);
     setSelectedSourceId(null);
   }
@@ -602,120 +748,85 @@ export default function ParsingPage() {
     }
   }, [scale]);
 
-  // Notes: highlight creation from text selection.
-  //
-  // Listens for pointerup anywhere on the viewer; if a non-collapsed selection
-  // exists, walks its client rects, groups them by which page the rect lies
-  // in, converts screen coords into page-local pixel coords (SCALE space),
-  // and creates one highlight note per page with `quads` for each line.
-  useEffect(() => {
-    if (activeNoteKind !== "highlight") return;
-    const container = viewerRef.current;
-    if (!container || !selectedPdfId || !pdfDoc) return;
-
-    function handlePointerUp() {
-      if (!selectedPdfId || !container) return;
-      const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
-      const range = selection.getRangeAt(0);
-      const clientRects = Array.from(range.getClientRects()).filter(
-        (r) => r.width > 1 && r.height > 1,
-      );
-      if (clientRects.length === 0) return;
-
-      // Each page wrapper is tagged with data-page-num via the PDF render loop.
-      const pageEls = Array.from(
-        container.querySelectorAll<HTMLElement>("[data-page-num]"),
-      );
-      if (pageEls.length === 0) return;
-
-      interface PageHit {
-        pageNum: number;
-        quads: { x0: number; y0: number; x1: number; y1: number }[];
-      }
-      const byPage = new Map<number, PageHit>();
-
-      for (const rect of clientRects) {
-        // Find the topmost page element whose bounding rect contains this rect's center.
-        const cx = rect.left + rect.width / 2;
-        const cy = rect.top + rect.height / 2;
-        let hostEl: HTMLElement | null = null;
-        for (const el of pageEls) {
-          const r = el.getBoundingClientRect();
-          if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) {
-            hostEl = el;
-            break;
-          }
-        }
-        if (!hostEl) continue;
-        const pageNum = Number(hostEl.dataset.pageNum);
-        if (Number.isNaN(pageNum)) continue;
-        const hostRect = hostEl.getBoundingClientRect();
-        // The page wrapper is sized `page.width * scale` × `page.height * scale`
-        // (see render loop), so dividing client-space coords by the current
-        // scale yields pixel coords in SCALE space — the same coordinate
-        // space used by SourceRectangle bboxes and stored notes.
-        const quad = {
-          x0: (rect.left - hostRect.left) / scaleRef.current,
-          y0: (rect.top - hostRect.top) / scaleRef.current,
-          x1: (rect.right - hostRect.left) / scaleRef.current,
-          y1: (rect.bottom - hostRect.top) / scaleRef.current,
-        };
-        const existing = byPage.get(pageNum);
-        if (existing) existing.quads.push(quad);
-        else byPage.set(pageNum, { pageNum, quads: [quad] });
-      }
-
-      for (const hit of byPage.values()) {
-        const bbox = hit.quads.reduce(
-          (acc, q) => ({
-            x0: Math.min(acc.x0, q.x0),
-            y0: Math.min(acc.y0, q.y0),
-            x1: Math.max(acc.x1, q.x1),
-            y1: Math.max(acc.y1, q.y1),
-          }),
-          hit.quads[0],
-        );
-        const text = selection.toString().trim();
-        addNote({
-          pdfId: selectedPdfId,
-          pageNum: hit.pageNum,
-          kind: "highlight",
-          bbox,
-          quads: hit.quads,
-          text,
-          color: useNotesStore.getState().activeColor,
-        });
-      }
-
-      selection.removeAllRanges();
+  // Shared handler for the main color picker + preset swatches: updates
+  // the persisted per-kind default AND, when a note is selected, that
+  // note's own color (snapshotting history first so Undo reverts both).
+  function applyColorChoice(color: string) {
+    setActiveColor(color);
+    if (
+      selectedPdfId &&
+      selectedNote &&
+      ((activeNoteKind === "highlight" && selectedNote.kind === "highlight") ||
+        (activeNoteKind === "callout" && selectedNote.kind === "callout"))
+    ) {
+      beginNoteEdit(selectedPdfId);
+      updateNote(selectedPdfId, selectedNote.id, { color });
     }
+  }
 
-    container.addEventListener("pointerup", handlePointerUp);
-    return () => container.removeEventListener("pointerup", handlePointerUp);
-  }, [activeNoteKind, selectedPdfId, pdfDoc]);
+  function handleCreateHighlight(
+    pageNum: number,
+    bbox: { x0: number; y0: number; x1: number; y1: number },
+  ) {
+    if (!selectedPdfId) return;
+    beginNoteEdit(selectedPdfId);
+    const s = useNotesStore.getState();
+    const note = addNote({
+      pdfId: selectedPdfId,
+      pageNum,
+      kind: "highlight",
+      bbox,
+      text: "",
+      color: s.highlightColor,
+    });
+    setSelectedNoteId(note.id);
+  }
 
   function handleCreateCallout(
     pageNum: number,
     bbox: { x0: number; y0: number; x1: number; y1: number },
   ) {
     if (!selectedPdfId) return;
-    // Create the callout with empty text and auto-select it so the inline
-    // editor in the toolbar focuses. Electron disables window.prompt(),
-    // so the editing UX lives in-page.
+    beginNoteEdit(selectedPdfId);
+    // Seed the callout with the user's persisted defaults (color, text
+    // color, size, bold). The text starts empty — selecting the note
+    // focuses the inline editor.
+    const s = useNotesStore.getState();
     const note = addNote({
       pdfId: selectedPdfId,
       pageNum,
       kind: "callout",
       bbox,
       text: "",
-      color: useNotesStore.getState().activeColor,
+      color: s.calloutColor,
+      textColor: s.calloutTextColor,
+      fontSize: s.calloutFontSize,
+      bold: s.calloutBold,
     });
     setSelectedNoteId(note.id);
   }
 
+  function handleAutoAnnotate() {
+    if (!selectedPdfId) return;
+    beginNoteEdit(selectedPdfId);
+    const results =
+      useVerificationStore.getState().resultsByPdf[selectedPdfId] ?? {};
+    const stats = generateAutoNotesForPdf({
+      pdfId: selectedPdfId,
+      sources,
+      resultsBySourceId: results,
+      pageHeightFor: (pageNum) => pages[pageNum]?.height ?? 0,
+    });
+    if (stats.highlightsAdded === 0 && stats.calloutsAdded === 0) {
+      window.alert(
+        "No non-Found references to annotate.",
+      );
+    }
+  }
+
   function handleDeleteSelectedNote() {
     if (!selectedPdfId || !selectedNoteId) return;
+    beginNoteEdit(selectedPdfId);
     removeNote(selectedPdfId, selectedNoteId);
     setSelectedNoteId(null);
   }
@@ -761,8 +872,13 @@ export default function ParsingPage() {
       const bytes = await window.electronAPI.readPdfFile(localPath);
       // Lazy-load pdf-lib + fontkit (~1.2 MB) only on first export.
       const { writeNotesToPdf } = await import("../../pdf/annotation-writer");
-      const annotated = await writeNotesToPdf(bytes, pdfNotes);
+      const annotated = await writeNotesToPdf(bytes, pdfNotes, {
+        calloutOpacity: useNotesStore.getState().calloutOpacity,
+      });
       await window.electronAPI.writePdfFile(target, annotated);
+      // Flash a success state on the Export button for ~1.8 s.
+      setExportSuccess(true);
+      window.setTimeout(() => setExportSuccess(false), 1800);
     } catch (err) {
       console.error("[ParsingPage] annotated PDF export failed:", err);
       window.alert(
@@ -1044,7 +1160,15 @@ export default function ParsingPage() {
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Delete" && selectedSourceId && selectedPdfId) {
+    // Don't hijack keys while the user is typing in a text field
+    // (e.g. the callout text editor or source detail inputs).
+    const target = e.target as HTMLElement | null;
+    const isEditable =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      (target?.isContentEditable ?? false);
+
+    if (e.key === "Delete" && !isEditable && selectedSourceId && selectedPdfId) {
       handleRemoveSource(selectedSourceId);
     }
     if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
@@ -1124,12 +1248,44 @@ export default function ParsingPage() {
         <div className={styles["panel-header"]}>
           <h2 className={styles["panel-title"]}>
             Documents
-            {allPdfs.length > 0 && (
-              <span className={styles["title-count"]}>
-                {allPdfs.filter((p) => p.status === "approved").length} /{" "}
-                {allPdfs.length}
-              </span>
-            )}
+            {allPdfs.length > 0 && (() => {
+              const eligible = allPdfs.filter(
+                (p) => p.status !== "pending" && p.status !== "parsing",
+              );
+              const approvedCount = allPdfs.filter(
+                (p) => p.status === "approved",
+              ).length;
+              const allEligibleApproved =
+                eligible.length > 0 &&
+                eligible.every((p) => p.status === "approved");
+              return (
+                <span
+                  className={styles["title-count"]}
+                  role="button"
+                  tabIndex={eligible.length === 0 ? -1 : 0}
+                  onClick={() => {
+                    if (eligible.length === 0) return;
+                    void handleToggleAllApproval();
+                  }}
+                  onKeyDown={(e) => {
+                    if (eligible.length === 0) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      void handleToggleAllApproval();
+                    }
+                  }}
+                  title={
+                    eligible.length === 0
+                      ? "No PDFs ready to approve yet"
+                      : allEligibleApproved
+                        ? "Unapprove all"
+                        : "Approve all"
+                  }
+                >
+                  {approvedCount} / {allPdfs.length}
+                </span>
+              );
+            })()}
           </h2>
           <button
             className={styles["import-btn"]}
@@ -1282,8 +1438,12 @@ export default function ParsingPage() {
                 <button
                   className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
                   onClick={handleRevertToOriginal}
-                  disabled={!sources.length}
-                  title="Reset"
+                  disabled={!canResetCurrent}
+                  title={
+                    activeNoteKind !== null
+                      ? "Clear all notes"
+                      : "Reset"
+                  }
                 >
                   &#x21BA; Reset
                 </button>
@@ -1292,20 +1452,20 @@ export default function ParsingPage() {
               <div className={styles["toolbar-group-center"]}>
                 <div className={styles["zoom-controls"]}>
                   <button
-                    className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
-                    onClick={zoomFit}
-                    title="Fit to width"
-                  >
-                    Fit
-                  </button>
-                  <button
                     className={styles["zoom-btn"]}
                     onClick={zoomOut}
                     title="Zoom out"
                   >
                     -
                   </button>
-                  <span className={styles["zoom-pct"]}>{zoomPercent}%</span>
+                  <button
+                    className={`${styles["zoom-btn"]} ${styles["zoom-pct"]}`}
+                    onClick={zoomFit}
+                    title="Fit to width"
+                    aria-label="Fit to width"
+                  >
+                    {zoomPercent}%
+                  </button>
                   <button
                     className={styles["zoom-btn"]}
                     onClick={zoomIn}
@@ -1313,54 +1473,39 @@ export default function ParsingPage() {
                   >
                     +
                   </button>
-                  <div className={styles["hints-trigger"]}>
-                    <span className={styles["hints-icon"]}>i</span>
-                    <div className={styles["hints-popup"]}>
-                      <div className={styles["hint-row"]}>
-                        <span className={styles["hint-keys"]}>Left click</span>
-                        <span className={styles["hint-desc"]}>Select / Move</span>
-                      </div>
-                      <div className={styles["hint-row"]}>
-                        <span className={styles["hint-keys"]}>Right hold</span>
-                        <span className={styles["hint-desc"]}>Draw new</span>
-                      </div>
-                      <div className={styles["hint-row"]}>
-                        <span className={styles["hint-keys"]}>Del</span>
-                        <span className={styles["hint-desc"]}>Remove source</span>
-                      </div>
-                      <div className={styles["hint-row"]}>
-                        <span className={styles["hint-keys"]}>Space</span>
-                        <span className={styles["hint-desc"]}>Merge with closest</span>
-                      </div>
-                      <div className={styles["hint-row"]}>
-                        <span className={styles["hint-keys"]}>Ctrl + Z</span>
-                        <span className={styles["hint-desc"]}>Undo</span>
-                      </div>
-                      <div className={styles["hint-row"]}>
-                        <span className={styles["hint-keys"]}>Ctrl + Scroll</span>
-                        <span className={styles["hint-desc"]}>Zoom</span>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
 
               <div className={styles["toolbar-group-right"]}>
-                <button
-                  className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
-                  onClick={() =>
-                    setActiveKind(activeNoteKind === null ? "highlight" : null)
-                  }
-                  style={
-                    activeNoteKind !== null
-                      ? { background: activeNoteColor }
-                      : undefined
-                  }
-                  disabled={!pdfDoc}
-                  title="Toggle notes mode"
-                >
-                  Notes{notes.length > 0 ? ` (${notes.length})` : ""}
-                </button>
+                <div className={styles["hints-trigger"]}>
+                  <span className={styles["hints-icon"]}>i</span>
+                  <div className={styles["hints-popup"]}>
+                    <div className={styles["hint-row"]}>
+                      <span className={styles["hint-keys"]}>Left click</span>
+                      <span className={styles["hint-desc"]}>Select / Move</span>
+                    </div>
+                    <div className={styles["hint-row"]}>
+                      <span className={styles["hint-keys"]}>Right hold</span>
+                      <span className={styles["hint-desc"]}>Draw new</span>
+                    </div>
+                    <div className={styles["hint-row"]}>
+                      <span className={styles["hint-keys"]}>Del</span>
+                      <span className={styles["hint-desc"]}>Remove source</span>
+                    </div>
+                    <div className={styles["hint-row"]}>
+                      <span className={styles["hint-keys"]}>Space</span>
+                      <span className={styles["hint-desc"]}>Merge with closest</span>
+                    </div>
+                    <div className={styles["hint-row"]}>
+                      <span className={styles["hint-keys"]}>Ctrl + Z</span>
+                      <span className={styles["hint-desc"]}>Undo</span>
+                    </div>
+                    <div className={styles["hint-row"]}>
+                      <span className={styles["hint-keys"]}>Ctrl + Scroll</span>
+                      <span className={styles["hint-desc"]}>Zoom</span>
+                    </div>
+                  </div>
+                </div>
                 <button
                   className={`${styles["toolbar-approve-btn"]} ${isApproved ? styles["toolbar-approved"] : ""}`}
                   onClick={handleApprove}
@@ -1441,8 +1586,25 @@ export default function ParsingPage() {
                           onCreateCallout={(bbox) =>
                             handleCreateCallout(page.page_num, bbox)
                           }
-                          onSelectNote={setSelectedNoteId}
+                          onCreateHighlight={(bbox) =>
+                            handleCreateHighlight(page.page_num, bbox)
+                          }
+                          onSelectNote={handleSelectNote}
                           selectedNoteId={selectedNoteId}
+                          onUpdateNoteBbox={(noteId, bbox) => {
+                            if (!selectedPdfId) return;
+                            updateNote(selectedPdfId, noteId, { bbox });
+                          }}
+                          onMoveNoteToPage={(noteId, pageNum, bbox) => {
+                            if (!selectedPdfId) return;
+                            updateNote(selectedPdfId, noteId, {
+                              pageNum,
+                              bbox,
+                            });
+                          }}
+                          onBeginNoteEdit={() => {
+                            if (selectedPdfId) beginNoteEdit(selectedPdfId);
+                          }}
                         />
                       </div>
                     )}
@@ -1541,9 +1703,27 @@ export default function ParsingPage() {
         {selectedPdf && activeNoteKind !== null ? (
           <>
             <div className={styles["panel-header"]}>
-              <h2 className={styles["panel-title"]}>
-                Notes{notes.length > 0 ? ` (${notes.length})` : ""}
-              </h2>
+              <div className={styles["source-detail-heading"]}>
+                <div className={styles["panel-tabs"]}>
+                  <button
+                    type="button"
+                    className={`${styles["panel-tab"]}`}
+                    onClick={() => setActiveKind(null)}
+                    title="Show source detail"
+                  >
+                    Source Detail
+                  </button>
+                  <span className={styles["panel-tab-sep"]}>|</span>
+                  <button
+                    type="button"
+                    className={`${styles["panel-tab"]} ${styles["panel-tab-active"]}`}
+                    onClick={() => setActiveKind("highlight")}
+                    title="Show notes"
+                  >
+                    Notes{notes.length > 0 ? ` (${notes.length})` : ""}
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div
@@ -1560,7 +1740,7 @@ export default function ParsingPage() {
                     background:
                       activeNoteKind === "highlight" ? activeNoteColor : undefined,
                   }}
-                  title="Highlight: select text to create"
+                  title="Highlight: drag a box to create"
                 >
                   Highlight
                 </button>
@@ -1590,7 +1770,7 @@ export default function ParsingPage() {
                 <input
                   type="color"
                   value={activeNoteColor}
-                  onChange={(e) => setActiveColor(e.target.value)}
+                  onChange={(e) => applyColorChoice(e.target.value)}
                   title="Note color"
                   style={{
                     width: 32,
@@ -1600,11 +1780,19 @@ export default function ParsingPage() {
                     padding: 0,
                   }}
                 />
-                {["#fde68a", "#a7f3d0", "#bae6fd", "#fbcfe8", "#fed7aa"].map(
+                {[
+                  "#fde68a",
+                  "#a7f3d0",
+                  "#bae6fd",
+                  "#fbcfe8",
+                  "#fed7aa",
+                  "#ddd6fe",
+                  "#fecaca",
+                ].map(
                   (swatch) => (
                     <button
                       key={swatch}
-                      onClick={() => setActiveColor(swatch)}
+                      onClick={() => applyColorChoice(swatch)}
                       title={swatch}
                       style={{
                         width: 20,
@@ -1622,6 +1810,174 @@ export default function ParsingPage() {
                 )}
               </div>
 
+              {/* Callout background opacity — applies to every callout
+                  (manual + auto-generated) in the overlay and in the
+                  exported PDF. */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 11,
+                  color: "#52525b",
+                }}
+                title="Callout background opacity"
+              >
+                <span>Opacity</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.round(calloutOpacity * 100)}
+                  onChange={(e) =>
+                    setCalloutOpacity(Number(e.target.value) / 100)
+                  }
+                  aria-label="Callout opacity"
+                  style={{
+                    flex: 1,
+                    accentColor: activeNoteColor,
+                  }}
+                />
+                <span
+                  style={{
+                    minWidth: 32,
+                    textAlign: "right",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {Math.round(calloutOpacity * 100)}%
+                </span>
+              </div>
+
+              {/* Callout typography defaults: text color, font size,
+                  bold. Changes persist in the store AND are applied to
+                  any currently-selected callout so the user sees the
+                  effect immediately. */}
+              {activeNoteKind === "callout" && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 11,
+                    color: "#52525b",
+                  }}
+                >
+                  <label
+                    style={{ display: "flex", alignItems: "center", gap: 4 }}
+                    title="Callout text color"
+                  >
+                    <span>Text</span>
+                    <input
+                      type="color"
+                      value={calloutTextColor}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setCalloutTextColor(next);
+                        if (
+                          selectedPdfId &&
+                          selectedNote &&
+                          selectedNote.kind === "callout"
+                        ) {
+                          beginNoteEdit(selectedPdfId);
+                          updateNote(selectedPdfId, selectedNote.id, {
+                            textColor: next,
+                          });
+                        }
+                      }}
+                      style={{
+                        width: 28,
+                        height: 20,
+                        border: "1px solid #d4d4d8",
+                        background: "transparent",
+                        padding: 0,
+                      }}
+                    />
+                  </label>
+                  <label
+                    style={{ display: "flex", alignItems: "center", gap: 4 }}
+                    title="Callout font size"
+                  >
+                    <span>Size</span>
+                    <input
+                      type="number"
+                      min={CALLOUT_FONT_SIZE_MIN}
+                      max={CALLOUT_FONT_SIZE_MAX}
+                      value={calloutDefaultFontSize}
+                      onChange={(e) => {
+                        const next = Math.max(
+                          CALLOUT_FONT_SIZE_MIN,
+                          Math.min(
+                            CALLOUT_FONT_SIZE_MAX,
+                            Number(e.target.value) || DEFAULT_CALLOUT_FONT_SIZE,
+                          ),
+                        );
+                        setCalloutFontSize(next);
+                        if (
+                          selectedPdfId &&
+                          selectedNote &&
+                          selectedNote.kind === "callout"
+                        ) {
+                          beginNoteEdit(selectedPdfId);
+                          updateNote(selectedPdfId, selectedNote.id, {
+                            fontSize: next,
+                          });
+                        }
+                      }}
+                      style={{
+                        width: 44,
+                        padding: "2px 4px",
+                        border: "1px solid #d4d4d8",
+                        borderRadius: 4,
+                        fontSize: 12,
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !calloutDefaultBold;
+                      setCalloutBold(next);
+                      if (
+                        selectedPdfId &&
+                        selectedNote &&
+                        selectedNote.kind === "callout"
+                      ) {
+                        beginNoteEdit(selectedPdfId);
+                        updateNote(selectedPdfId, selectedNote.id, {
+                          bold: next,
+                        });
+                      }
+                    }}
+                    title="Toggle bold"
+                    style={{
+                      padding: "2px 10px",
+                      border: "1px solid #d4d4d8",
+                      borderRadius: 4,
+                      background: calloutDefaultBold ? "#1f2937" : "#fff",
+                      color: calloutDefaultBold ? "#fff" : "#111",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    B
+                  </button>
+                </div>
+              )}
+
+              {/* Auto-annotate Not Found + Problematic references. Creates
+                  a highlight over each matching reference and a Turkish
+                  explanation callout directly below it. Idempotent — runs
+                  twice produce the same set of notes. */}
+              <button
+                className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                onClick={handleAutoAnnotate}
+                disabled={!selectedPdfId || sources.length === 0}
+                title="Highlight every Not Found and Problematic reference and add a Turkish explanation callout below each"
+              >
+                Auto-annotate non-Found
+              </button>
+
               {/* Selected-note inline editor */}
               {selectedNote ? (
                 <div
@@ -1638,95 +1994,30 @@ export default function ParsingPage() {
                     {selectedNote.kind === "callout" ? "Callout" : "Highlight"}{" "}
                     · Page {selectedNote.pageNum + 1}
                   </span>
-                  <textarea
-                    value={selectedNote.text}
-                    onChange={(e) =>
-                      handleUpdateSelectedNoteText(e.target.value)
-                    }
-                    placeholder={
-                      selectedNote.kind === "callout"
-                        ? "Callout text (Enter for new line)…"
-                        : "Optional comment…"
-                    }
-                    autoFocus
-                    rows={4}
-                    style={{
-                      padding: "4px 8px",
-                      border: "1px solid #d4d4d8",
-                      borderRadius: 4,
-                      fontSize: 12,
-                      resize: "vertical",
-                      fontFamily: "inherit",
-                      whiteSpace: "pre-wrap",
-                    }}
-                  />
-                  {selectedNote.kind === "callout" && selectedPdfId && (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        fontSize: 11,
+                  {selectedNote.kind === "callout" && (
+                    <textarea
+                      value={selectedNote.text}
+                      onChange={(e) =>
+                        handleUpdateSelectedNoteText(e.target.value)
+                      }
+                      onFocus={() => {
+                        // Snapshot once per edit session so Ctrl+Z
+                        // undoes the whole typing burst (not per-key).
+                        if (selectedPdfId) beginNoteEdit(selectedPdfId);
                       }}
-                    >
-                      <label
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 4,
-                          color: "#71717a",
-                        }}
-                      >
-                        Size
-                        <input
-                          type="number"
-                          min={CALLOUT_FONT_SIZE_MIN}
-                          max={CALLOUT_FONT_SIZE_MAX}
-                          value={
-                            selectedNote.fontSize ?? DEFAULT_CALLOUT_FONT_SIZE
-                          }
-                          onChange={(e) => {
-                            const next = Math.max(
-                              CALLOUT_FONT_SIZE_MIN,
-                              Math.min(
-                                CALLOUT_FONT_SIZE_MAX,
-                                Number(e.target.value) ||
-                                  DEFAULT_CALLOUT_FONT_SIZE,
-                              ),
-                            );
-                            updateNote(selectedPdfId, selectedNote.id, {
-                              fontSize: next,
-                            });
-                          }}
-                          style={{
-                            width: 48,
-                            padding: "2px 4px",
-                            border: "1px solid #d4d4d8",
-                            borderRadius: 4,
-                            fontSize: 12,
-                          }}
-                        />
-                      </label>
-                      <button
-                        onClick={() =>
-                          updateNote(selectedPdfId, selectedNote.id, {
-                            bold: !selectedNote.bold,
-                          })
-                        }
-                        title="Toggle bold"
-                        style={{
-                          padding: "2px 8px",
-                          border: "1px solid #d4d4d8",
-                          borderRadius: 4,
-                          background: selectedNote.bold ? "#1f2937" : "#fff",
-                          color: selectedNote.bold ? "#fff" : "#111",
-                          fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >
-                        B
-                      </button>
-                    </div>
+                      placeholder="Callout text (Enter for new line)…"
+                      ref={noteEditorRef}
+                      rows={4}
+                      style={{
+                        padding: "4px 8px",
+                        border: "1px solid #d4d4d8",
+                        borderRadius: 4,
+                        fontSize: 12,
+                        resize: "vertical",
+                        fontFamily: "inherit",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    />
                   )}
                   <button
                     className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
@@ -1738,20 +2029,24 @@ export default function ParsingPage() {
               ) : (
                 <span style={{ color: "#a8a29e", fontSize: 12 }}>
                   {activeNoteKind === "highlight"
-                    ? "Select text to highlight."
+                    ? "Drag a box to highlight."
                     : "Drag a box to place a callout."}
                 </span>
               )}
 
               {/* Export */}
               <button
-                className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                className={`${styles["zoom-btn"]} ${styles["zoom-text"]} ${exportSuccess ? styles["export-success"] : ""}`}
                 onClick={handleExportAnnotatedPdf}
                 disabled={exportingPdf || notes.length === 0 || !pdfDoc}
                 title="Save a copy of the PDF with notes baked in"
                 style={{ marginTop: "auto" }}
               >
-                {exportingPdf ? "Exporting…" : "Export PDF"}
+                {exportingPdf
+                  ? "Exporting…"
+                  : exportSuccess
+                    ? "\u2713 Exported"
+                    : "Export PDF"}
               </button>
             </div>
           </>
@@ -1759,7 +2054,26 @@ export default function ParsingPage() {
           <>
             <div className={styles["panel-header"]}>
               <div className={styles["source-detail-heading"]}>
-                <h2 className={styles["panel-title"]}>Source Detail</h2>
+                <div className={styles["panel-tabs"]}>
+                  <button
+                    type="button"
+                    className={`${styles["panel-tab"]} ${styles["panel-tab-active"]}`}
+                    onClick={() => setActiveKind(null)}
+                    title="Show source detail"
+                  >
+                    Source Detail
+                  </button>
+                  <span className={styles["panel-tab-sep"]}>|</span>
+                  <button
+                    type="button"
+                    className={`${styles["panel-tab"]}`}
+                    onClick={() => setActiveKind("highlight")}
+                    title="Show notes"
+                    disabled={!pdfDoc}
+                  >
+                    Notes{notes.length > 0 ? ` (${notes.length})` : ""}
+                  </button>
+                </div>
                 {selectedSourceStatus && (
                   <div className={styles["source-status-tags"]}>
                     <span

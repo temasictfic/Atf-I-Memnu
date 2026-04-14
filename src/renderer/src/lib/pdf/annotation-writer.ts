@@ -31,7 +31,7 @@ import {
 } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import type { Note, NoteQuad } from '../stores/notes-store'
-import { DEFAULT_CALLOUT_FONT_SIZE } from '../stores/notes-store'
+import { DEFAULT_CALLOUT_FONT_SIZE, DEFAULT_CALLOUT_OPACITY } from '../stores/notes-store'
 import { SCALE } from './types'
 // Liberation Sans ships with pdfjs-dist (SIL OFL) and has full Unicode
 // coverage including Latin Extended (Turkish ş/ı/ğ/ü/ö/ç, etc.). Using
@@ -94,6 +94,12 @@ function pixelQuadToPdfRect(quad: NoteQuad, pageHeightPt: number): PdfRect {
   return { x0, y0: Math.min(yTop, yBottom), x1, y1: Math.max(yTop, yBottom) }
 }
 
+export interface WriteNotesOptions {
+  // Background alpha for callout rectangles, 0..1. Defaults to
+  // DEFAULT_CALLOUT_OPACITY. Border alpha is always 1.
+  calloutOpacity?: number
+}
+
 /**
  * Load a PDF, write all given notes (highlights as annotations + callouts as
  * drawn content), return the serialized bytes. The original file on disk is
@@ -101,8 +107,12 @@ function pixelQuadToPdfRect(quad: NoteQuad, pageHeightPt: number): PdfRect {
  */
 export async function writeNotesToPdf(
   originalBytes: Uint8Array,
-  notes: Note[]
+  notes: Note[],
+  options: WriteNotesOptions = {}
 ): Promise<Uint8Array> {
+  const calloutOpacity = clampOpacity(
+    options.calloutOpacity ?? DEFAULT_CALLOUT_OPACITY
+  )
   const pdfDoc = await PDFDocument.load(originalBytes, {
     ignoreEncryption: true,
     updateMetadata: false,
@@ -150,11 +160,23 @@ export async function writeNotesToPdf(
     // Callouts: draw straight into the page content stream.
     for (const note of pageNotes) {
       if (note.kind !== 'callout') continue
-      drawCalloutOnPage(page, note, pageHeightPt, helvetica, helveticaBold)
+      drawCalloutOnPage(
+        page,
+        note,
+        pageHeightPt,
+        helvetica,
+        helveticaBold,
+        calloutOpacity
+      )
     }
   }
 
   return pdfDoc.save({ useObjectStreams: false })
+}
+
+function clampOpacity(opacity: number): number {
+  if (!Number.isFinite(opacity)) return DEFAULT_CALLOUT_OPACITY
+  return Math.max(0, Math.min(1, opacity))
 }
 
 type PDFContext = PDFDocument['context']
@@ -211,19 +233,21 @@ function drawCalloutOnPage(
   note: Note,
   pageHeightPt: number,
   helvetica: PDFFont,
-  helveticaBold: PDFFont
+  helveticaBold: PDFFont,
+  calloutOpacity: number
 ) {
   const rect = pixelQuadToPdfRect(note.bbox, pageHeightPt)
   const fillColor = hexToRgb(note.color)
 
-  // Translucent background rect.
+  // Translucent background rect. Border stays fully opaque so the callout
+  // outline remains visible even when the fill is almost transparent.
   page.drawRectangle({
     x: rect.x0,
     y: rect.y0,
     width: rect.x1 - rect.x0,
     height: rect.y1 - rect.y0,
     color: fillColor,
-    opacity: 0.55,
+    opacity: calloutOpacity,
     borderColor: fillColor,
     borderOpacity: 1,
     borderWidth: 1,
@@ -246,8 +270,9 @@ function drawCalloutOnPage(
   }
 
   // Draw each line from the top of the rect downward, clipping anything
-  // that overflows the bottom.
-  const textColor = rgb(0.07, 0.09, 0.15) // near-black
+  // that overflows the bottom. Text color comes from the note if set,
+  // otherwise falls back to near-black.
+  const textColor = note.textColor ? hexToRgb(note.textColor) : rgb(0.07, 0.09, 0.15)
   const topY = rect.y1 - padding - fontSize
   const bottomY = rect.y0 + padding
 

@@ -38,29 +38,121 @@ export interface Note {
   // Callout-only typography. Highlights ignore these.
   fontSize?: number // defaults to DEFAULT_CALLOUT_FONT_SIZE
   bold?: boolean // defaults to false
+  textColor?: string // defaults to DEFAULT_CALLOUT_TEXT_COLOR
+  // Set when the note was produced by the auto-annotate action for a specific
+  // SourceRectangle. Used to dedupe on re-run so clicking auto-annotate
+  // multiple times doesn't stack duplicate markup.
+  autoForSourceId?: string
   createdAt: number
 }
 
 export const DEFAULT_CALLOUT_FONT_SIZE = 11
 export const CALLOUT_FONT_SIZE_MIN = 6
 export const CALLOUT_FONT_SIZE_MAX = 48
+export const DEFAULT_CALLOUT_TEXT_COLOR = '#13151f'
+export const DEFAULT_HIGHLIGHT_COLOR = '#fde68a'
+export const DEFAULT_CALLOUT_COLOR = '#fca5a5'
+
+// Hardcoded Turkish callout templates for the auto-annotate feature.
+export const AUTO_CALLOUT_TEXT_NOT_FOUND = 'Literatürde bulunmamaktadır.'
+export const AUTO_CALLOUT_TEXT_PROBLEMATIC =
+  'Künye bilgilerinde eksik/hatalı bilgiler bulunmaktadır.'
+
+// Default callout background alpha (0..1). User-adjustable via the Notes panel.
+export const DEFAULT_CALLOUT_OPACITY = 1.0
 
 interface NotesState {
   notesByPdf: Record<string, Note[]>
+  // Undo history: stack of snapshots of `notesByPdf[pdfId]` captured *before*
+  // each undoable user action. `revertNotes(pdfId)` pops the top entry and
+  // restores it. Deep-copied on capture so later mutations don't mutate
+  // previously-captured snapshots.
+  notesHistoryByPdf: Record<string, Note[][]>
   activeKind: NoteKind | null
+  // Mirrors the active kind's chosen color (see `highlightColor` /
+  // `calloutColor` below). Kept so legacy consumers of "current color"
+  // don't need to know the kind.
   activeColor: string
+  // Per-kind persisted user choices. `setActiveColor` updates whichever
+  // one matches `activeKind`. Manual note creation and auto-annotate
+  // read these so the user's picks apply uniformly.
+  highlightColor: string
+  calloutColor: string
+  calloutTextColor: string
+  calloutFontSize: number
+  calloutBold: boolean
+  calloutOpacity: number
 }
 
-const DEFAULT_COLOR_BY_KIND: Record<NoteKind, string> = {
-  highlight: '#fde68a',
-  callout: '#fca5a5',
+const MAX_NOTES_HISTORY = 100
+
+function cloneNotes(notes: Note[]): Note[] {
+  return notes.map(n => ({
+    ...n,
+    bbox: { ...n.bbox },
+    quads: n.quads ? n.quads.map(q => ({ ...q })) : undefined,
+  }))
 }
 
 export const useNotesStore = create<NotesState>()(() => ({
   notesByPdf: {},
+  notesHistoryByPdf: {},
   activeKind: null,
-  activeColor: DEFAULT_COLOR_BY_KIND.highlight,
+  activeColor: DEFAULT_HIGHLIGHT_COLOR,
+  highlightColor: DEFAULT_HIGHLIGHT_COLOR,
+  calloutColor: DEFAULT_CALLOUT_COLOR,
+  calloutTextColor: DEFAULT_CALLOUT_TEXT_COLOR,
+  calloutFontSize: DEFAULT_CALLOUT_FONT_SIZE,
+  calloutBold: false,
+  calloutOpacity: DEFAULT_CALLOUT_OPACITY,
 }))
+
+// Capture the current notes list for `pdfId` into the undo history. Must
+// be called BEFORE any undoable mutation (add/update/remove/reset/etc.).
+// The store's mutators do not auto-snapshot — each caller decides the
+// granularity of an "undo step".
+export function beginNoteEdit(pdfId: string): void {
+  useNotesStore.setState(state => {
+    const current = state.notesByPdf[pdfId] ?? []
+    const snapshot = cloneNotes(current)
+    const existing = state.notesHistoryByPdf[pdfId] ?? []
+    const next = [...existing, snapshot]
+    // Bound history length so long editing sessions don't leak memory.
+    if (next.length > MAX_NOTES_HISTORY) next.splice(0, next.length - MAX_NOTES_HISTORY)
+    return {
+      notesHistoryByPdf: { ...state.notesHistoryByPdf, [pdfId]: next },
+    }
+  })
+}
+
+// Undo the last beginNoteEdit snapshot: pops the history stack and restores
+// the previous notes state for the PDF.
+export function revertNotes(pdfId: string): void {
+  useNotesStore.setState(state => {
+    const hist = state.notesHistoryByPdf[pdfId]
+    if (!hist || hist.length === 0) return state
+    const prev = hist[hist.length - 1]
+    const nextHist = hist.slice(0, -1)
+    return {
+      notesByPdf: { ...state.notesByPdf, [pdfId]: prev },
+      notesHistoryByPdf: { ...state.notesHistoryByPdf, [pdfId]: nextHist },
+    }
+  })
+}
+
+export function canRevertNotes(pdfId: string): boolean {
+  return (useNotesStore.getState().notesHistoryByPdf[pdfId]?.length ?? 0) > 0
+}
+
+// Clear all notes for a PDF, pushing a snapshot first so it can be undone.
+export function resetNotes(pdfId: string): void {
+  const list = useNotesStore.getState().notesByPdf[pdfId]
+  if (!list || list.length === 0) return
+  beginNoteEdit(pdfId)
+  useNotesStore.setState(state => ({
+    notesByPdf: { ...state.notesByPdf, [pdfId]: [] },
+  }))
+}
 
 export function getNotes(pdfId: string): Note[] {
   return useNotesStore.getState().notesByPdf[pdfId] ?? []
@@ -114,17 +206,74 @@ export function clearNotesForPdf(pdfId: string): void {
   })
 }
 
+// Drop every auto-generated note for a PDF. Used by the auto-annotate action
+// so re-running it replaces the previous batch instead of stacking duplicates.
+export function removeAutoNotesForPdf(pdfId: string): void {
+  useNotesStore.setState(state => {
+    const list = state.notesByPdf[pdfId]
+    if (!list) return state
+    const filtered = list.filter(n => !n.autoForSourceId)
+    if (filtered.length === list.length) return state
+    return {
+      notesByPdf: { ...state.notesByPdf, [pdfId]: filtered },
+    }
+  })
+}
+
 export function setActiveKind(kind: NoteKind | null): void {
   useNotesStore.setState(state => {
     if (kind === null) return { activeKind: null }
-    // When switching kinds, reset the color to that kind's default unless the
-    // user has already picked a custom color for this session.
+    // Switch the "active color" mirror to whatever the user last chose
+    // for this kind. Each kind has its own persisted color; switching
+    // tools no longer forgets it.
     const nextColor =
-      state.activeKind === kind ? state.activeColor : DEFAULT_COLOR_BY_KIND[kind]
+      kind === 'callout' ? state.calloutColor : state.highlightColor
     return { activeKind: kind, activeColor: nextColor }
   })
 }
 
+// Update the color for the currently-active kind. If no tool is selected
+// yet, default to editing the highlight color.
 export function setActiveColor(color: string): void {
-  useNotesStore.setState({ activeColor: color })
+  useNotesStore.setState(state => {
+    if (state.activeKind === 'callout') {
+      return { activeColor: color, calloutColor: color }
+    }
+    return { activeColor: color, highlightColor: color }
+  })
+}
+
+export function setHighlightColor(color: string): void {
+  useNotesStore.setState(state => ({
+    highlightColor: color,
+    activeColor: state.activeKind === 'callout' ? state.activeColor : color,
+  }))
+}
+
+export function setCalloutColor(color: string): void {
+  useNotesStore.setState(state => ({
+    calloutColor: color,
+    activeColor: state.activeKind === 'callout' ? color : state.activeColor,
+  }))
+}
+
+export function setCalloutTextColor(color: string): void {
+  useNotesStore.setState({ calloutTextColor: color })
+}
+
+export function setCalloutFontSize(size: number): void {
+  const clamped = Math.max(
+    CALLOUT_FONT_SIZE_MIN,
+    Math.min(CALLOUT_FONT_SIZE_MAX, Math.round(size) || DEFAULT_CALLOUT_FONT_SIZE),
+  )
+  useNotesStore.setState({ calloutFontSize: clamped })
+}
+
+export function setCalloutBold(bold: boolean): void {
+  useNotesStore.setState({ calloutBold: bold })
+}
+
+export function setCalloutOpacity(opacity: number): void {
+  const clamped = Math.max(0, Math.min(1, opacity))
+  useNotesStore.setState({ calloutOpacity: clamped })
 }
