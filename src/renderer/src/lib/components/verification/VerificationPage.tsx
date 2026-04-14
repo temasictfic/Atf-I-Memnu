@@ -42,7 +42,7 @@ function problemTagDescription(tag: string): string {
     case '!doi/arXiv': return 'Source DOI/arXiv differs from candidate'
     case '!url': return 'Non-DOI/arXiv URL is not reachable'
     case '!year': return 'Year mismatch (>1 year difference)'
-    case '!publication': return 'Publication / venue mismatch'
+    case '!source': return 'Source venue (journal / conference / book) mismatch'
     default: return tag
   }
 }
@@ -80,6 +80,7 @@ function buildDbSearchUrl(db: string, text: string): string {
     'CORE': `https://core.ac.uk/search?q=${q}`,
     'PLOS': `https://journals.plos.org/plosone/search?q=${q}`,
     'Open Library': `https://openlibrary.org/search?q=${q}`,
+    'Google Scholar': `https://scholar.google.com/scholar?q=${q}`,
   }
   return urls[db] ?? ''
 }
@@ -394,6 +395,11 @@ export default function VerificationPage() {
   const browserZoomFactorRef = useRef(1)
   const preOverlaySortRef = useRef<{ key: CardSortMode; asc: boolean } | null>(null)
 
+  // Plain-Chrome UA so Cloudflare/WAFs (e.g. IEEE Xplore) don't 418 our
+  // scholar-panel webviews for advertising "Electron/..." in the UA.
+  const scholarPanelUserAgent =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+
   // --- Scholar scan ---
   const scholarStatus = useScholarScanStore(s => s.status)
   const scholarCurrentIndex = useScholarScanStore(s => s.currentIndex)
@@ -423,10 +429,15 @@ export default function VerificationPage() {
     return () => useScholarScanStore.getState().setCloseOverlayFn(null)
   }, [])
 
-  // When CAPTCHA is detected, open the overlay with the CAPTCHA URL
+  // When CAPTCHA is detected, open the overlay with the CAPTCHA URL and
+  // expand it. Default height (360px) is too short for reCAPTCHA image
+  // grids (~550px tall) and forces users to drag-resize before they can
+  // see the full challenge. Bump to 640px on CAPTCHA, clamped to the
+  // current viewport so it doesn't exceed the usable area on small screens.
   useEffect(() => {
     if (scholarStatus === 'captcha' && scholarCaptchaUrl) {
       openOverlayWithUrl(scholarCaptchaUrl)
+      setBrowserOverlayHeight((h) => Math.max(h, clampOverlayHeight(640)))
     }
   }, [scholarStatus, scholarCaptchaUrl])
 
@@ -499,6 +510,14 @@ export default function VerificationPage() {
     const text = verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
     return sanitizeReferenceTextForSearch(text)
   }, [selectedSourceId, verifyTexts, currentSource])
+
+  // Prefer the verified paper title for external searches — falls back to the
+  // raw reference text when no match has been found yet.
+  const selectedTitleOrText = useMemo(() => {
+    const title = currentResult?.best_match?.title?.trim()
+    if (title) return sanitizeReferenceTextForSearch(title)
+    return selectedSearchText
+  }, [currentResult, selectedSearchText])
 
   function getOverlayMaxHeight(): number {
     const minHeight = 220
@@ -610,15 +629,15 @@ export default function VerificationPage() {
   }
 
   function openScholarOverlay() {
-    const url = selectedSearchText
-      ? `https://scholar.google.com/scholar?q=${encodeURIComponent(selectedSearchText)}`
+    const url = selectedTitleOrText
+      ? `https://scholar.google.com/scholar?q=${encodeURIComponent(selectedTitleOrText)}`
       : 'https://scholar.google.com/'
     openOverlayWithUrl(url)
   }
 
   function openGoogleOverlay() {
-    const url = selectedSearchText
-      ? googleSearchUrl(selectedSearchText)
+    const url = selectedTitleOrText
+      ? `https://www.google.com/search?q=${encodeURIComponent(selectedTitleOrText)}`
       : 'https://www.google.com/'
     openOverlayWithUrl(url)
   }
@@ -1319,6 +1338,7 @@ export default function VerificationPage() {
                   className={styles['scholar-overlay-webview']}
                   src={browserOverlayUrl}
                   partition="persist:scholar-panel"
+                  useragent={scholarPanelUserAgent}
                   allowpopups={true}
                 />
               </div>
@@ -1329,6 +1349,7 @@ export default function VerificationPage() {
               ref={scholarScanWebviewRef}
               src="about:blank"
               partition="persist:scholar-panel"
+              useragent={scholarPanelUserAgent}
               style={{ position: 'fixed', left: '-9999px', top: '0', width: '1280px', height: '800px', opacity: 0, pointerEvents: 'none' } as React.CSSProperties}
             />
           </>
@@ -1376,13 +1397,13 @@ export default function VerificationPage() {
                   <button
                     className={`${styles['action-btn']} ${styles['detail-search-btn']}`}
                     onClick={openScholarOverlay}
-                    disabled={!selectedSearchText}
+                    disabled={!selectedTitleOrText}
                     title="Open Google Scholar in middle panel"
                   >Google Scholar</button>
                   <button
                     className={`${styles['action-btn']} ${styles['detail-search-btn']}`}
                     onClick={openGoogleOverlay}
-                    disabled={!selectedSearchText}
+                    disabled={!selectedTitleOrText}
                     title="Open Google Search in middle panel"
                   >Google Search</button>
                 </div>
@@ -1403,6 +1424,9 @@ export default function VerificationPage() {
                         <div className={styles['match-title']}>{r.best_match.title}</div>
                         {r.best_match.authors.length > 0 && (
                           <div className={styles['match-meta']}>{r.best_match.authors.join(', ')}</div>
+                        )}
+                        {r.best_match.journal && (
+                          <div className={styles['match-meta']}>{r.best_match.journal}</div>
                         )}
                         <div className={styles['match-meta-row']}>
                           {r.best_match.year && <span>{r.best_match.year}</span>}
@@ -1429,7 +1453,7 @@ export default function VerificationPage() {
                         const match = r.all_results.find((m: MatchResult) => m.database === db)
                         const searched = r.databases_searched.includes(db)
                         const dbCheck = selectedProgress?.checkedDbs.find(d => d.name === db)
-                        const searchText = r.best_match?.title ?? verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
+                        const searchText = match?.title ?? r.best_match?.title ?? verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
                         const linkUrl = buildDbSearchUrl(db, searchText) || match?.search_url || dbCheck?.searchUrl
                         return (
                           <div key={db} className={styles['db-row']}>

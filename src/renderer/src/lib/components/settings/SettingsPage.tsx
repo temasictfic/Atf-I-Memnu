@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useSettingsStore } from '../../stores/settings-store'
 import styles from './SettingsPage.module.css'
+import pkg from '../../../../../../package.json'
 
 const defaultDatabaseIds = new Set([
   'crossref',
@@ -23,8 +24,6 @@ export default function SettingsPage() {
   const { toggleDatabase, updateSetting, removeDatabase, moveDatabase, updateApiKey } = useSettingsStore.getState()
   const [cacheOpenMessage, setCacheOpenMessage] = useState<string | null>(null)
 
-  const tierLabel = (t: number) => t === 2 ? 'Fallback' : `Tier ${t}`
-
   const handleOpenCacheFolder = async () => {
     try {
       const result = await window.electronAPI.openCacheFolder()
@@ -39,7 +38,12 @@ export default function SettingsPage() {
   }
 
   const handleOpenGithubRepo = () => {
-    window.open(GITHUB_REPO_URL, '_blank', 'noopener,noreferrer')
+    window.electronAPI.openExternal(GITHUB_REPO_URL).catch(err => console.error('Failed to open URL:', err))
+  }
+
+  const handleOpenExternalLink = (url: string) => (e: React.MouseEvent) => {
+    e.preventDefault()
+    window.electronAPI.openExternal(url).catch(err => console.error('Failed to open URL:', err))
   }
 
   return (
@@ -55,6 +59,7 @@ export default function SettingsPage() {
 
         <div className={styles['settings-header']}>
           <h1 className={styles['settings-title']}>Settings</h1>
+          <span style={{ marginLeft: 'auto', marginRight: 10, color: '#78716c', fontSize: 13, fontWeight: 700 }}>v{pkg.version}</span>
           <button
             type="button"
             className={styles['header-icon-button']}
@@ -71,7 +76,7 @@ export default function SettingsPage() {
         {/* Databases Section */}
         <section className={styles['settings-section']}>
           <h2 className={styles['section-title']}>Search Databases</h2>
-          <p className={styles['section-desc']}>Enable or disable databases and drag to reorder. Databases are searched in this order.</p>
+          <p className={styles['section-desc']}>Enable or disable databases and drag to reorder. Databases search first in this order and lists results</p>
 
           <div className={styles['db-list']}>
             {settings.databases.map((db, i) => (
@@ -103,7 +108,6 @@ export default function SettingsPage() {
                 </label>
                 <div className={styles['db-info']}>
                   <span className={styles['db-name']}>{db.name}</span>
-                  <span className={styles['db-type']}>API · {tierLabel(db.tier)}</span>
                 </div>
                 {!defaultDatabaseIds.has(db.id) && (
                   <button className={styles['db-remove']} onClick={() => removeDatabase(db.id)} title="Remove">&#10005;</button>
@@ -116,26 +120,36 @@ export default function SettingsPage() {
         {/* API Keys Section */}
         <section className={styles['settings-section']}>
           <h2 className={styles['section-title']}>API Keys</h2>
-          <p className={styles['section-desc']}>Optional API keys for improved rate limits and access.</p>
+          <p className={styles['section-desc']}>Optional API keys for improved rate limits and access</p>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>OpenAlex Email</span>
-              <span className={styles['setting-desc']}>Optional - registered email for polite pool access</span>
+              <span className={styles['setting-label']}>Polite Pool Email for Crossref, arXiv, and OpenAlex</span>
+              <span className={styles['setting-desc']}>
+                Your contact email. Sent to Crossref, arXiv, and OpenAlex
+              </span>
             </div>
             <input
               type="text"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
-              value={settings.api_keys?.openalex ?? ''}
-              placeholder="Optional"
-              onChange={e => updateApiKey('openalex', e.target.value)}
+              value={settings.polite_pool_email ?? ''}
+              placeholder="Optional - you@example.com"
+              onChange={e => updateSetting('polite_pool_email', e.target.value)}
             />
           </div>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
               <span className={styles['setting-label']}>Semantic Scholar API Key</span>
-              <span className={styles['setting-desc']}>Optional - increases rate limits</span>
+              <span className={styles['setting-desc']}>
+                Strongly recommended.{' '}
+                <a
+                  href="https://www.semanticscholar.org/product/api#api-key-form"
+                  onClick={handleOpenExternalLink('https://www.semanticscholar.org/product/api#api-key-form')}
+                >
+                  Request a free key
+                </a>.
+              </span>
             </div>
             <input
               type="password"
@@ -265,13 +279,18 @@ export default function SettingsPage() {
 
         <section className={styles['settings-section']}>
           <h2 className={styles['section-title']}>Cache</h2>
-          <p className={styles['section-desc']}>Open the folder where parsed and verification cache files are stored.</p>
 
-          <div className={styles['action-row']}>
-            <button type="button" className={styles['action-button']} onClick={handleOpenCacheFolder}>
-              Open Cache Folder
-            </button>
-            {cacheOpenMessage && <span className={styles['action-message']}>{cacheOpenMessage}</span>}
+          <div className={styles['setting-row']}>
+            <div className={styles['setting-info']}>
+              <span className={styles['setting-label']}>Cache Folder</span>
+              <span className={styles['setting-desc']}>Folder where cache files are stored</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {cacheOpenMessage && <span className={styles['action-message']}>{cacheOpenMessage}</span>}
+              <button type="button" className={styles['action-button']} onClick={handleOpenCacheFolder}>
+                Open
+              </button>
+            </div>
           </div>
         </section>
       </div>

@@ -49,7 +49,7 @@ export interface ParsedSource {
 // Verification types
 export type VerifyStatus = 'found' | 'problematic' | 'not_found' | 'pending' | 'in_progress'
 
-export type ProblemTag = '!authors' | '!doi/arXiv' | '!url' | '!year' | '!publication'
+export type ProblemTag = '!authors' | '!doi/arXiv' | '!url' | '!year' | '!source'
 
 export interface MatchResult {
   database: string
@@ -57,6 +57,7 @@ export interface MatchResult {
   authors: string[]
   year?: number
   doi?: string
+  journal?: string
   url: string
   search_url: string
   score: number
@@ -102,6 +103,7 @@ export interface AppSettings {
   annotated_pdf_dir?: string
   databases: DatabaseConfig[]
   api_keys?: Record<string, string>
+  polite_pool_email?: string
   search_timeout: number
   max_concurrent_apis: number
   max_concurrent_sources_per_pdf: number
@@ -127,7 +129,7 @@ export interface LogEntry {
 }
 
 // Verification progress tracking
-export type DbCheckStatus = 'checking' | 'found' | 'not_found' | 'timeout' | 'error'
+export type DbCheckStatus = 'checking' | 'found' | 'not_found' | 'timeout' | 'error' | 'rate_limited' | 'skipped'
 
 export interface DbCheckEntry {
   name: string
