@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session } from 'electron'
 import { mkdirSync } from 'fs'
 import { readdir, readFile, stat, writeFile } from 'fs/promises'
 import { extname, join } from 'path'
@@ -8,6 +8,93 @@ import type { ProgressInfo, UpdateInfo } from 'builder-util-runtime'
 import { startPythonBackend, stopPythonBackend, getPythonBackendPort } from './python-bridge'
 
 const isDev = !app.isPackaged
+
+// Plain-Chrome UA so Cloudflare/WAFs (e.g. IEEE Xplore) don't 418 our webviews
+// for containing the literal "Electron/..." token. Uses the real bundled Chrome
+// version so the string stays current across Electron upgrades.
+function buildChromeUserAgent(): string {
+  const chromeVersion = process.versions.chrome || '131.0.0.0'
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
+}
+
+const SCHOLAR_PARTITION = 'persist:scholar-panel'
+
+function buildChromeBrandHeader(): string {
+  const major = (process.versions.chrome || '131').split('.')[0]
+  return `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not?A_Brand";v="24"`
+}
+
+function configureScholarPanelSession(): void {
+  const ua = buildChromeUserAgent()
+  const sess = session.fromPartition(SCHOLAR_PARTITION)
+  sess.setUserAgent(ua)
+
+  // Register the preload that scrubs JS-side fingerprints (navigator.userAgentData,
+  // navigator.webdriver, chrome.runtime) so Cloudflare Turnstile sees the guest
+  // page as plain Chrome rather than Electron.
+  const preloadPath = join(__dirname, '../preload/scholar-preload.js')
+  sess.setPreloads([...sess.getPreloads(), preloadPath])
+
+  // Drop assets we never render against: Scholar pages are text, and the
+  // scanner extracts from the DOM — images, fonts, media, and tracker
+  // beacons on scholar.google.com add nothing but latency. Rules:
+  //   1. Block analytics/ad trackers on *every* host (safe everywhere).
+  //   2. Block image/font/media only when the origin is scholar.google.com
+  //      itself, so reCAPTCHA assets (www.google.com, www.gstatic.com) and
+  //      sorry.google.com challenge pages still render fully when a user
+  //      has to solve a CAPTCHA in the overlay.
+  // Stylesheets and scripts are *not* blocked — killing CSS/JS changes the
+  // rendered viewport enough that Scholar's bot-detection fingerprints the
+  // session and CAPTCHAs us more aggressively, wiping out the savings.
+  const TRACKER_HOSTS = [
+    'google-analytics.com',
+    'googletagmanager.com',
+    'doubleclick.net',
+    'googleadservices.com',
+  ]
+  sess.webRequest.onBeforeRequest((details, callback) => {
+    const url = details.url
+    for (const host of TRACKER_HOSTS) {
+      if (url.includes(host)) {
+        callback({ cancel: true })
+        return
+      }
+    }
+    try {
+      const hostname = new URL(url).hostname
+      if (hostname === 'scholar.google.com') {
+        const type = details.resourceType
+        if (type === 'image' || type === 'font' || type === 'media') {
+          callback({ cancel: true })
+          return
+        }
+      }
+    } catch {
+      // Malformed URL — let it through
+    }
+    callback({})
+  })
+
+  // Rewrite Sec-CH-UA* client-hint headers on every outbound request so the
+  // header story matches the spoofed UA — Electron otherwise advertises an
+  // "Electron" brand here even when the UA string says Chrome.
+  const brand = buildChromeBrandHeader()
+  sess.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = { ...details.requestHeaders }
+    // Strip any case-variant of the existing client-hint headers first.
+    for (const key of Object.keys(headers)) {
+      const lower = key.toLowerCase()
+      if (lower === 'sec-ch-ua' || lower === 'sec-ch-ua-full-version-list' || lower === 'sec-ch-ua-platform' || lower === 'sec-ch-ua-mobile' || lower === 'user-agent') {
+        delete headers[key]
+      }
+    }
+    headers['User-Agent'] = ua
+    headers['sec-ch-ua'] = brand
+    headers['sec-ch-ua-mobile'] = '?0'
+    headers['sec-ch-ua-platform'] = '"Windows"'
+    callback({ requestHeaders: headers })
+  })
+}
 
 let mainWindow: BrowserWindow | null = null
 let updaterConfigured = false
@@ -91,6 +178,13 @@ function createWindow(): void {
 
   // Hide the native menu bar (File/Edit/View/Window/Help) on desktop.
   mainWindow.setMenuBarVisibility(false)
+
+  const chromeUa = buildChromeUserAgent()
+  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
+    if (params.partition === SCHOLAR_PARTITION) {
+      params.useragent = chromeUa
+    }
+  })
 
   // Ensure devtools can always be opened via F12 / Ctrl+Shift+I even when
   // the menu bar (which owns the default accelerators) is hidden.
@@ -293,6 +387,7 @@ ipcMain.on('update:install', () => {
 // App lifecycle
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
+  configureScholarPanelSession()
   createWindow()
   ensureBackendStarted()
 

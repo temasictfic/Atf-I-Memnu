@@ -19,7 +19,15 @@ export default defineConfig({
         exclude: []
       },
       rollupOptions: {
-        external: ['fsevents']
+        external: ['fsevents'],
+        input: {
+          index: 'src/preload/index.ts',
+          'scholar-preload': 'src/preload/scholar-preload.ts'
+        },
+        output: {
+          format: 'cjs',
+          entryFileNames: '[name].js'
+        }
       }
     }
   },

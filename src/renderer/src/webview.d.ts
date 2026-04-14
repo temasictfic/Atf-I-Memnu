@@ -9,6 +9,7 @@ declare global {
         allowpopups?: boolean
         webpreferences?: string
         preload?: string
+        useragent?: string
       }
     }
   }

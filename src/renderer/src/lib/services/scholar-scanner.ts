@@ -29,55 +29,56 @@ export interface ScholarScanCallbacks {
 }
 
 // --- Extraction script injected into the webview ---
-// Uses multiple selector strategies to handle DOM variations.
+// Single async IIFE that polls up to 2500ms for either CAPTCHA markers or
+// result items, extracts in the same pass, and short-circuits as soon as
+// either is found. This replaces the old pair of separate DETECT+EXTRACT
+// scripts and the hardcoded 2500ms post-load sleep — pages that render in
+// 200-500ms (most of them) now complete extraction in well under a second
+// instead of waiting out the full delay.
+const POLL_AND_EXTRACT_SCRIPT = `
+(async function() {
+  var CAPTCHA_SELECTORS = '#gs_captcha_f, #gs_captcha_ccl, #captcha-form, #recaptcha, iframe[src*="recaptcha"], iframe[src*="captcha"]';
+  var RESULT_SELECTORS = ['.gs_r.gs_or.gs_scl', '.gs_r.gs_or', '.gs_ri', '[data-cid]'];
 
-const EXTRACT_RESULTS_SCRIPT = `
-(function() {
-  try {
+  function detectCaptcha() {
+    if (document.querySelector(CAPTCHA_SELECTORS)) return true;
+    if (window.location.hostname.indexOf('sorry.google.com') !== -1) return true;
+    var title = (document.title || '').toLowerCase();
+    if (title.indexOf('sorry') !== -1 || title.indexOf('unusual traffic') !== -1) return true;
+    var bodyText = (document.body && document.body.innerText) || '';
+    if (bodyText.indexOf('unusual traffic') !== -1 || bodyText.indexOf('not a robot') !== -1) return true;
+    return false;
+  }
+
+  function findItems() {
+    for (var i = 0; i < RESULT_SELECTORS.length; i++) {
+      var items = document.querySelectorAll(RESULT_SELECTORS[i]);
+      if (items.length) return items;
+    }
+    return [];
+  }
+
+  function extract(items) {
     var results = [];
-
-    // Strategy 1: standard result items
-    var items = document.querySelectorAll('.gs_r.gs_or.gs_scl');
-    // Strategy 2: broader container
-    if (!items.length) items = document.querySelectorAll('.gs_r.gs_or');
-    // Strategy 3: even broader
-    if (!items.length) items = document.querySelectorAll('.gs_ri');
-    // Strategy 4: data-cid attribute based
-    if (!items.length) items = document.querySelectorAll('[data-cid]');
-
     for (var i = 0; i < items.length; i++) {
       var el = items[i];
-
-      // Try multiple selectors for the title
       var titleEl = el.querySelector('.gs_rt a')
         || el.querySelector('h3 a')
         || el.querySelector('a[data-clk]');
       if (!titleEl) continue;
-
       var rawTitle = titleEl.textContent || '';
-      // Remove leading [PDF], [HTML], [BOOK] etc.
       var title = rawTitle.replace(/^\\s*\\[.*?\\]\\s*/, '').trim();
       if (!title) continue;
-
       var url = titleEl.href || '';
-
-      // Author/venue metadata line
       var metaEl = el.querySelector('.gs_a');
       var metaText = metaEl ? (metaEl.textContent || '') : '';
-
-      // Parse "A Author, B Author - Journal, 2023 - publisher"
       var parts = metaText.split(' - ');
       var authorsPart = (parts[0] || '').trim();
-      var authors = authorsPart
-        .split(',')
-        .map(function(a) { return a.trim(); })
+      var authors = authorsPart.split(',').map(function(a) { return a.trim(); })
         .filter(function(a) { return a.length > 0 && a !== '\\u2026'; });
-
       var year = null;
       var yearMatch = metaText.match(/\\b(19|20)\\d{2}\\b/);
       if (yearMatch) year = parseInt(yearMatch[0]);
-
-      // Extract DOI from any link in this result
       var doi = null;
       var links = el.querySelectorAll('a');
       for (var j = 0; j < links.length; j++) {
@@ -85,38 +86,26 @@ const EXTRACT_RESULTS_SCRIPT = `
         var doiMatch = href.match(/doi\\.org\\/(10\\.\\d{4,}\\/.+?)(?:[?&#]|$)/);
         if (doiMatch) { doi = decodeURIComponent(doiMatch[1]); break; }
       }
-
-      // Snippet
       var snippetEl = el.querySelector('.gs_rs');
       var snippet = snippetEl ? (snippetEl.textContent || '').trim() : '';
-
-      results.push({
-        title: title,
-        authors: authors,
-        year: year,
-        doi: doi,
-        url: url,
-        snippet: snippet
-      });
+      results.push({ title: title, authors: authors, year: year, doi: doi, url: url, snippet: snippet });
     }
-    return { ok: true, results: results, itemCount: items.length };
-  } catch(e) {
-    return { ok: false, error: e.message, results: [] };
+    return results;
   }
-})()
-`
 
-const DETECT_CAPTCHA_SCRIPT = `
-(function() {
-  var hasCaptchaForm = !!document.querySelector('#gs_captcha_f, #gs_captcha_ccl, #captcha-form, #recaptcha');
-  var hasRecaptcha = !!document.querySelector('iframe[src*="recaptcha"], iframe[src*="captcha"]');
-  var isSorryPage = window.location.hostname.includes('sorry.google.com');
-  var titleSorry = document.title.toLowerCase().includes('sorry')
-    || document.title.toLowerCase().includes('unusual traffic');
-  // Also detect when body has very little content (empty/blocked page)
-  var bodyText = (document.body && document.body.innerText) || '';
-  var isBlocked = bodyText.includes('unusual traffic') || bodyText.includes('not a robot');
-  return hasCaptchaForm || hasRecaptcha || isSorryPage || titleSorry || isBlocked;
+  // Poll at 100ms intervals up to 2500ms. CAPTCHA check runs every tick so
+  // we short-circuit immediately instead of waiting out the rest of the
+  // deadline on a page that will never render results.
+  var DEADLINE = Date.now() + 2500;
+  while (Date.now() < DEADLINE) {
+    if (detectCaptcha()) return { captcha: true, results: [] };
+    var items = findItems();
+    if (items.length > 0) return { captcha: false, results: extract(items) };
+    await new Promise(function(r) { setTimeout(r, 100); });
+  }
+  // Timed out. Re-check CAPTCHA once more (some Scholar variants render
+  // the CAPTCHA iframe after a delay) and otherwise return empty results.
+  return { captcha: detectCaptcha(), results: [] };
 })()
 `
 
@@ -243,9 +232,9 @@ export class ScholarScanner {
     if (overlay) {
       try {
         await sleep(500)
-        const extraction = await overlay.executeJavaScript(EXTRACT_RESULTS_SCRIPT)
+        const extraction = await overlay.executeJavaScript(POLL_AND_EXTRACT_SCRIPT)
         console.log('[Scholar] Overlay extraction:', JSON.stringify(extraction).substring(0, 300))
-        if (extraction?.ok && Array.isArray(extraction.results)) {
+        if (extraction && Array.isArray(extraction.results)) {
           candidates = extraction.results
         }
       } catch (err) {
@@ -294,26 +283,38 @@ export class ScholarScanner {
   }
 
   private async processNext(): Promise<void> {
-    if (this.cancelRequested || this.currentIndex >= this.queue.length) {
-      if (!this.cancelRequested) this.setStatus('done')
-      return
-    }
+    // One rate-limit slot is "pre-reserved" by the previous iteration during
+    // its scoring POST, so the wait runs concurrently with the backend call
+    // instead of serially after it. null means "no pre-reserved slot, call
+    // waitForSlot fresh" — used on the very first iteration and when resuming
+    // after a CAPTCHA (where the pre-reserved slot was never created).
+    let nextSlotWait: Promise<void> | null = null
 
-    const item = this.queue[this.currentIndex]
+    while (!this.cancelRequested && this.currentIndex < this.queue.length) {
+      const item = this.queue[this.currentIndex]
 
-    // Rate limit
-    await this.rateLimiter.waitForSlot()
-    if (this.cancelRequested) return
+      if (nextSlotWait !== null) {
+        await nextSlotWait
+        nextSlotWait = null
+      } else {
+        await this.rateLimiter.waitForSlot()
+      }
+      if (this.cancelRequested) return
 
-    // Navigate to Google Scholar
-    const query = encodeURIComponent(item.searchText.slice(0, 300))
-    // lookup=0 forces full results page (without it Scholar may show single "best result")
-    const url = `https://scholar.google.com/scholar?lookup=0&q=${query}`
+      const query = encodeURIComponent(item.searchText.slice(0, 300))
+      // lookup=0 forces full results page (without it Scholar may show single "best result")
+      const url = `https://scholar.google.com/scholar?lookup=0&q=${query}`
+      console.log(`[Scholar] Searching: ${url.substring(0, 120)}...`)
 
-    console.log(`[Scholar] Searching: ${url.substring(0, 120)}...`)
-
-    try {
-      const candidates = await this.loadAndExtract(url)
+      let candidates: ScholarCandidate[] | 'captcha'
+      try {
+        candidates = await this.loadAndExtract(url)
+      } catch (err) {
+        this.callbacks?.onError(item.sourceId, `${err}`)
+        this.currentIndex++
+        this.callbacks?.onProgress(this.currentIndex, this.queue.length, this.foundCount)
+        continue
+      }
 
       console.log(`[Scholar] Got ${candidates === 'captcha' ? 'CAPTCHA' : candidates.length + ' candidates'}`)
 
@@ -324,33 +325,36 @@ export class ScholarScanner {
         return // Will resume from resumeAfterCaptcha()
       }
 
-      // Send to backend for scoring
-      let updated = false
-      if (candidates.length > 0) {
-        try {
-          const response = await api.scoreScholar(
-            item.pdfId,
-            item.sourceId,
-            item.searchText,
-            candidates,
-          )
-          updated = response.updated
-          if (updated) this.foundCount++
-        } catch (err) {
-          this.callbacks?.onError(item.sourceId, `Scoring error: ${err}`)
-        }
+      // Kick off scoring in the background. Crucially, we also pre-reserve
+      // the next iteration's rate-limit slot right now so that its 4–7 s
+      // sleep runs in parallel with the ~100–500 ms scoring POST, instead
+      // of serially after it. Only pre-reserve when a next iteration will
+      // actually exist — otherwise the reservation is wasted and leaves
+      // `lastRequest` stale at shutdown.
+      const scorePromise: Promise<{ updated: boolean } | null> =
+        candidates.length > 0
+          ? api
+              .scoreScholar(item.pdfId, item.sourceId, item.searchText, candidates)
+              .catch((err) => {
+                this.callbacks?.onError(item.sourceId, `Scoring error: ${err}`)
+                return null
+              })
+          : Promise.resolve(null)
+
+      if (this.currentIndex + 1 < this.queue.length && !this.cancelRequested) {
+        nextSlotWait = this.rateLimiter.waitForSlot()
       }
 
+      const response = await scorePromise
+      const updated = response?.updated ?? false
+      if (updated) this.foundCount++
       this.callbacks?.onSourceDone(item.sourceId, updated)
-    } catch (err) {
-      this.callbacks?.onError(item.sourceId, `${err}`)
+
+      this.currentIndex++
+      this.callbacks?.onProgress(this.currentIndex, this.queue.length, this.foundCount)
     }
 
-    this.currentIndex++
-    this.callbacks?.onProgress(this.currentIndex, this.queue.length, this.foundCount)
-
-    // Continue to next
-    await this.processNext()
+    if (!this.cancelRequested) this.setStatus('done')
   }
 
   private loadAndExtract(url: string): Promise<ScholarCandidate[] | 'captcha'> {
@@ -400,46 +404,35 @@ export class ScholarScanner {
         clearTimeout(timeoutId)
         cleanup()
 
-        // Wait for page JS to finish rendering
-        await sleep(2500)
-        if (isStale()) {
-          console.warn('[Scholar] stale onLoaded after sleep — aborting extraction')
-          return
-        }
-
         try {
-          // Check for CAPTCHA first
-          const isCaptcha = await view.executeJavaScript(DETECT_CAPTCHA_SCRIPT)
-          if (isStale()) {
-            console.warn('[Scholar] stale onLoaded after captcha check — aborting')
-            return
-          }
-          if (isCaptcha) {
-            resolve('captcha')
-            return
-          }
-
-          // Extract results
-          const extraction = await view.executeJavaScript(EXTRACT_RESULTS_SCRIPT)
+          // Single async call: polls the DOM up to 2500ms for either a
+          // CAPTCHA marker or result items, extracts in the same pass,
+          // and returns as soon as either is found. Most Scholar result
+          // pages resolve here in 200-500ms — the full 2.5s is only spent
+          // on pages that never render (soft blocks, empty results).
+          const extraction = await view.executeJavaScript(POLL_AND_EXTRACT_SCRIPT)
           if (isStale()) {
             console.warn('[Scholar] stale onLoaded after extraction — discarding results')
             return
           }
-          console.log('[Scholar] Extraction result:', JSON.stringify(extraction).substring(0, 500))
-          if (extraction && extraction.ok && Array.isArray(extraction.results)) {
-            resolve(extraction.results)
-          } else {
-            // Dump page info for debugging
-            const debugInfo = await view.executeJavaScript(`({
-              url: window.location.href,
-              title: document.title,
-              bodyLen: document.body?.innerText?.length || 0,
-              html: document.documentElement.outerHTML.substring(0, 500)
-            })`)
-            if (isStale()) return
-            console.warn('[Scholar] Extraction failed. Page info:', debugInfo)
-            resolve([])
+          if (extraction && extraction.captcha) {
+            resolve('captcha')
+            return
           }
+          if (extraction && Array.isArray(extraction.results)) {
+            resolve(extraction.results)
+            return
+          }
+          // Unexpected shape — dump the page and return empty
+          const debugInfo = await view.executeJavaScript(`({
+            url: window.location.href,
+            title: document.title,
+            bodyLen: document.body?.innerText?.length || 0,
+            html: document.documentElement.outerHTML.substring(0, 500)
+          })`)
+          if (isStale()) return
+          console.warn('[Scholar] Extraction returned unexpected shape. Page info:', debugInfo)
+          resolve([])
         } catch (err) {
           if (isStale()) return
           reject(new Error(`Extraction failed: ${err}`))
