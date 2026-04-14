@@ -39,6 +39,18 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
     # Strip leading numbering and access-date noise before parsing fields.
     text = strip_reference_noise(raw_text)
 
+    # Strip a leading inline parenthetical citation that some refs
+    # duplicate before the real author list, e.g.
+    #   "(Jenkins vd., 2024) Jenkins, A., ve diğerleri (2024). …"
+    # The parenthetical confuses every downstream rule (boundary, year,
+    # author pairing), so we remove it up front.
+    text = re.sub(
+        r"^\(\s*[^)]*?(?:vd|et\s+al|diğerleri)\.?\s*(?:,?\s*(?:19|20)\d{2})?\s*\)\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+
     # Extract identifiers for URL building
     doi = extract_doi(text)
     arxiv_id = extract_arxiv_id(text)
@@ -61,9 +73,10 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
     # Extract authors from the author section
     author_text = text[:author_end].strip().rstrip(",").rstrip(".")
     # Trailing year can leak into the author section when the boundary
-    # detector stops at a title quote (e.g. IEEE book refs). Strip it.
+    # detector stops at a title quote (e.g. IEEE book refs). Strip both
+    # bare trailing years and parenthesized trailing years.
     author_text = re.sub(
-        r"[\s.,]*(?:19|20)\d{2}[a-z]?\.?$", "", author_text
+        r"[\s.,]*\(?\s*(?:19|20)\d{2}[a-z]?\s*\)?\.?$", "", author_text
     ).strip().rstrip(",").rstrip(".")
     # Strip leading inline citations that some refs duplicate before the
     # real author list, e.g. "(Calazans vd. 2024) Calazans, M. A. A., ..."
@@ -73,6 +86,11 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
         author_text,
         flags=re.IGNORECASE,
     ).strip()
+    # Strip quoted nicknames embedded in the author list, e.g.
+    # `Um, E. "Rachel", Plass, J. L., ...`. The nickname confuses the
+    # comma-split pairing; the "Rachel" span adds no signal for matching.
+    author_text = re.sub(r'[\"\u201C][^\"\u201D]*[\"\u201D]', "", author_text)
+    author_text = re.sub(r"\s+", " ", author_text).strip(" ,.")
     result.authors = _parse_authors(author_text, fmt)
 
     # Extract year (rule-based priority: parenthesized > post-conjunction > first-after-authors)
@@ -109,13 +127,23 @@ def _find_author_boundary(text: str, fmt: CitationFormat | None) -> int:
     # Generic rule-based detection for APA/MLA/Chicago/Harvard and unknown formats
 
     # MLA/Chicago: authors end before a quoted title
-    # Check if there's a ". " followed by a quote character
-    quote_boundary = re.search(r'\.\s+["\u201C]', text)
-    if quote_boundary:
-        # Verify this looks like an author section before it
-        before = text[:quote_boundary.start() + 1]
-        if _looks_like_author_section(before):
-            return quote_boundary.start() + 1
+    # Check if there's a ". " followed by a quote character, but only
+    # if the quoted span looks like a title (several words) — not a
+    # short nickname like Um, E. "Rachel", which some refs include
+    # inside the author list.
+    for qm in re.finditer(r'\.\s+["\u201C]', text):
+        before = text[:qm.start() + 1]
+        if not _looks_like_author_section(before):
+            continue
+        # Find the closing quote and measure word count inside.
+        after_open = qm.end()
+        close_m = re.search(r'["\u201D]', text[after_open:])
+        if close_m:
+            inside = text[after_open : after_open + close_m.start()].strip()
+            if len(inside.split()) < 3:
+                # Too short to be a title — likely a nickname inside authors.
+                continue
+        return qm.start() + 1
 
     # Rule 10 (Definite): ". (" = authors section ends (APA-style year in parens)
     # Look for ". (" or ".(" pattern — but only where "(" starts a year
@@ -146,12 +174,20 @@ def _find_author_boundary(text: str, fmt: CitationFormat | None) -> int:
     # UNLESS followed by &, and, ve, et al. (still in authors)
     for m in re.finditer(r"\.\s*,\s", text):
         pos = m.end()
-        after = text[pos:pos + 20].strip()
+        after = text[pos:pos + 40].strip()
         # Rule 4 exception: if followed by conjunction, still authors
         if re.match(r"(?:&|and\b|ve\b|et\s+al\.)", after, re.IGNORECASE):
             continue
         # Rule 6/12: if followed by ", K." pattern, still in authors
         if re.match(r"[A-ZÇĞİÖŞÜ]\.", after):
+            continue
+        # Extension: if followed by "Surname, Initial" (another author
+        # in the list), the ". ," is NOT the end of the author section.
+        # e.g. "Hinton, G., Deng, L., ..." — first ". ," sits between two authors.
+        if re.match(
+            r"[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:-[A-ZÇĞİÖŞÜa-zçğıöşü]+)?\s*,\s*[A-ZÇĞİÖŞÜ]",
+            after,
+        ):
             continue
         return m.start() + 1
 
@@ -229,7 +265,25 @@ def _find_author_boundary_ieee(text: str) -> int:
     if comma_quote > 0:
         return comma_quote
 
-    # Fallback
+    # Fallback: walk comma-separated parts from the start and stop at
+    # the first part that doesn't look like a name (first comma-separated
+    # token containing 3+ words or a lowercase-initial word).
+    offset = 0
+    for part in text.split(","):
+        stripped = part.strip()
+        if not stripped:
+            offset += len(part) + 1
+            continue
+        words = stripped.split()
+        # Non-name heuristics: 3+ words, or starts with lowercase, or
+        # the first word is a known title keyword.
+        looks_like_name = (
+            len(words) <= 3
+            and words[0][0].isupper()
+        )
+        if not looks_like_name:
+            return offset if offset > 0 else min(len(text), int(len(text) * 0.3))
+        offset += len(part) + 1
     return min(len(text), int(len(text) * 0.3))
 
 
@@ -589,9 +643,10 @@ def _parse_standard_authors(author_text: str) -> list[str]:
     author_text = re.sub(r"\s+and\s+", ", ", author_text, flags=re.IGNORECASE)
     author_text = re.sub(r"\s+ve\s+", ", ", author_text)  # Turkish "and"
 
-    # Remove "et al." and Turkish "vd" / "vd." (= "ve diğerleri", i.e. "et al.")
+    # Remove "et al." and Turkish "vd" / "vd." / "diğerleri" (= "et al.")
     author_text = re.sub(r",?\s*et\s+al\.?\s*$", "", author_text, flags=re.IGNORECASE).strip()
-    author_text = re.sub(r",?\s*vd\.?\s*$", "", author_text).strip()
+    author_text = re.sub(r",?\s*vd\.?\s*$", "", author_text, flags=re.IGNORECASE).strip()
+    author_text = re.sub(r",?\s*diğerleri\s*$", "", author_text, flags=re.IGNORECASE).strip()
 
     # Split by comma
     parts = [p.strip() for p in author_text.split(",") if p.strip()]
@@ -615,10 +670,16 @@ def _parse_standard_authors(author_text: str) -> list[str]:
             continue
         if i + 1 < len(parts):
             next_part = parts[i + 1].strip()
-            # Check if next part is initials (1-4 chars, uppercase, with
-            # optional hyphens between letters: "A.", "R.-N.", "C. J. C. H.")
+            # Check if next part is initials. Handles:
+            #   - plain / multi:     "A.", "A. S.", "C. J. C. H."
+            #   - hyphenated upper:  "R.-N.", "C.-Y."
+            #   - compound given:    "A.-r." (Abdel-rahman), "A. u." (Aziz ul)
+            #   - interleaved upper/lower: "C. d. S." (Brazilian), "J. P. d. S."
             is_initials = bool(re.match(
-                r"^[A-ZÇĞİÖŞÜ](?:[.\-\s]*[A-ZÇĞİÖŞÜ]){0,3}\.?$", next_part
+                r"^[A-ZÇĞİÖŞÜ]"
+                r"(?:[.\-\s]+(?:[A-ZÇĞİÖŞÜ]|[a-zçğıöşü]+))*"
+                r"\.?$",
+                next_part,
             ))
             # Check if next part is a given-name section:
             #   - plain first name: "John", "Alice"

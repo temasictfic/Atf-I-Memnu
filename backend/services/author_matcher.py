@@ -218,29 +218,64 @@ def _last_names_match(a: str, b: str) -> bool:
 
 
 def _contains_whole_token(haystack: str | None, token: str) -> bool:
-    """True when `token` appears as a whole space-delimited word in `haystack`."""
+    """True when every whitespace-delimited word of `token` appears as a
+    whole word in `haystack`. Handles multi-word surnames like
+    `"bo cai"` matching a candidate's given_full `"bo cai"`.
+    """
     if not haystack or not token:
         return False
-    return token in haystack.split()
+    hay_words = set(haystack.split())
+    tok_words = token.split()
+    if not tok_words:
+        return False
+    return all(w in hay_words for w in tok_words)
 
 
 def _name_pair_matches(s: ParsedName, c: ParsedName) -> bool:
     """True when two parsed names refer to the same person (best effort)."""
     last_ok = _last_names_match(s.last, c.last)
+    compound_fallback = False
     if not last_ok:
         # Compound-surname fallback: some APIs return the "primary" family
         # name only, with the rest of the surname in the given-name field
-        # (e.g. Crossref "Sorkhabi, Majid Memarian" vs source "M. Memarian").
-        # Accept when one side's surname appears as a whole token in the
-        # other side's given-name string.
+        # (e.g. Crossref "Sorkhabi, Majid Memarian" vs source "M. Memarian",
+        #  or "Gao, Bo-cai" vs wrongly-cited "G. Bo-Cai").
+        # Accept when one side's surname appears as a whole token (or token
+        # sequence) in the other side's given-name string.
         if (
             _contains_whole_token(c.given_full, s.last)
             or _contains_whole_token(s.given_full, c.last)
         ):
             last_ok = True
+            compound_fallback = True
+    if not last_ok:
+        # Typo tolerance: accepted when both sides carry overlapping
+        # initials (very unlikely to be a different person).  Two
+        # flavors:
+        #   1. Near-match: fuzz.ratio >= 78 ("Dewor" vs "Devor")
+        #   2. Shared prefix >= 4 chars for longer names ("Akalin" vs
+        #      "Akalm" — OCR error on Turkish diacritics)
+        if (
+            s.first_initials
+            and c.first_initials
+            and (set(s.first_initials) & set(c.first_initials))
+        ):
+            if fuzz.ratio(s.last, c.last) >= 78:
+                last_ok = True
+            elif (
+                len(s.last) >= 5
+                and len(c.last) >= 5
+                and s.last[:4] == c.last[:4]
+            ):
+                last_ok = True
     if not last_ok:
         return False
-    # Initial disambiguation: only when BOTH sides have initials.
+    # Initial disambiguation: skip when we matched via the compound-surname
+    # fallback (the source and candidate clearly split the name differently,
+    # so strict initial checks are noise).  Only apply when BOTH sides have
+    # initials.
+    if compound_fallback:
+        return True
     if s.first_initials and c.first_initials:
         if not (set(s.first_initials) & set(c.first_initials)):
             return False

@@ -61,6 +61,7 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
         authors=candidate.get("authors", []),
         year=candidate.get("year"),
         doi=candidate.get("doi"),
+        journal=candidate.get("journal", ""),
         url=candidate.get("url", ""),
         search_url=candidate.get("search_url", ""),
         score=round(composite, 4),
@@ -111,8 +112,10 @@ def determine_verification_status(
       - "problematic": title >= 0.75 but some signal disagrees (tagged)
       - "not_found": no candidate with title >= 0.75
 
-    Problem tags (only set when "problematic"):
-      "!authors", "!doi/arXiv", "!url", "!year", "!publication"
+    Problem tags:
+      "!authors", "!doi/arXiv", "!url", "!year", "!source"
+    "!doi/arXiv", "!url", and "!source" are informational soft tags — they
+    do not prevent a "found" status.
     """
     url_liveness = url_liveness or {}
 
@@ -143,13 +146,10 @@ def determine_verification_status(
         if abs(source.year - best_match.year) > 1:
             tags.append("!year")
 
-    # Publication / source venue check (only if both have it)
-    cand_journal = _candidate_journal(best_match)
-    if source.source and cand_journal:
-        from rapidfuzz import fuzz
-        sim = fuzz.token_sort_ratio(source.source.lower(), cand_journal.lower()) / 100.0
-        if sim < 0.6:
-            tags.append("!publication")
+    # Source venue check (journal / conference / book / etc.) — informational
+    if source.source and best_match.journal:
+        if not _venues_match(source.source, best_match.journal):
+            tags.append("!source")
 
     # Non-DOI/arXiv URL liveness — flag dead links
     for url, alive in url_liveness.items():
@@ -157,13 +157,16 @@ def determine_verification_status(
             tags.append("!url")
             break
 
-    # Decision: found requires title >= FOUND threshold, no problems, authors ok
+    # Decision: found requires title >= FOUND threshold and authors ok.
+    # !doi/arXiv and !url are tolerated (the reference is still considered
+    # found when title+authors+year all agree) but the tags remain visible.
+    soft_tags = {"!doi/arXiv", "!url", "!source"}
     if (
         title >= TITLE_FOUND_THRESHOLD
-        and not tags
         and authors_ok
+        and all(t in soft_tags for t in tags)
     ):
-        return "found", []
+        return "found", tags
 
     return "problematic", tags
 
@@ -178,17 +181,6 @@ def _authors_satisfied(source: ParsedSource, best_match: MatchResult) -> bool:
     if not source.authors:
         return True
     return authors_match(source.authors, best_match.authors or [])
-
-
-def _candidate_journal(best_match: MatchResult) -> str | None:
-    """Best-effort extraction of the candidate's journal/venue name.
-
-    Verifiers don't currently set a `journal` field on MatchResult, but the
-    underlying candidate dict often had one.  We don't have access to it here,
-    so this returns None unless we add that field later.  Kept as a hook so
-    the !publication tag is opt-in.
-    """
-    return None
 
 
 def _not_found_url_tags(source: ParsedSource, url_liveness: dict[str, bool]) -> list[str]:
@@ -226,3 +218,150 @@ def _url_match_score(source: ParsedSource, candidate: dict[str, Any]) -> float:
 def _compare_authors(source_authors: list[str], candidate_authors: list[str]) -> float:
     """Return the fraction of source authors found in the candidate list."""
     return author_score(source_authors, candidate_authors)
+
+
+# ----- Source venue (journal / conference / book) matching -----------------
+
+# ISO-4 / NLM style abbreviation expansions. Tokens are matched after
+# stripping trailing dots, lowercased.
+_VENUE_ABBREV = {
+    "j": "journal", "jnl": "journal", "jrnl": "journal",
+    "trans": "transactions", "tr": "transactions",
+    "proc": "proceedings", "procs": "proceedings",
+    "conf": "conference", "symp": "symposium", "wkshp": "workshop",
+    "int": "international", "intl": "international", "natl": "national",
+    "am": "american", "amer": "american", "br": "british", "eur": "european",
+    "assoc": "association", "soc": "society", "inst": "institute",
+    "univ": "university", "rev": "review", "lett": "letters",
+    "res": "research", "stud": "studies", "sci": "science",
+    "eng": "engineering", "tech": "technology", "technol": "technology",
+    "comp": "computer", "comput": "computer", "comm": "communications",
+    "commun": "communications", "info": "information", "inf": "information",
+    "med": "medical", "biol": "biology", "biomed": "biomedical",
+    "phys": "physics", "chem": "chemistry", "math": "mathematics",
+    "psychol": "psychology", "psych": "psychology",
+    "educ": "education", "manag": "management", "mgmt": "management",
+    "bus": "business", "econ": "economics",
+    "appl": "applied", "theor": "theoretical", "exp": "experimental",
+    "adv": "advances", "ann": "annals", "arch": "archives", "bull": "bulletin",
+    "annu": "annual", "rep": "reports",
+}
+
+# Container venues that legitimately publish other conferences/workshops.
+# When the candidate journal is one of these, a conference-style source name
+# should not be flagged just because the strings differ.
+_CONTAINER_SERIES = {
+    "lecture notes in computer science",
+    "lecture notes in artificial intelligence",
+    "lecture notes in business information processing",
+    "communications in computer and information science",
+    "advances in intelligent systems and computing",
+    "advances in neural information processing systems",
+    "ceur workshop proceedings",
+    "smart innovation systems and technologies",
+    "ifip advances in information and communication technology",
+    "studies in computational intelligence",
+    "arxiv",
+}
+
+# Aggregator / host names that replace the real journal title and should
+# never be compared as venues directly.
+_AGGREGATORS = {
+    "dergipark", "trdizin", "ulakbim", "doaj", "jstor", "ssrn",
+    "researchgate", "academia.edu",
+}
+
+
+def _strip_parens(text: str) -> str:
+    return re.sub(r"\s*\([^)]*\)\s*", " ", text)
+
+
+def _canonicalise_venue(text: str) -> str:
+    s = text.lower()
+    s = _strip_parens(s)
+    # Drop common leading framings
+    s = re.sub(r"^\s*(in\s*[:\-]?\s*|in\s+proceedings\s+of\s+(the\s+)?|"
+               r"proceedings\s+of\s+(the\s+)?|proc\.?\s+of\s+(the\s+)?|"
+               r"the\s+)", "", s)
+    # Drop trailing volume / issue / edition / year noise (word-bounded so
+    # tokens like "notes" or "noise" aren't eaten by the "no" alternative).
+    s = re.sub(r",?\s*\b(vol|volume|no|issue|pp|pages?|edition)\b\.?\s*[\w\-]*", " ", s)
+    s = re.sub(r",?\s*\b\d{1,2}(st|nd|rd|th)\s+ed\b\.?", " ", s)
+    s = re.sub(r",?\s*\b(19|20)\d{2}\b", " ", s)
+    # Strip subtitle after a colon — keep the head only
+    s = s.split(":", 1)[0]
+    # Expand abbreviations token by token
+    tokens = []
+    for tok in re.split(r"[\s/,;]+", s):
+        bare = tok.strip(".·•—-")
+        if not bare:
+            continue
+        tokens.append(_VENUE_ABBREV.get(bare, bare))
+    return " ".join(tokens)
+
+
+_INITIALS_STOPWORDS = {"and", "of", "the", "in", "for", "on", "to", "a", "an", "&"}
+
+
+def _initials(text: str) -> str:
+    words = [w for w in re.findall(r"[A-Za-z]+", text) if w.lower() not in _INITIALS_STOPWORDS]
+    return "".join(w[0] for w in words)
+
+
+def _venues_match(source_venue: str, cand_journal: str) -> bool:
+    """Robust venue comparison. Returns True when the two strings plausibly
+    refer to the same venue.
+
+    Strategy:
+      1. Canonicalise both sides (lowercase, strip parens/prefix/suffix
+         noise, expand ISO-4 abbreviations).
+      2. Take the max over token_sort, token_set, and partial_ratio so that
+         subtitle / extra-token cases pass.
+      3. Initialism check: if one side is short/all-caps, compare against
+         the initials of the other side (CVPR ↔ Computer Vision and Pattern
+         Recognition).
+      4. Container-series allow-list: LNCS / CCIS / NeurIPS proceedings etc.
+         pass when the source looks like a conference or workshop.
+      5. Aggregator hosts (DergiPark, TRDizin, ...) are treated as matching
+         any source — they replace the real journal title.
+    """
+    src_raw = (source_venue or "").strip()
+    cand_raw = (cand_journal or "").strip()
+    if not src_raw or not cand_raw:
+        return True  # nothing meaningful to compare
+
+    src = _canonicalise_venue(src_raw)
+    cand = _canonicalise_venue(cand_raw)
+    if not src or not cand:
+        return True
+
+    # Aggregator host on candidate side
+    if any(agg in cand for agg in _AGGREGATORS):
+        return True
+
+    # Container series on candidate side: accept unconditionally. The
+    # title+author signals at the caller already establish the candidate
+    # really is the cited work; a container-series journal name simply
+    # means the publisher rolled the work into a series and shouldn't be
+    # double-flagged.
+    if any(series in cand for series in _CONTAINER_SERIES):
+        return True
+
+    # Multi-strategy fuzzy. Deliberately omit partial_ratio — single-token
+    # overlaps ("IEEE", "Sensors") inflate it and produce false negatives
+    # on the !source tag.
+    best = max(
+        fuzz.token_sort_ratio(src, cand),
+        fuzz.token_set_ratio(src, cand),
+    ) / 100.0
+    if best >= 0.6:
+        return True
+
+    # Initialism: short/all-caps acronym vs expanded title
+    short, long = (src_raw, cand_raw) if len(src_raw) <= len(cand_raw) else (cand_raw, src_raw)
+    short_clean = re.sub(r"[^A-Za-z]", "", short)
+    if 2 <= len(short_clean) <= 8 and short_clean.isupper():
+        if short_clean.lower() == _initials(long).lower():
+            return True
+
+    return False

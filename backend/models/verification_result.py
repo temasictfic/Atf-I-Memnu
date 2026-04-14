@@ -14,6 +14,7 @@ class MatchResult(BaseModel):
     authors: list[str] = []
     year: int | None = None
     doi: str | None = None
+    journal: str = ""
     url: str = ""
     search_url: str = ""
     score: float = 0.0
@@ -24,8 +25,8 @@ class VerificationResult(BaseModel):
     source_id: str
     # Status values: pending, in_progress, found, problematic, not_found
     status: str = "pending"
-    # Problem tags for "problematic" status — values:
-    # "!authors", "!doi/arXiv", "!url", "!year", "!publication"
+    # Problem tags — values:
+    # "!authors", "!doi/arXiv", "!url", "!year", "!source"
     problem_tags: list[str] = []
     # URL -> liveness map (for non-doi/arXiv URLs that were checked)
     url_liveness: dict[str, bool] = {}

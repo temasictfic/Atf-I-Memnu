@@ -166,6 +166,85 @@ def test_extractor_vancouver_complete_no_overpairing() -> None:
     assert authors_match(out, ["Savran, Arman", "Sankur, Bülent"])
 
 
+def test_authors_match_compound_surname_wrongly_cited() -> None:
+    # Source cited the name backwards ("G. Bo-Cai" instead of "B.-C. Gao").
+    # Candidate is the correct "Gao, Bo-cai". Compound-surname fallback
+    # via given_full, and initial disambiguation is skipped because the
+    # source clearly mangled the family/given split.
+    assert authors_match(["G. Bo-Cai"], ["Gao, Bo-cai"])
+
+
+def test_authors_match_ocr_typo_with_matching_initials() -> None:
+    # "Dewor" vs "Devor" — one-letter typo, both have A.W. initials
+    assert authors_match(["Dewor, A.W"], ["Devor, A. W."])
+    # "Akalin" vs "Akalm" — OCR on Turkish diacritic, prefix-based match
+    assert authors_match(["F. Akalin"], ["Fatma Akalm"])
+    # Safety: unrelated surnames with same initials should still fail
+    assert not authors_match(["Smith, J"], ["Jones, J"])
+
+
+def test_extractor_lowercase_particle_initials() -> None:
+    # "A.-r." (Abdel-rahman), "A. u." (Aziz ul), "C. d. S." (Brazilian)
+    from services.source_extractor import _parse_standard_authors
+    out = _parse_standard_authors("Mohamed, A.-r., Jaitly, N., Senior, A.")
+    assert out[0] == "Mohamed, A.-r."
+    out2 = _parse_standard_authors("Rehman, A. u., Qureshi, S. A.")
+    assert out2[0] == "Rehman, A. u."
+    out3 = _parse_standard_authors("Pires, C. d. S., Marba, S. T. M.")
+    assert out3[0] == "Pires, C. d. S."
+
+
+def test_extractor_rule4_continues_on_surname_comma_initial() -> None:
+    # Regression for 126E151_ref_37: "Hinton, G., Deng, L., ..." — the
+    # first ". , " must NOT be treated as end of authors.
+    from services.source_extractor import _extract_source_fields_regex
+    raw = (
+        '[37] Hinton, G., Deng, L., Yu, D., Dahl, G. E., Mohamed, A.-r., '
+        'Jaitly, N., Senior, A., Vanhoucke, V., Nguyen, P., Sainath, T. N., '
+        'et al., "Deep neural networks for acoustic modeling in speech '
+        'recognition," Signal Processing Magazine 29(6), 82-97 (2012).'
+    )
+    src = _extract_source_fields_regex(raw)
+    # Expect at least the 10 named authors (et al. is dropped).
+    assert len(src.authors) >= 10, f"got {src.authors}"
+    assert authors_match(
+        src.authors,
+        [
+            "G. Hinton", "L. Deng", "Dong Yu", "George E. Dahl",
+            "Abdel-rahman Mohamed", "N. Jaitly", "A. Senior",
+            "Vincent Vanhoucke", "Patrick Nguyen", "Tara N. Sainath",
+        ],
+    )
+
+
+def test_extractor_strips_parenthesized_trailing_year() -> None:
+    # "F. AKALIN (2025)" — the parenthesized year must be stripped so
+    # the author list resolves to just "F. AKALIN".
+    from services.source_extractor import _extract_source_fields_regex
+    raw = (
+        'F. AKALIN (2025), "Detection and Classification of Heart Rhythms '
+        'With Optimized MobileNetv2 Transfer Learning," Journal, 2025.'
+    )
+    src = _extract_source_fields_regex(raw)
+    assert src.authors == ["F. AKALIN"], f"got {src.authors}"
+
+
+def test_extractor_quoted_nickname_inside_authors() -> None:
+    # 126E147_ref_141: "Um, E. \"Rachel\", Plass, J. L., ..." — the
+    # embedded quoted nickname used to truncate authors or confuse
+    # pairing. All 4 authors should be extracted and matched.
+    from services.source_extractor import _extract_source_fields_regex
+    raw = (
+        'Um, E. "Rachel", Plass, J. L., Hayward, E. O., Homer, B. D. '
+        '(2012). Emotional design in multimedia learning. Journal of '
+        'Educational Psychology, 104(2), 485-498. doi:10.1037/a0026609'
+    )
+    src = _extract_source_fields_regex(raw)
+    assert len(src.authors) == 4, f"expected 4 authors, got {src.authors}"
+    cand = ['Um, Eunjoon "Rachel"', "Plass, Jan L.", "Hayward, Elizabeth O.", "Homer, Bruce D."]
+    assert authors_match(src.authors, cand)
+
+
 def test_parse_display_name_with_particles() -> None:
     p = parse_author("Johan Van Der Berg")
     assert p.last == "van der berg", f"got {p.last!r}"
@@ -268,6 +347,12 @@ if __name__ == "__main__":
         test_authors_match_compound_surname_split_by_api,
         test_relaxed_initial_disambiguation_when_multiple_surnames_match,
         test_extractor_vancouver_complete_no_overpairing,
+        test_authors_match_compound_surname_wrongly_cited,
+        test_authors_match_ocr_typo_with_matching_initials,
+        test_extractor_lowercase_particle_initials,
+        test_extractor_rule4_continues_on_surname_comma_initial,
+        test_extractor_strips_parenthesized_trailing_year,
+        test_extractor_quoted_nickname_inside_authors,
         test_parse_display_name_with_particles,
         test_authors_match_ieee_vs_standard,
         test_authors_match_vancouver_vs_full,
