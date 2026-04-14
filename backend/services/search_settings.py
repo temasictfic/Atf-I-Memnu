@@ -42,6 +42,24 @@ def get_max_concurrent_pdfs() -> int:
     return max(1, min(configured, 10))
 
 
+def get_polite_pool_email() -> str | None:
+    """Return the configured polite-pool contact email (or None).
+
+    Reads the dedicated ``polite_pool_email`` field first, then falls back
+    to the legacy ``api_keys['openalex']`` slot that historically doubled as
+    a mailto. Returns ``None`` when neither is set so callers can decide
+    whether to drop the mailto entirely instead of sending a fake address.
+    """
+    try:
+        s = get_current_settings()
+    except Exception:
+        return None
+    email = (s.polite_pool_email or "").strip()
+    if not email:
+        email = (s.api_keys.get("openalex", "") or "").strip()
+    return email or None
+
+
 def get_client_timeout(multiplier: float = 1.0) -> aiohttp.ClientTimeout:
     """Build an aiohttp timeout using the effective search timeout."""
     total = int(round(get_search_timeout_seconds() * max(multiplier, 0.1)))

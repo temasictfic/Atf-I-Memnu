@@ -18,6 +18,7 @@ from services.search_settings import (
 from services.source_extractor import extract_source_fields
 from services.url_checker import check_urls, is_doi_or_arxiv_url
 from utils.text_cleaning import clean_reference_text, strip_reference_noise
+from verifiers._http import RateLimitedError
 
 
 # --- Cancellation registry ---
@@ -73,6 +74,25 @@ def _supports_api_key_argument(search_fn: Any) -> bool:
         return False
 
 
+def _is_strong_match(result: MatchResult | None) -> bool:
+    """Return True when a single verifier's result is strong enough to
+    cancel the remaining parallel verifiers for this source.
+
+    Only triggers on a rock-solid signal: composite score ≥ 0.95 *and* a
+    URL/DOI/arXiv-ID match from the match_scorer. That combination is
+    almost exclusive to DOI lookups (or direct arXiv-ID lookups), which
+    are the cases where continuing to query 9 more APIs is pure quota
+    waste — no other DB is going to improve on a DOI-exact hit. Ambiguous
+    references (title-only, editor citations, retracted-era works) stay
+    below this threshold and correctly exercise the full verifier fleet.
+    """
+    if result is None:
+        return False
+    if result.score < 0.95:
+        return False
+    return bool(result.match_details.url_match)
+
+
 async def verify_pdf_sources(
     pdf_id: str,
     sources: list[SourceRectangle],
@@ -86,12 +106,12 @@ async def verify_pdf_sources(
 
     source_semaphore = asyncio.Semaphore(get_max_concurrent_sources_per_pdf())
 
-    async def verify_with_limit(source: SourceRectangle):
+    async def verify_with_limit(source: SourceRectangle, index: int):
         async with source_semaphore:
-            await _verify_source(pdf_id, source, results_store)
+            await _verify_source(pdf_id, source, results_store, index)
 
     # Create tasks and register for cancellation
-    asyncio_tasks = [asyncio.create_task(verify_with_limit(s)) for s in sources]
+    asyncio_tasks = [asyncio.create_task(verify_with_limit(s, i)) for i, s in enumerate(sources)]
     for t in asyncio_tasks:
         _register_task(pdf_id, t)
 
@@ -148,7 +168,7 @@ async def verify_single_source(
     )
 
     try:
-        await _verify_source(pdf_id, temp_source, results_store)
+        await _verify_source(pdf_id, temp_source, results_store, 0)
     except asyncio.CancelledError:
         pass
     finally:
@@ -179,6 +199,7 @@ async def _verify_source(
     pdf_id: str,
     source: SourceRectangle,
     results_store: dict[str, dict[str, VerificationResult]],
+    source_index: int = 0,
 ):
     """Verify a single source against all databases."""
     source_id = source.id
@@ -251,6 +272,7 @@ async def _verify_source(
             enabled_db_configs,
             api_semaphore,
             search_timeout,
+            source_index,
         )
         all_matches.extend(tier1_results["matches"])
         databases_searched.extend(tier1_results["searched"])
@@ -295,6 +317,7 @@ async def _run_tier1_apis(
     enabled_db_configs: dict[str, DatabaseConfig],
     api_semaphore: asyncio.Semaphore,
     search_timeout: int,
+    source_index: int = 0,
 ) -> dict[str, Any]:
     """Run all Tier 1 API verifiers in parallel."""
     from verifiers.crossref import search as crossref_search
@@ -328,6 +351,12 @@ async def _run_tier1_apis(
         entry = verifier_registry.get(db_id)
         if entry:
             verifiers.append((db_id, entry[0], entry[1]))
+
+    # Rotate by source index so concurrent sources start on different DBs,
+    # avoiding per-DB rate-limit bursts from lockstep traversal.
+    if verifiers:
+        offset = source_index % len(verifiers)
+        verifiers = verifiers[offset:] + verifiers[:offset]
 
     matches: list[MatchResult] = []
     searched: list[str] = []
@@ -383,6 +412,50 @@ async def _run_tier1_apis(
                     "db_status": "timeout",
                     "search_url": fallback_url,
                 })
+            except asyncio.CancelledError:
+                # Short-circuit cancel from the short-circuit path: a
+                # sibling verifier landed a strong DOI-exact match, so
+                # we're being cancelled mid-flight. Emit a distinct
+                # "skipped" event (shielded so the broadcast actually
+                # completes even though our task is being torn down),
+                # then re-raise so the task terminates cancelled.
+                if name not in searched:
+                    searched.append(name)
+                    try:
+                        await asyncio.shield(manager.broadcast("verify_db_checked", {
+                            "pdf_id": pdf_id,
+                            "source_id": source_id,
+                            "database": name,
+                            "found": False,
+                            "db_status": "skipped",
+                            "search_url": fallback_url,
+                        }))
+                    except Exception:
+                        pass
+                raise
+            except RateLimitedError as e:
+                # 429 from upstream — distinct from "no match" and from a
+                # hard error, so the UI can show it as a transient state
+                # rather than silently marking the source not_found.
+                searched.append(name)
+                retry_msg = (
+                    f" (retry-after {e.retry_after:.0f}s)"
+                    if e.retry_after is not None else ""
+                )
+                await manager.send_log(
+                    "warning",
+                    f"{name} rate limited{retry_msg}",
+                    pdf_id=pdf_id, source_id=source_id, database=name,
+                )
+                await manager.broadcast("verify_db_checked", {
+                    "pdf_id": pdf_id,
+                    "source_id": source_id,
+                    "database": name,
+                    "found": False,
+                    "db_status": "rate_limited",
+                    "retry_after": e.retry_after,
+                    "search_url": fallback_url,
+                })
             except Exception as e:
                 searched.append(name)
                 await manager.send_log("warning", f"{name} search failed: {e}",
@@ -397,10 +470,42 @@ async def _run_tier1_apis(
                     "search_url": fallback_url,
                 })
 
-    await asyncio.gather(
-        *[run_verifier(db_id, name, fn) for db_id, name, fn in verifiers],
-        return_exceptions=True,
-    )
+    # Create all verifier tasks up front, then walk as_completed so we can
+    # inspect results as they land and short-circuit when one verifier
+    # returns a strong DOI-exact match. Siblings still in flight get
+    # cancelled, their CancelledError handlers emit "skipped" dots, and
+    # the finally block gathers them so cleanup completes before we
+    # return. On ambiguous references no verifier crosses the threshold
+    # and every task runs to normal completion, exactly like before.
+    tasks = [
+        asyncio.create_task(run_verifier(db_id, name, fn))
+        for db_id, name, fn in verifiers
+    ]
+    try:
+        for fut in asyncio.as_completed(tasks):
+            try:
+                await fut
+            except asyncio.CancelledError:
+                # Re-raised from run_verifier's cancel handler after it
+                # emitted the "skipped" event. Swallow here so the
+                # as_completed loop keeps progressing.
+                pass
+            except Exception:
+                # Other exceptions are already handled inside run_verifier
+                # (they broadcast their own error/timeout/rate_limited
+                # events). Don't let them break the as_completed walk.
+                pass
+
+            if any(_is_strong_match(m) for m in matches):
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                break
+    finally:
+        # Wait for any still-running tasks (either cancelled short-circuit
+        # tasks finishing their cleanup, or the normal-path case where we
+        # broke out after the last task) to fully settle.
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     return {"matches": matches, "searched": searched}
 

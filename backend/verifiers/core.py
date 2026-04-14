@@ -9,10 +9,12 @@ from urllib.parse import quote
 
 from models.source import ParsedSource
 from models.verification_result import MatchResult
+from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from verifiers._http import get_session
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 CORE_API = "https://api.core.ac.uk/v3/search/works"
+_HOST = "api.core.ac.uk"
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -54,7 +56,10 @@ async def _search_query(
         "limit": "5",
     }
 
+    check_parked_url(CORE_API)
+    await rate_limiter.acquire(_HOST)
     async with session.get(CORE_API, params=params, headers=headers) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()

@@ -6,7 +6,7 @@ from urllib.parse import quote
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from verifiers._http import get_session
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 EUROPE_PMC_API = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
 
@@ -37,7 +37,9 @@ async def _search_query(
         "format": "json",
         "pageSize": "5",
     }
+    check_parked_url(EUROPE_PMC_API)
     async with session.get(EUROPE_PMC_API, params=params) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()

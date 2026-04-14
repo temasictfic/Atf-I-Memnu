@@ -8,7 +8,7 @@ import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from verifiers._http import get_session
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 TRDIZIN_API = "https://search.trdizin.gov.tr/api/defaultSearch/publication/"
 
@@ -29,7 +29,9 @@ async def search(source: ParsedSource) -> MatchResult | None:
     search_url = f"https://search.trdizin.gov.tr/tr/yayin/ara?q={quote(query, safe=',')}&order=relevance-DESC&page=1&limit=20"
 
     session = get_session()
+    check_parked_url(TRDIZIN_API)
     async with session.get(TRDIZIN_API, params=params) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()

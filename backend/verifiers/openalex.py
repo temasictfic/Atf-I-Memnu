@@ -7,10 +7,13 @@ import aiohttp
 
 from models.source import ParsedSource
 from models.verification_result import MatchResult
+from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from verifiers._http import get_session
+from services.search_settings import get_polite_pool_email
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 OPENALEX_API = "https://api.openalex.org/works"
+_HOST = "api.openalex.org"
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -19,7 +22,12 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     Title-only queries produce better, more targeted results.  The extracted
     fields (authors, year, journal) are used for *scoring*, not querying.
     A ±1-year publication-date filter is added when the source year is known.
-    Optional ``api_key`` is used as the ``mailto`` parameter for polite pool access.
+
+    Polite-pool access: we attach a ``mailto`` only when the user has
+    configured a real contact email (via ``polite_pool_email`` setting, or
+    the legacy ``api_keys['openalex']`` slot forwarded as ``api_key``).
+    Sending a fake mailto kept us in the anonymous pool *and* looked like
+    spam, which is exactly what happened to our shared office IP.
     """
     query = source.title
     if not query:
@@ -28,8 +36,10 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     params: dict[str, str] = {
         "search": query,
         "per_page": "5",
-        "mailto": api_key or "atfimemnu@example.com",
     }
+    mailto = (get_polite_pool_email() or (api_key or "").strip()) or None
+    if mailto:
+        params["mailto"] = mailto
 
     # Year-range filter: keeps only works published within ±1 year of the
     # citation year, which is usually enough to exclude other editions.
@@ -57,7 +67,10 @@ async def _fetch_best_match(
     source: ParsedSource,
 ) -> MatchResult | None:
     """Execute one OpenAlex request and return the highest-scoring match."""
+    check_parked_url(OPENALEX_API)
+    await rate_limiter.acquire(_HOST)
     async with session.get(OPENALEX_API, params=params) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()

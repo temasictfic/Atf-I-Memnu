@@ -10,18 +10,41 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
+from services.search_settings import get_polite_pool_email
 from utils.doi_extractor import extract_arxiv_id
-from verifiers._http import get_session
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
-ARXIV_API = "http://export.arxiv.org/api/query"
+ARXIV_API = "https://export.arxiv.org/api/query"
 NS = {"atom": "http://www.w3.org/2005/Atom"}
 
 
-def _build_arxiv_query(source: ParsedSource, with_author: bool = True) -> str:
-    """Build an arXiv structured query.
+def _build_headers() -> dict[str, str]:
+    """Return a User-Agent header; includes polite-pool mailto when configured.
 
-    With author:    ti:"{sanitized title}" AND au:{lastname}
-    Without author: ti:"{sanitized title}"
+    arXiv's Terms of Use ask API users to identify themselves via User-Agent
+    so operators can contact us if a client misbehaves. A real mailto also
+    reduces the chance of soft-blocks during traffic spikes.
+    """
+    email = get_polite_pool_email()
+    if email:
+        ua = f"AtfiMemnu/1.0 (Citation Search and Verification; mailto:{email})"
+    else:
+        ua = "AtfiMemnu/1.0 (Citation Search and Verification)"
+    return {"User-Agent": ua}
+
+
+def _build_arxiv_query(source: ParsedSource) -> str:
+    """Build an arXiv structured title query: ti:"{sanitized title}".
+
+    Title-only by design. The previous implementation optionally ANDed
+    ``au:{lastname}`` onto the query, but our author extraction depends
+    on NER output being in ``"Family, Given"`` shape; for references
+    parsed as ``"Given Family"`` the splitter returns the whole string
+    and arXiv's strict ``au:`` operator filters out what would otherwise
+    be correct matches. On distinctive arXiv titles the author filter
+    contributes almost nothing anyway — arXiv's corpus is small and its
+    title index is strong — so dropping it improves recall without
+    costing precision.
 
     The date filter is intentionally omitted: arXiv preprints are often
     submitted months or years before the citing paper's publication year,
@@ -43,14 +66,7 @@ def _build_arxiv_query(source: ParsedSource, with_author: bool = True) -> str:
     sanitized = re.sub(r'[:"+!(){}\[\]^~*?/\\-]', " ", title)
     sanitized = " ".join(sanitized.split())  # collapse whitespace
 
-    parts = [f'ti:"{sanitized}"']
-
-    if with_author and source.authors:
-        last_name = source.authors[0].split(",")[0].strip()
-        if last_name:
-            parts.append(f"au:{last_name}")
-
-    return " AND ".join(parts)
+    return f'ti:"{sanitized}"'
 
 
 def _strip_arxiv_version(url: str) -> str:
@@ -98,20 +114,14 @@ async def search(source: ParsedSource) -> MatchResult | None:
             return result
 
     # ── Priority 2: title-based search ──────────────────────────────
+    # Single title-only request. Author filter was removed because our
+    # NER-based author extraction can't reliably produce the lastname
+    # arXiv's strict ``au:`` operator needs, and arXiv's title index is
+    # strong enough that authors rarely help disambiguate anyway.
     if not (source.title or source.raw_text):
         return None
 
-    best = await _fetch_best_match(
-        session, _build_arxiv_query(source, with_author=True), source
-    )
-
-    # Fallback: author filter may be wrong, retry without it.
-    if best is None:
-        best = await _fetch_best_match(
-            session, _build_arxiv_query(source, with_author=False), source
-        )
-
-    return best
+    return await _fetch_best_match(session, _build_arxiv_query(source), source)
 
 
 async def _lookup_by_id(
@@ -121,7 +131,9 @@ async def _lookup_by_id(
 ) -> MatchResult | None:
     """Fetch a single arXiv paper by its ID using the id_list parameter."""
     params = {"id_list": arxiv_id}
-    async with session.get(ARXIV_API, params=params) as resp:
+    check_parked_url(ARXIV_API)
+    async with session.get(ARXIV_API, params=params, headers=_build_headers()) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         text = await resp.text()
@@ -138,7 +150,9 @@ async def _fetch_best_match(
         "search_query": search_query,
         "max_results": "5",
     }
-    async with session.get(ARXIV_API, params=params) as resp:
+    check_parked_url(ARXIV_API)
+    async with session.get(ARXIV_API, params=params, headers=_build_headers()) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         text = await resp.text()

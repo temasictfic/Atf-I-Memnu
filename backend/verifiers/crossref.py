@@ -8,13 +8,30 @@ import aiohttp
 
 from models.source import ParsedSource
 from models.verification_result import MatchResult
+from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from verifiers._http import get_session
+from services.search_settings import get_polite_pool_email
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 CROSSREF_API = "https://api.crossref.org/works"
-HEADERS = {
-    "User-Agent": "AtfiMemnu/1.0 (Citation Search and Verification; mailto:atfimemnu@example.com)"
-}
+_HOST = "api.crossref.org"
+
+
+def _build_headers() -> dict[str, str]:
+    """Return a User-Agent header advertising the polite-pool mailto, when set.
+
+    Crossref routes requests carrying a real contact mailto into the "polite"
+    pool with much higher rate limits than the anonymous public pool. Without
+    a configured email we intentionally send a plain UA rather than a fake
+    ``mailto:example.com`` that still keeps us in the public pool and looks
+    like spam to Crossref's operators.
+    """
+    email = get_polite_pool_email()
+    if email:
+        ua = f"AtfiMemnu/1.0 (Citation Search and Verification; mailto:{email})"
+    else:
+        ua = "AtfiMemnu/1.0 (Citation Search and Verification)"
+    return {"User-Agent": ua}
 
 
 async def search_by_doi(source: ParsedSource) -> MatchResult | None:
@@ -24,7 +41,10 @@ async def search_by_doi(source: ParsedSource) -> MatchResult | None:
 
     session = get_session()
     url = f"{CROSSREF_API}/{quote(source.doi, safe='')}"
-    async with session.get(url, headers=HEADERS) as resp:
+    check_parked_url(url)
+    await rate_limiter.acquire(_HOST)
+    async with session.get(url, headers=_build_headers()) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()
@@ -121,11 +141,21 @@ async def search(source: ParsedSource) -> MatchResult | None:
             if k not in {"query.container-title", "query.author", "filter"}
         })
 
+    # Walk the variant list, but break out as soon as a variant lands a
+    # DOI-exact hit (score ≥ 0.95 with a URL/DOI match). That's the same
+    # threshold the orchestrator uses to cancel sibling verifiers, and
+    # it covers the common case where the very first variant already
+    # returns a perfect match via Crossref's own relevance ranker. On
+    # ambiguous references where no variant crosses the bar, every
+    # variant still runs and the best scoring result wins — exactly the
+    # behaviour we had before, just skipped for the easy cases.
     best: MatchResult | None = None
     for variant in variants:
         result = await _fetch_best_match(session, variant, source)
         if result and (best is None or result.score > best.score):
             best = result
+        if best and best.score >= 0.95 and best.match_details.url_match:
+            break
 
     return best
 
@@ -136,7 +166,10 @@ async def _fetch_best_match(
     source: ParsedSource,
 ) -> MatchResult | None:
     """Execute one Crossref API request and return the highest-scoring match."""
-    async with session.get(CROSSREF_API, params=params, headers=HEADERS) as resp:
+    check_parked_url(CROSSREF_API)
+    await rate_limiter.acquire(_HOST)
+    async with session.get(CROSSREF_API, params=params, headers=_build_headers()) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()

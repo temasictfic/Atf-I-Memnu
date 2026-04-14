@@ -10,7 +10,7 @@ from urllib.parse import quote
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from verifiers._http import get_session
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 SEARCH_API = "https://openlibrary.org/search.json"
 
@@ -44,7 +44,9 @@ async def _search_query(
     """Execute an Open Library search and return the best match."""
     params = {**params, "limit": "5", "fields": "title,author_name,first_publish_year,isbn,key,publisher,subject"}
 
+    check_parked_url(SEARCH_API)
     async with session.get(SEARCH_API, params=params) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()

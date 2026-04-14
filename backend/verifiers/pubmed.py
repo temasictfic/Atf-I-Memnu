@@ -10,11 +10,13 @@ from urllib.parse import quote
 
 from models.source import ParsedSource
 from models.verification_result import MatchResult
+from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from verifiers._http import get_session
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+_HOST = "eutils.ncbi.nlm.nih.gov"
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -55,7 +57,10 @@ async def _search_query(
         params["api_key"] = api_key
 
     # Step 1: ESearch to get PMIDs
+    check_parked_url(ESEARCH_URL)
+    await rate_limiter.acquire(_HOST)
     async with session.get(ESEARCH_URL, params=params) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()
@@ -72,7 +77,10 @@ async def _search_query(
     if api_key:
         summary_params["api_key"] = api_key
 
+    check_parked_url(ESUMMARY_URL)
+    await rate_limiter.acquire(_HOST)
     async with session.get(ESUMMARY_URL, params=summary_params) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()

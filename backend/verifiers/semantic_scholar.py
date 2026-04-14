@@ -7,10 +7,12 @@ import aiohttp
 
 from models.source import ParsedSource
 from models.verification_result import MatchResult
+from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from verifiers._http import get_session
+from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+_HOST = "api.semanticscholar.org"
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -57,7 +59,10 @@ async def _fetch_best_match(
     headers: dict[str, str] | None = None,
 ) -> MatchResult | None:
     """Execute one S2 request and return the highest-scoring match."""
+    check_parked_url(API_URL)
+    await rate_limiter.acquire(_HOST)
     async with session.get(API_URL, params=params, headers=headers or {}) as resp:
+        check_rate_limit(resp)
         if resp.status != 200:
             return None
         data = await resp.json()
