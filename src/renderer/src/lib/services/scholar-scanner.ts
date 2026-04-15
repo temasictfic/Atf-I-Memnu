@@ -249,23 +249,20 @@ export class ScholarScanner {
       console.warn('[Scholar] onCaptchaResolved failed:', err)
     }
 
-    // Score whatever we got (may be empty — that's OK, we still advance)
+    // Always score, even with an empty candidate list, so the backend records
+    // "Google Scholar" in databases_searched and the UI gets its GS link.
     let updated = false
-    if (candidates.length > 0) {
-      try {
-        const response = await api.scoreScholar(
-          item.pdfId,
-          item.sourceId,
-          item.searchText,
-          candidates,
-        )
-        updated = response.updated
-        if (updated) this.foundCount++
-      } catch (err) {
-        this.callbacks?.onError(item.sourceId, `Scoring error: ${err}`)
-      }
-    } else {
-      console.log('[Scholar] No candidates extracted — skipping this reference')
+    try {
+      const response = await api.scoreScholar(
+        item.pdfId,
+        item.sourceId,
+        item.searchText,
+        candidates,
+      )
+      updated = response.updated
+      if (updated) this.foundCount++
+    } catch (err) {
+      this.callbacks?.onError(item.sourceId, `Scoring error: ${err}`)
     }
     this.callbacks?.onSourceDone(item.sourceId, updated)
 
@@ -331,15 +328,15 @@ export class ScholarScanner {
       // of serially after it. Only pre-reserve when a next iteration will
       // actually exist — otherwise the reservation is wasted and leaves
       // `lastRequest` stale at shutdown.
-      const scorePromise: Promise<{ updated: boolean } | null> =
-        candidates.length > 0
-          ? api
-              .scoreScholar(item.pdfId, item.sourceId, item.searchText, candidates)
-              .catch((err) => {
-                this.callbacks?.onError(item.sourceId, `Scoring error: ${err}`)
-                return null
-              })
-          : Promise.resolve(null)
+      // Always call scoreScholar — even with an empty candidate list — so the
+      // backend records "Google Scholar" in databases_searched and broadcasts
+      // it to the UI. Without this, a scanned-but-empty source has no GS link.
+      const scorePromise: Promise<{ updated: boolean } | null> = api
+        .scoreScholar(item.pdfId, item.sourceId, item.searchText, candidates)
+        .catch((err) => {
+          this.callbacks?.onError(item.sourceId, `Scoring error: ${err}`)
+          return null
+        })
 
       if (this.currentIndex + 1 < this.queue.length && !this.cancelRequested) {
         nextSlotWait = this.rateLimiter.waitForSlot()

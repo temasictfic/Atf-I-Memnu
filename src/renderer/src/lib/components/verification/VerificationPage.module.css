@@ -169,11 +169,12 @@
 .center-empty-icon { font-size: 48px; opacity: 0.3; }
 
 .card-toolbar {
+  position: relative;
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
-  padding: 0 16px;
+  padding: 0 26px 0 16px;
   height: 48px;
   box-sizing: border-box;
   background: rgba(250, 250, 249, 0.92);
@@ -181,25 +182,60 @@
   border-bottom: 1px solid #e7e5e4;
 }
 .toolbar-left { display: flex; align-items: center; gap: 10px; justify-self: start; }
-.toolbar-center { justify-self: center; }
+.toolbar-center { justify-self: stretch; width: auto; min-width: 0; padding: 0 12px; }
 .toolbar-count {
   font-size: 11px;
   font-weight: 600;
   color: #78716c;
 }
-.toolbar-btn {
-  font-size: 10px;
+.toolbar-search {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  left: calc(var(--tab-left-vp, 0px) - 260px);
+  width: calc(var(--tab-right-vp, 100%) - var(--tab-left-vp, 0px));
+  font-size: 11px;
   font-weight: 600;
-  padding: 3px 8px;
+  padding: 4px 12px;
+  border: 1px solid #d6d3d1;
+  border-radius: 5px;
+  background: white;
+  color: #44403c;
+  outline: none;
+  transition: border-color 0.1s, box-shadow 0.1s;
+  box-sizing: border-box;
+  line-height: 1.2;
+}
+.toolbar-search:focus {
+  border-color: #a8a29e;
+  box-shadow: 0 0 0 2px rgba(168, 162, 158, 0.2);
+}
+.toolbar-search::placeholder { color: #a8a29e; }
+.toolbar-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
   border: 1px solid #d6d3d1;
   background: white;
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
   color: #78716c;
   transition: all 0.1s;
+  box-sizing: border-box;
+  line-height: 1.2;
 }
 .toolbar-btn:hover { border-color: #a8a29e; color: #44403c; }
 .toolbar-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.toolbar-btn.toolbar-btn-enable-all {
+  border-color: #d97706;
+  background: #fef3c7;
+  color: #d97706;
+}
+.toolbar-btn.toolbar-btn-enable-all:hover:not(:disabled) {
+  border-color: #d97706;
+  background: #d97706;
+  color: #fef3c7;
+}
 .toolbar-btn-accent {
   border-color: #d97706;
   color: #d97706;
@@ -211,11 +247,16 @@
 .card-list {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+.card-list::-webkit-scrollbar { width: 10px; }
+.card-list::-webkit-scrollbar-thumb { background: #d6d3d1; border-radius: 5px; }
+.card-list::-webkit-scrollbar-thumb:hover { background: #a8a29e; }
+.card-list::-webkit-scrollbar-track { background: transparent; }
 
 .scholar-overlay {
   position: absolute;
@@ -517,13 +558,13 @@
 
 /* Right panel */
 .verify-right {
+  position: relative;
   background: #fafaf9;
   border-left: 1px solid #e7e5e4;
   overflow: hidden;
-  padding: 16px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
 }
 
 .detail-body {
@@ -532,7 +573,8 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  padding: 12px 16px 16px 16px;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -557,20 +599,28 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 16px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  border-bottom: 1px solid #e7e5e4;
 }
 
 .detail-header { display: flex; align-items: center; gap: 8px; }
 .detail-ref-badge {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: #d97706;
   background: #fef3c7;
-  padding: 2px 8px;
+  padding: 4px 12px;
   border-radius: 5px;
-  border: 1px solid transparent;
+  border: 1px solid #d97706;
   cursor: pointer;
   transition: all 0.15s;
   flex-shrink: 0;
+  box-sizing: border-box;
+  line-height: 1.2;
 }
 .detail-ref-badge:hover { border-color: #d97706; background: #fde68a; }
 .detail-status-badge {
@@ -733,6 +783,7 @@
 }
 .match-title { font-size: 12px; font-weight: 600; color: #44403c; line-height: 1.4; }
 .match-meta { font-size: 10px; color: #78716c; line-height: 1.4; }
+.match-source { font-size: 10px; font-style: italic; color: #57534e; line-height: 1.4; margin-top: 2px; }
 .match-meta-row { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #78716c; flex-wrap: wrap; }
 .match-doi { color: #d97706; word-break: break-all; }
 .match-db {

@@ -333,13 +333,13 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   toggleCardSort: (key) =>
     set(state => {
       if (state.cardSortKey === key) return { cardSortAsc: !state.cardSortAsc }
-      return { cardSortKey: key, cardSortAsc: true }
+      return { cardSortKey: key, cardSortAsc: false }
     }),
 
   togglePdfSort: (key) =>
     set(state => {
       if (state.pdfSortKey === key) return { pdfSortAsc: !state.pdfSortAsc }
-      return { pdfSortKey: key, pdfSortAsc: true }
+      return { pdfSortKey: key, pdfSortAsc: false }
     }),
 
   initSourceVerifyState: (pdfId, sources) =>
@@ -1029,7 +1029,9 @@ export function initVerificationListeners(): () => void {
             url_liveness: (data.url_liveness as Record<string, boolean>) ?? {},
             best_match: data.best_match as any,
             all_results: (data.all_results as any[]) ?? [],
-            databases_searched: existing[sourceId]?.databases_searched ?? [],
+            databases_searched: (data.databases_searched as string[] | undefined)
+              ?? existing[sourceId]?.databases_searched
+              ?? [],
           },
         }
 

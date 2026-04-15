@@ -4,6 +4,7 @@ import { scholarScanner } from '../services/scholar-scanner'
 import { useVerificationStore } from './verification-store'
 import { useSourcesStore } from './sources-store'
 import { sanitizeReferenceTextForSearch } from '../utils/reference-text'
+import { api } from '../api/rest-client'
 
 interface ScholarScanState {
   status: ScholarScanStatus
@@ -13,10 +14,12 @@ interface ScholarScanState {
   foundCount: number
   captchaUrl: string | null
   currentSourceId: string | null
+  lastDoneSourceId: string | null
+  lastDoneUpdated: boolean | null
   closeOverlayFn: (() => void) | null
 
-  startScanForPdf: (pdfId: string) => void
-  startScanForSource: (pdfId: string, sourceId: string) => void
+  startScanForPdf: (pdfId: string) => Promise<void>
+  startScanForSource: (pdfId: string, sourceId: string) => Promise<void>
   cancelScan: () => void
   resumeAfterCaptcha: () => void
   setCloseOverlayFn: (fn: (() => void) | null) => void
@@ -37,28 +40,72 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     onError: (_sourceId, _error) => {
       // Errors are non-fatal; scanner continues to next item
     },
-    onSourceDone: (sourceId, _updated) => set({ currentSourceId: sourceId }),
+    onSourceDone: (sourceId, updated) => {
+      set({ currentSourceId: sourceId, lastDoneSourceId: sourceId, lastDoneUpdated: updated })
+      // Locally mark "Google Scholar" as searched for this source so the
+      // DATABASE RESULTS list updates immediately, independent of any WS
+      // broadcast race. The backend's verify_source_done update is still the
+      // source of truth for best_match / all_results.
+      useVerificationStore.setState((state) => {
+        let foundPdfId: string | null = null
+        for (const [pdfId, sourceResults] of Object.entries(state.resultsByPdf)) {
+          if (sourceResults[sourceId]) {
+            foundPdfId = pdfId
+            break
+          }
+        }
+        if (!foundPdfId) return state
+        const prev = state.resultsByPdf[foundPdfId][sourceId]
+        if (prev.databases_searched.includes('Google Scholar')) return state
+        return {
+          resultsByPdf: {
+            ...state.resultsByPdf,
+            [foundPdfId]: {
+              ...state.resultsByPdf[foundPdfId],
+              [sourceId]: {
+                ...prev,
+                databases_searched: [...prev.databases_searched, 'Google Scholar'],
+              },
+            },
+          },
+        }
+      })
+    },
   })
 
-  function buildQueue(pdfId: string, sourceIds?: string[]): ScholarQueueItem[] {
+  // Build the scan queue. Each item's searchText is the NER-extracted title
+  // of the reference — the raw sanitized text is only used as a fallback when
+  // extraction returns an empty title so the source is not silently skipped.
+  async function buildQueue(pdfId: string, sourceIds?: string[]): Promise<ScholarQueueItem[]> {
     const verStore = useVerificationStore.getState()
     const srcStore = useSourcesStore.getState()
     const results = verStore.resultsByPdf[pdfId] ?? {}
     const sources = srcStore.sourcesByPdf[pdfId] ?? []
 
-    return sources
-      .filter((s) => {
-        if (sourceIds) return sourceIds.includes(s.id)
-        const r = results[s.id]
-        return r && (r.status === 'not_found' || r.status === 'problematic')
-      })
-      .map((s) => ({
-        pdfId,
-        sourceId: s.id,
-        searchText: sanitizeReferenceTextForSearch(
-          verStore.verifyTexts[s.id] ?? s.text,
-        ),
-      }))
+    const selected = sources.filter((s) => {
+      if (sourceIds) return sourceIds.includes(s.id)
+      const r = results[s.id]
+      return r && (r.status === 'not_found' || r.status === 'problematic')
+    })
+
+    return Promise.all(
+      selected.map(async (s) => {
+        const rawText = verStore.verifyTexts[s.id] ?? s.text
+        let searchText = ''
+        try {
+          const parsed = await api.extractFields(rawText)
+          searchText = parsed?.title?.trim() ?? ''
+        } catch (err) {
+          console.warn(`[Scholar] extractFields failed for ${s.id}:`, err)
+        }
+        if (!searchText) {
+          searchText = sanitizeReferenceTextForSearch(rawText)
+        } else {
+          searchText = sanitizeReferenceTextForSearch(searchText)
+        }
+        return { pdfId, sourceId: s.id, searchText }
+      }),
+    )
   }
 
   return {
@@ -69,19 +116,37 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     foundCount: 0,
     captchaUrl: null,
     currentSourceId: null,
+    lastDoneSourceId: null,
+    lastDoneUpdated: null,
     closeOverlayFn: null,
 
-    startScanForPdf: (pdfId) => {
-      const queue = buildQueue(pdfId)
+    startScanForPdf: async (pdfId) => {
+      const queue = await buildQueue(pdfId)
       if (queue.length === 0) return
-      set({ queue, totalInQueue: queue.length, currentIndex: 0, foundCount: 0, captchaUrl: null })
+      set({
+        queue,
+        totalInQueue: queue.length,
+        currentIndex: 0,
+        foundCount: 0,
+        captchaUrl: null,
+        lastDoneSourceId: null,
+        lastDoneUpdated: null,
+      })
       scholarScanner.startScan(queue)
     },
 
-    startScanForSource: (pdfId, sourceId) => {
-      const queue = buildQueue(pdfId, [sourceId])
+    startScanForSource: async (pdfId, sourceId) => {
+      const queue = await buildQueue(pdfId, [sourceId])
       if (queue.length === 0) return
-      set({ queue, totalInQueue: queue.length, currentIndex: 0, foundCount: 0, captchaUrl: null })
+      set({
+        queue,
+        totalInQueue: queue.length,
+        currentIndex: 0,
+        foundCount: 0,
+        captchaUrl: null,
+        lastDoneSourceId: null,
+        lastDoneUpdated: null,
+      })
       scholarScanner.startScan(queue)
     },
 

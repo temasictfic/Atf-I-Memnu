@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from '../../i18n'
 import { usePdfStore } from '../../stores/pdf-store'
 import { useSourcesStore, loadSources as loadSourcesFn } from '../../stores/sources-store'
 import { useVerificationStore } from '../../stores/verification-store'
@@ -27,25 +29,31 @@ function statusColor(result: VerificationResult | undefined): string {
 }
 
 function statusLabel(result: VerificationResult | undefined): string {
-  if (!result) return 'Pending'
+  if (!result) return i18n.t('verification.status.pending')
   switch (result.status) {
-    case 'found': return 'Found'
-    case 'problematic': return 'Problematic'
-    case 'not_found': return 'Not Found'
-    case 'in_progress': return 'Searching...'
-    default: return 'Pending'
+    case 'found': return i18n.t('verification.status.found')
+    case 'problematic': return i18n.t('verification.status.problematic')
+    case 'not_found': return i18n.t('verification.status.not_found')
+    case 'in_progress': return i18n.t('verification.status.in_progress')
+    default: return i18n.t('verification.status.pending')
   }
 }
 
 function problemTagDescription(tag: string): string {
   switch (tag) {
-    case '!authors': return 'Source authors not found in candidate authors'
-    case '!doi/arXiv': return 'Source DOI/arXiv differs from candidate'
-    case '!url': return 'Non-DOI/arXiv URL is not reachable'
-    case '!year': return 'Year mismatch (>1 year difference)'
-    case '!source': return 'Source venue (journal / conference / book) mismatch'
+    case '!authors': return i18n.t('verification.problemDesc.authors')
+    case '!doi/arXiv': return i18n.t('verification.problemDesc.doi')
+    case '!url': return i18n.t('verification.problemDesc.url')
+    case '!year': return i18n.t('verification.problemDesc.year')
+    case '!source': return i18n.t('verification.problemDesc.source')
     default: return tag
   }
+}
+
+function problemTagLabel(tag: string): string {
+  const key = `verification.problemTag.${tag}`
+  const translated = i18n.t(key)
+  return translated === key ? tag : translated
 }
 
 function dbScoreIcon(score: number): string {
@@ -93,6 +101,7 @@ const MAX_BROWSER_ZOOM = 3
 const BROWSER_ZOOM_STEP = 1.1
 
 export default function VerificationPage() {
+  const { t } = useTranslation()
   const verifyCenterRef = useRef<HTMLElement | null>(null)
   const cardListRef = useRef<HTMLDivElement | null>(null)
   const allPdfs = usePdfStore(s => s.pdfs)
@@ -143,6 +152,17 @@ export default function VerificationPage() {
   const pendingVerifyPdfIdsRef = useRef<Set<string>>(new Set())
   // PDFs started via single-PDF verify (not Verify All) — auto-run GS when done
   const autoGsPdfIdsRef = useRef<Set<string>>(new Set())
+  // PDFs for which GS scan must run unconditionally after verification (ignoring setting).
+  // Used by the "!X" (verify non-found) button.
+  const forceGsPdfIdsRef = useRef<Set<string>>(new Set())
+  // Single-source reverify runs awaiting completion to trigger a per-source GS scan.
+  // Maps sourceId -> pdfId.
+  const pendingSingleSourceGsRef = useRef<Map<string, string>>(new Map())
+  // Sequential "Verify All" queue state
+  const verifyAllQueueRef = useRef<string[]>([])
+  const verifyAllCurrentRef = useRef<string | null>(null)
+  const verifyAllActiveRef = useRef(false)
+  const [verifyAllActive, setVerifyAllActive] = useState(false)
 
   // Fire completion-time side effects (toast + auto Scholar scan) when a
   // pending verification run transitions to completed. We trigger off
@@ -158,7 +178,7 @@ export default function VerificationPage() {
       const pdf = allPdfs.find(p => p.id === pdfId)
       const name = pdf?.name ?? 'PDF'
       if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
-      setVerifyToast(`Verification complete: ${name}`)
+      setVerifyToast(t('verification.verificationComplete', { name }))
       verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
 
       if (autoGsPdfIdsRef.current.has(pdfId)) {
@@ -170,8 +190,46 @@ export default function VerificationPage() {
           }, 500)
         }
       }
+
+      if (forceGsPdfIdsRef.current.has(pdfId)) {
+        forceGsPdfIdsRef.current.delete(pdfId)
+        setTimeout(() => {
+          useScholarScanStore.getState().startScanForPdf(pdfId)
+        }, 500)
+      }
+
+      // Advance the sequential "Verify All" queue if this PDF was the active one.
+      if (verifyAllActiveRef.current && verifyAllCurrentRef.current === pdfId) {
+        verifyAllCurrentRef.current = null
+        void processNextInQueueRef.current?.()
+      }
     }
   }, [summaries, allPdfs])
+
+  // Sequential queue runner. Stored in a ref so the completion useEffect can
+  // call it without becoming a dependency cycle.
+  const processNextInQueueRef = useRef<(() => Promise<void>) | null>(null)
+  const processNextInQueue = useCallback(async () => {
+    while (verifyAllActiveRef.current) {
+      const next = verifyAllQueueRef.current.shift()
+      if (!next) {
+        verifyAllActiveRef.current = false
+        verifyAllCurrentRef.current = null
+        setVerifyAllActive(false)
+        return
+      }
+      await loadSourcesFn(next)
+      const src = useSourcesStore.getState().sourcesByPdf[next] ?? []
+      if (src.length === 0) continue
+      verifyAllCurrentRef.current = next
+      selectPdf(next)
+      pendingVerifyPdfIdsRef.current.add(next)
+      autoGsPdfIdsRef.current.add(next)
+      await useVerificationStore.getState().startVerification([next])
+      return
+    }
+  }, [selectPdf])
+  processNextInQueueRef.current = processNextInQueue
 
   const orderedSources = useMemo(() => {
     const sourceMap = new Map(sources.map(s => [s.id, s]))
@@ -270,6 +328,18 @@ export default function VerificationPage() {
     })()
   }, [pdfs])
 
+  const [cardSearchQuery, setCardSearchQuery] = useState('')
+
+  const filteredSourceCards = useMemo(() => {
+    const q = cardSearchQuery.trim().toLowerCase()
+    if (!q) return sortedSourceCards
+    return sortedSourceCards.filter(card => {
+      const text = (verifyTexts[card.source.id] ?? card.source.text ?? '').toLowerCase()
+      const ref = String(card.source.ref_number ?? '')
+      return text.includes(q) || ref.includes(q)
+    })
+  }, [sortedSourceCards, cardSearchQuery, verifyTexts])
+
   // Drag and drop state
   const [dragSourceId, setDragSourceId] = useState<string | null>(null)
   const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null)
@@ -326,13 +396,27 @@ export default function VerificationPage() {
 
   // Actions
   async function handleStartOrCancel() {
-    if (isAnyVerifying) {
-      await useVerificationStore.getState().cancelAll()
+    if (verifyAllActiveRef.current || isAnyVerifying) {
+      // Stop the queue and cancel the in-flight PDF (if any).
+      verifyAllActiveRef.current = false
+      verifyAllQueueRef.current = []
+      setVerifyAllActive(false)
+      const cur = verifyAllCurrentRef.current
+      verifyAllCurrentRef.current = null
+      if (cur) {
+        autoGsPdfIdsRef.current.delete(cur)
+        pendingVerifyPdfIdsRef.current.delete(cur)
+        await useVerificationStore.getState().cancelPdf(cur)
+      } else {
+        await useVerificationStore.getState().cancelAll()
+      }
     } else {
       const ids = pdfs.map(p => p.id)
       if (ids.length > 0) {
-        for (const id of ids) pendingVerifyPdfIdsRef.current.add(id)
-        await useVerificationStore.getState().startVerification(ids)
+        verifyAllQueueRef.current = [...ids]
+        verifyAllActiveRef.current = true
+        setVerifyAllActive(true)
+        await processNextInQueue()
       }
     }
   }
@@ -355,18 +439,34 @@ export default function VerificationPage() {
     const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
     useVerificationStore.getState().initSourceVerifyState(pdfId, src)
     pendingVerifyPdfIdsRef.current.add(pdfId)
+    forceGsPdfIdsRef.current.add(pdfId)
     await useVerificationStore.getState().startVerificationNonFoundForPdf(pdfId)
   }
 
   async function handleReverifyOrCancelSource() {
     if (!effectivePdfId || !selectedSourceId) return
     if (currentResult?.status === 'in_progress') {
+      pendingSingleSourceGsRef.current.delete(selectedSourceId)
       await useVerificationStore.getState().cancelSource(selectedSourceId)
     } else {
       const text = useVerificationStore.getState().verifyTexts[selectedSourceId]
+      pendingSingleSourceGsRef.current.set(selectedSourceId, effectivePdfId)
       await useVerificationStore.getState().reverifySource(effectivePdfId, selectedSourceId, text)
     }
   }
+
+  // When a single-source reverify finishes, trigger a per-source Scholar scan
+  // if the final status is not 'found'.
+  useEffect(() => {
+    for (const [sourceId, pdfId] of Array.from(pendingSingleSourceGsRef.current)) {
+      const r = resultsByPdf[pdfId]?.[sourceId]
+      if (!r || r.status === 'in_progress') continue
+      pendingSingleSourceGsRef.current.delete(sourceId)
+      setTimeout(() => {
+        useScholarScanStore.getState().startScanForSource(pdfId, sourceId)
+      }, 500)
+    }
+  }, [resultsByPdf])
 
   async function handleOverride(status: 'found' | 'problematic' | 'not_found') {
     if (!effectivePdfId || !selectedSourceId || !currentResult) return
@@ -407,6 +507,31 @@ export default function VerificationPage() {
   const scholarTotal = useScholarScanStore(s => s.totalInQueue)
   const scholarFoundCount = useScholarScanStore(s => s.foundCount)
   const scholarCaptchaUrl = useScholarScanStore(s => s.captchaUrl)
+  const scholarQueue = useScholarScanStore(s => s.queue)
+  const scholarLastDoneSourceId = useScholarScanStore(s => s.lastDoneSourceId)
+  const scholarLastDoneUpdated = useScholarScanStore(s => s.lastDoneUpdated)
+
+  // Derive human-readable scan context for the bottom banner.
+  const scholarBannerInfo = useMemo(() => {
+    const clampedIdx = Math.min(scholarCurrentIndex, Math.max(0, scholarQueue.length - 1))
+    const currentItem = scholarQueue[clampedIdx]
+    const currentPdf = currentItem ? allPdfs.find(p => p.id === currentItem.pdfId) : undefined
+    const currentSource = currentItem
+      ? (sourcesByPdf[currentItem.pdfId] ?? []).find(s => s.id === currentItem.sourceId)
+      : undefined
+    const lastItem = scholarLastDoneSourceId
+      ? scholarQueue.find(q => q.sourceId === scholarLastDoneSourceId)
+      : undefined
+    const lastSource = lastItem
+      ? (sourcesByPdf[lastItem.pdfId] ?? []).find(s => s.id === lastItem.sourceId)
+      : undefined
+    return {
+      pdfName: currentPdf?.name ?? null,
+      refNumber: currentSource?.ref_number ?? null,
+      lastRefNumber: lastSource?.ref_number ?? null,
+      lastUpdated: scholarLastDoneUpdated,
+    }
+  }, [scholarQueue, scholarCurrentIndex, scholarLastDoneSourceId, scholarLastDoneUpdated, allPdfs, sourcesByPdf])
 
   // Wire the hidden webview to the scanner via callback ref
   const scholarScanWebviewRef = useCallback((node: any) => {
@@ -499,12 +624,6 @@ export default function VerificationPage() {
       } catch {}
     }
   }, [scholarStatus, browserOverlayOpen])
-
-  function handleScholarScanPdf(pdfId?: string) {
-    const id = pdfId ?? effectivePdfId
-    if (!id) return
-    useScholarScanStore.getState().startScanForPdf(id)
-  }
 
   const selectedSearchText = useMemo(() => {
     if (!selectedSourceId) return ''
@@ -973,27 +1092,27 @@ export default function VerificationPage() {
       {/* Left Panel: PDF List */}
       <aside className={styles['verify-left']} onMouseDownCapture={() => browserOverlayOpen && closeBrowserOverlay()}>
         <div className={styles['panel-header']}>
-          <h2 className={styles['panel-title']}>Verification</h2>
+          <h2 className={styles['panel-title']}>{t('verification.title')}</h2>
           <button className={styles['start-btn']} onClick={handleStartOrCancel} disabled={pdfs.length === 0}>
-            {isAnyVerifying ? <><span>&#x25A0;</span> Stop</> : <><span>&#x25B6;</span> Verify All</>}
+            {(isAnyVerifying || verifyAllActive) ? <><span>&#x25A0;</span> {t('verification.stop')}</> : <><span>&#x25B6;</span> {t('verification.verifyAll')}</>}
           </button>
         </div>
 
         {pdfs.length > 0 && (
           <div className={styles['verify-sort-bar']}>
-            <button className={`${styles['sort-btn']} ${styles['sort-btn-status']} ${pdfSortKey === 'status' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('status')} title="Sort by status">
+            <button className={`${styles['sort-btn']} ${styles['sort-btn-status']} ${pdfSortKey === 'status' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('status')} title={t('verification.sort.byStatus')}>
               &#x25CF;{pdfSortKey === 'status' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${styles['sort-btn-grow']} ${pdfSortKey === 'name' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('name')} title="Sort by name">
-              Name{pdfSortKey === 'name' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
+            <button className={`${styles['sort-btn']} ${styles['sort-btn-grow']} ${pdfSortKey === 'name' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('name')} title={t('verification.sort.byName')}>
+              {t('verification.sort.name')}{pdfSortKey === 'name' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'found' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('found')} title="Sort by found count" style={{ color: pdfSortKey === 'found' ? '#22c55e' : undefined }}>
+            <button className={`${styles['sort-btn']} ${pdfSortKey === 'found' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('found')} title={t('verification.sort.byFound')} style={{ color: pdfSortKey === 'found' ? '#22c55e' : undefined }}>
               &#x2713;{pdfSortKey === 'found' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'problematic' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('problematic')} title="Sort by problematic count" style={{ color: pdfSortKey === 'problematic' ? '#f59e0b' : undefined }}>
+            <button className={`${styles['sort-btn']} ${pdfSortKey === 'problematic' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('problematic')} title={t('verification.sort.byProblematic')} style={{ color: pdfSortKey === 'problematic' ? '#f59e0b' : undefined }}>
               !{pdfSortKey === 'problematic' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'not_found' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('not_found')} title="Sort by not found count" style={{ color: pdfSortKey === 'not_found' ? '#9ca3af' : undefined }}>
+            <button className={`${styles['sort-btn']} ${pdfSortKey === 'not_found' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('not_found')} title={t('verification.sort.byNotFound')} style={{ color: pdfSortKey === 'not_found' ? '#9ca3af' : undefined }}>
               &#x2715;{pdfSortKey === 'not_found' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
           </div>
@@ -1002,8 +1121,8 @@ export default function VerificationPage() {
         <div className={styles['verify-list']}>
           {pdfs.length === 0 ? (
             <div className={styles['empty-state']}>
-              <p>No approved PDFs</p>
-              <p className={styles['empty-sub']}>Approve sources in Parsing tab first</p>
+              <p>{t('verification.noApprovedPdfs')}</p>
+              <p className={styles['empty-sub']}>{t('verification.approveFirst')}</p>
             </div>
           ) : (
             sortedPdfs.map(pdf => {
@@ -1028,7 +1147,7 @@ export default function VerificationPage() {
                     <button
                       className={styles['vi-verify-btn']}
                       onClick={(e) => { e.stopPropagation(); handleVerifyOrCancelPdf(pdf.id) }}
-                      title={isPdfVerifying(pdf.id) ? "Stop verification" : "Verify this PDF"}
+                      title={isPdfVerifying(pdf.id) ? t('verification.stopVerification') : t('verification.verifyThisPdf')}
                     >{isPdfVerifying(pdf.id) ? '\u25A0' : '\u25B6'}</button>
                   </div>
                   {summary && (
@@ -1050,11 +1169,11 @@ export default function VerificationPage() {
         {!effectivePdfId ? (
           <div className={styles['center-empty']}>
             <div className={styles['center-empty-icon']}>&#x25C9;</div>
-            <p>Select a PDF to verify sources</p>
+            <p>{t('verification.selectPdf')}</p>
           </div>
         ) : orderedSources.length === 0 ? (
           <div className={styles['center-empty']}>
-            <p>No sources found for this PDF</p>
+            <p>{t('verification.noSources')}</p>
           </div>
         ) : (
           <>
@@ -1062,36 +1181,39 @@ export default function VerificationPage() {
             <div className={styles['card-toolbar']}>
               <div className={styles['toolbar-left']}>
                 <button
-                  className={styles['toolbar-btn']}
+                  className={`${styles['toolbar-btn']} ${styles['toolbar-btn-enable-all']}`}
                   onClick={() => effectivePdfId && setAllEnabled(effectivePdfId, !areAllSourcesEnabled)}
+                  title={areAllSourcesEnabled ? t('verification.disableAll') : t('verification.enableAll')}
+                  aria-label={areAllSourcesEnabled ? t('verification.disableAll') : t('verification.enableAll')}
                 >
-                  {areAllSourcesEnabled ? 'Disable All' : 'Enable All'}
+                  {enabledCount} / {orderedSources.length}
                 </button>
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
                   onClick={() => effectivePdfId && handleVerifyNonFoundPdf(effectivePdfId)}
                   disabled={!effectivePdfId || (effectivePdfId ? isPdfVerifying(effectivePdfId) : true)}
-                  title="Verify only non-Found sources"
-                >NF</button>
-                <button
-                  className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
-                  onClick={() => handleScholarScanPdf()}
-                  disabled={scholarStatus === 'scanning' || !effectivePdfId}
-                  title="Google Scholar scan for non-Found sources"
-                >GS</button>
+                  title={t('verification.verifyNonFound')}
+                >{t('verification.nfShort')}</button>
               </div>
               <div className={styles['toolbar-center']}>
-                <span className={styles['toolbar-count']}>{enabledCount}/{orderedSources.length} enabled</span>
+                <input
+                  type="text"
+                  className={styles['toolbar-search']}
+                  value={cardSearchQuery}
+                  onChange={(e) => setCardSearchQuery(e.target.value)}
+                  placeholder={t('verification.searchPlaceholder')}
+                  aria-label={t('verification.searchPlaceholder')}
+                />
               </div>
               <div className={styles['toolbar-right']}>
-                <button className={`${styles['toolbar-btn']} ${cardSortKey === 'status' ? styles['sort-active'] : ''}`} onClick={() => toggleCardSort('status')}>
-                  Status{cardSortKey === 'status' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
-                </button>
                 <button className={`${styles['toolbar-btn']} ${cardSortKey === 'ref' ? styles['sort-active'] : ''}`} onClick={() => toggleCardSort('ref')}>
-                  Ref#{cardSortKey === 'ref' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
+                  {t('verification.sort.ref')}{cardSortKey === 'ref' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
                 </button>
                 <button className={`${styles['toolbar-btn']} ${cardSortKey === 'enabled' ? styles['sort-active'] : ''}`} onClick={() => toggleCardSort('enabled')}>
-                  Enabled{cardSortKey === 'enabled' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
+                  {t('verification.sort.enabled')}{cardSortKey === 'enabled' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
+                </button>
+                <button className={`${styles['toolbar-btn']} ${cardSortKey === 'status' ? styles['sort-active'] : ''}`} onClick={() => toggleCardSort('status')}>
+                  {t('verification.sort.status')}{cardSortKey === 'status' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
                 </button>
                 {cardSortKey !== 'default' && (
                   <button className={styles['toolbar-btn']} onClick={() => toggleCardSort('default')}>&#x21BA;</button>
@@ -1101,7 +1223,7 @@ export default function VerificationPage() {
 
             {/* Source cards */}
             <div className={styles['card-list']} ref={cardListRef} data-scrollable>
-              {sortedSourceCards.map((card, idx) => {
+              {filteredSourceCards.map((card, idx) => {
                 const isSelected = selectedSourceId === card.source.id
                 const cardClass = [
                   styles['source-card'],
@@ -1151,7 +1273,7 @@ export default function VerificationPage() {
                           onDragStart={(e) => { e.stopPropagation(); onDragStart(e, card.source.id) }}
                           onDragEnd={onDragEnd}
                           onPointerDown={(e) => e.stopPropagation()}
-                          title="Drag to reorder"
+                          title={t('verification.dragToReorder')}
                           aria-hidden="true"
                         >&#x2807;</span>
                         <span className={styles['card-actions']}>
@@ -1162,7 +1284,7 @@ export default function VerificationPage() {
                               const text = verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)
                               navigator.clipboard.writeText(text)
                             }}
-                            title="Copy text"
+                            title={t('verification.copyText')}
                           >
                             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" />
@@ -1176,7 +1298,7 @@ export default function VerificationPage() {
                                 e.stopPropagation()
                                 resetVerifyText(card.source.id)
                               }}
-                              title="Reset to original text"
+                              title={t('verification.resetToOriginal')}
                             >&#x21BA;</button>
                           )}
                         </span>
@@ -1185,13 +1307,13 @@ export default function VerificationPage() {
                             (card.result && card.result.status !== 'found' && card.result.best_match && card.result.best_match.match_details.title_similarity > 0.75)) && (
                             <span className={styles['problem-tags']}>
                               {card.result && card.result.status !== 'found' && card.result.best_match && card.result.best_match.match_details.title_similarity > 0.75 && (
-                                <span className={styles['title-tag']} title={`Title similarity ${Math.round(card.result.best_match.match_details.title_similarity * 100)}%`}>
-                                  title: {Math.round(card.result.best_match.match_details.title_similarity * 100)}%
+                                <span className={styles['title-tag']} title={t('verification.titleSimilarity', { percent: Math.round(card.result.best_match.match_details.title_similarity * 100) })}>
+                                  {t('verification.titleShort')}: {Math.round(card.result.best_match.match_details.title_similarity * 100)}%
                                 </span>
                               )}
                               {card.result?.problem_tags?.map((tag) => (
                                 <span key={tag} className={styles['problem-tag']} title={problemTagDescription(tag)}>
-                                  {tag}
+                                  {problemTagLabel(tag)}
                                 </span>
                               ))}
                             </span>
@@ -1262,7 +1384,14 @@ export default function VerificationPage() {
             {(scholarStatus === 'scanning' || scholarStatus === 'captcha') && (
               <div className={styles['scholar-scan-bar']}>
                 <span className={styles['scholar-scan-info']}>
-                  Scholar: {scholarCurrentIndex}/{scholarTotal} checked, {scholarFoundCount} gave results
+                  Scholar
+                  {scholarBannerInfo.pdfName && <> | {scholarBannerInfo.pdfName}</>}
+                  {scholarBannerInfo.lastRefNumber != null && scholarBannerInfo.lastUpdated != null ? (
+                    <> : #{scholarBannerInfo.lastRefNumber} {scholarBannerInfo.lastUpdated ? 'Found' : 'Not Found'}</>
+                  ) : scholarBannerInfo.refNumber != null ? (
+                    <> : #{scholarBannerInfo.refNumber}</>
+                  ) : null}
+                  {' '}&middot; {scholarCurrentIndex}/{scholarTotal} checked
                 </span>
                 {scholarStatus === 'captcha' && (
                   <button className={styles['action-btn']} onClick={() => useScholarScanStore.getState().resumeAfterCaptcha()}>
@@ -1282,7 +1411,7 @@ export default function VerificationPage() {
                     CAPTCHA detected — please solve it below. Scan will resume automatically, or close Webview and click Resume.
                   </div>
                 )}
-                <div className={styles['scholar-overlay-resizer']} onMouseDown={startOverlayResize} title="Drag to resize">
+                <div className={styles['scholar-overlay-resizer']} onMouseDown={startOverlayResize} title={t('verification.browser.dragToResize')}>
                   <span className={styles['scholar-overlay-resizer-line']} />
                 </div>
                 <div className={styles['scholar-overlay-header']}>
@@ -1291,8 +1420,8 @@ export default function VerificationPage() {
                       className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
                       onClick={goBrowserBack}
                       disabled={!browserCanGoBack}
-                      title="Go back"
-                      aria-label="Go back"
+                      title={t('verification.browser.back')}
+                      aria-label={t('verification.browser.back')}
                     >
                       <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M10.5 3.5L5.5 8l5 4.5" />
@@ -1302,8 +1431,8 @@ export default function VerificationPage() {
                       className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
                       onClick={goBrowserForward}
                       disabled={!browserCanGoForward}
-                      title="Go forward"
-                      aria-label="Go forward"
+                      title={t('verification.browser.forward')}
+                      aria-label={t('verification.browser.forward')}
                     >
                       <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M5.5 3.5L10.5 8l-5 4.5" />
@@ -1312,8 +1441,8 @@ export default function VerificationPage() {
                     <button
                       className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
                       onClick={reloadBrowserView}
-                      title="Reload page"
-                      aria-label="Reload page"
+                      title={t('verification.browser.reload')}
+                      aria-label={t('verification.browser.reload')}
                     >
                       <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M13 4.5v3h-3" />
@@ -1325,28 +1454,28 @@ export default function VerificationPage() {
                     <button
                       className={`${styles['action-btn']} ${styles['overlay-zoom-btn']}`}
                       onClick={zoomBrowserOut}
-                      title="Zoom out (Ctrl + -)"
-                      aria-label="Zoom out"
+                      title={t('verification.browser.zoomOut')}
+                      aria-label={t('verification.browser.zoomOut')}
                     >-</button>
                     <button
                       className={`${styles['action-btn']} ${styles['overlay-zoom-readout']}`}
                       onClick={resetBrowserZoom}
-                      title="Reset zoom (Ctrl + 0)"
-                      aria-label="Reset zoom"
+                      title={t('verification.browser.resetZoom')}
+                      aria-label={t('verification.browser.resetZoom')}
                     >{Math.round(browserZoomFactor * 100)}%</button>
                     <button
                       className={`${styles['action-btn']} ${styles['overlay-zoom-btn']}`}
                       onClick={zoomBrowserIn}
-                      title="Zoom in (Ctrl + +)"
-                      aria-label="Zoom in"
+                      title={t('verification.browser.zoomIn')}
+                      aria-label={t('verification.browser.zoomIn')}
                     >+</button>
                   </div>
                   <div className={styles['scholar-overlay-actions']}>
                     <button
                       className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
                       onClick={() => openExternal(browserOverlayUrl)}
-                      title="Open in external browser"
-                      aria-label="Open in external browser"
+                      title={t('verification.browser.openExternal')}
+                      aria-label={t('verification.browser.openExternal')}
                     >
                       <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M9 3.5h3.5V7" />
@@ -1357,8 +1486,8 @@ export default function VerificationPage() {
                     <button
                       className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
                       onClick={closeBrowserOverlay}
-                      title="Close browser panel"
-                      aria-label="Close browser panel"
+                      title={t('verification.browser.close')}
+                      aria-label={t('verification.browser.close')}
                     >
                       <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                         <path d="M4.5 4.5l7 7" />
@@ -1392,61 +1521,61 @@ export default function VerificationPage() {
 
       {/* Right Panel: Source Detail */}
       <aside className={styles['verify-right']} onMouseDownCapture={() => browserOverlayOpen && closeBrowserOverlay()}>
+        {selectedSourceId && (
+          <div className={styles['detail-top-row']}>
+            <button
+              className={styles['detail-ref-badge']}
+              onClick={() => {
+                const el = cardRefs.current[selectedSourceId]
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }}
+              title={t('verification.scrollToCard')}
+            >[{currentSource?.ref_number ?? '?'}]</button>
+            <div className={styles['detail-actions']}>
+              <button
+                className={`${styles['override-btn']} ${styles['override-found']} ${currentResult?.status === 'found' ? styles['override-found-active'] : ''}`}
+                disabled={!currentResult || currentResult.status === 'in_progress'}
+                onClick={() => handleOverride('found')} title={t('verification.markAsFound')}
+              >&#x2713;</button>
+              <button
+                className={`${styles['override-btn']} ${styles['override-problematic']} ${currentResult?.status === 'problematic' ? styles['override-problematic-active'] : ''}`}
+                disabled={!currentResult || currentResult.status === 'in_progress'}
+                onClick={() => handleOverride('problematic')} title={t('verification.markAsProblematic')}
+              >!</button>
+              <button
+                className={`${styles['override-btn']} ${styles['override-not-found']} ${currentResult?.status === 'not_found' ? styles['override-not-found-active'] : ''}`}
+                disabled={!currentResult || currentResult.status === 'in_progress'}
+                onClick={() => handleOverride('not_found')} title={t('verification.markAsNotFound')}
+              >X</button>
+            </div>
+          </div>
+        )}
         <div className={styles['detail-body']}>
           {selectedSourceId ? (() => {
             const r = currentResult
             const hasCompletedResult = Boolean(r && r.status !== 'in_progress')
             return (
               <>
-                {/* Top actions */}
-                <div className={styles['detail-top-row']}>
-                  <button
-                    className={styles['detail-ref-badge']}
-                    onClick={() => {
-                      const el = cardRefs.current[selectedSourceId]
-                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                    }}
-                    title="Scroll to card"
-                  >[{currentSource?.ref_number ?? '?'}]</button>
-                  <div className={styles['detail-actions']}>
-                    <button
-                      className={`${styles['override-btn']} ${styles['override-found']} ${r?.status === 'found' ? styles['override-found-active'] : ''}`}
-                      disabled={!r || r.status === 'in_progress'}
-                      onClick={() => handleOverride('found')} title="Mark as found"
-                    >&#x2713;</button>
-                    <button
-                      className={`${styles['override-btn']} ${styles['override-problematic']} ${r?.status === 'problematic' ? styles['override-problematic-active'] : ''}`}
-                      disabled={!r || r.status === 'in_progress'}
-                      onClick={() => handleOverride('problematic')} title="Mark as problematic"
-                    >!</button>
-                    <button
-                      className={`${styles['override-btn']} ${styles['override-not-found']} ${r?.status === 'not_found' ? styles['override-not-found-active'] : ''}`}
-                      disabled={!r || r.status === 'in_progress'}
-                      onClick={() => handleOverride('not_found')} title="Mark as not found"
-                    >X</button>
-                  </div>
-                </div>
-
                 <div className={styles['detail-search-actions']}>
                   <button
                     className={`${styles['action-btn']} ${styles['detail-search-btn']}`}
                     onClick={openScholarOverlay}
                     disabled={!selectedTitleOrText}
-                    title="Open Google Scholar in middle panel"
-                  >Google Scholar</button>
+                    title={t('verification.openGoogleScholar')}
+                  >{t('verification.googleScholar')}</button>
                   <button
                     className={`${styles['action-btn']} ${styles['detail-search-btn']}`}
                     onClick={openGoogleOverlay}
                     disabled={!selectedTitleOrText}
-                    title="Open Google Search in middle panel"
-                  >Google Search</button>
+                    title={t('verification.openGoogleSearch')}
+                  >{t('verification.googleSearch')}</button>
                 </div>
 
                 <div className={styles['section-header-row']}>
-                  <div className={styles['section-title']}>Best Match</div>
+                  <div className={styles['section-title']}>{t('verification.bestMatch')}</div>
                   <div className={styles['result-summary']}>
-                    <button className={`${styles['action-btn']} ${styles['action-btn-accent']}`} onClick={handleReverifyOrCancelSource} title={currentResult?.status === 'in_progress' ? "Stop verification" : "Verify this source"}>
-                      {currentResult?.status === 'in_progress' ? <><span>&#x25A0;</span> Stop</> : <><span>&#x21BB;</span> Verify</>}
+                    <button className={`${styles['action-btn']} ${styles['action-btn-accent']}`} onClick={handleReverifyOrCancelSource} title={currentResult?.status === 'in_progress' ? t('verification.stopVerification') : t('verification.verifyThisSource')}>
+                      {currentResult?.status === 'in_progress' ? <><span>&#x25A0;</span> {t('verification.stop')}</> : <><span>&#x21BB;</span> {t('verification.verify')}</>}
                     </button>
                   </div>
                 </div>
@@ -1460,7 +1589,7 @@ export default function VerificationPage() {
                           <div className={styles['match-meta']}>{r.best_match.authors.join(', ')}</div>
                         )}
                         {r.best_match.journal && (
-                          <div className={styles['match-meta']}>{r.best_match.journal}</div>
+                          <div className={styles['match-source']}>{r.best_match.journal}</div>
                         )}
                         <div className={styles['match-meta-row']}>
                           {r.best_match.year && <span>{r.best_match.year}</span>}
@@ -1473,15 +1602,15 @@ export default function VerificationPage() {
                           </span>
                         </div>
                         {r.best_match.url && (
-                          <button className={styles['match-link']} onClick={() => openOverlayWithUrl(r.best_match!.url)}>Open source &#x2197;</button>
+                          <button className={styles['match-link']} onClick={() => openOverlayWithUrl(r.best_match!.url)}>{t('verification.openSource')} &#x2197;</button>
                         )}
                       </div>
                     ) : (
-                      <div className={styles['match-empty']}>No match found</div>
+                      <div className={styles['match-empty']}>{t('verification.noMatchFound')}</div>
                     )}
 
                     {/* All database results */}
-                    <div className={styles['section-title']}>Database Results</div>
+                    <div className={styles['section-title']}>{t('verification.databaseResults')}</div>
                     <div className={styles['detail-db-list']}>
                       {[...enabledDatabases, ...(r.databases_searched.includes('Google Scholar') ? ['Google Scholar'] : [])].map(db => {
                         const match = r.all_results.find((m: MatchResult) => m.database === db)
@@ -1511,14 +1640,14 @@ export default function VerificationPage() {
 
                     {r.url_liveness && Object.keys(r.url_liveness).length > 0 && (
                       <div className={styles['detail-urls']}>
-                        <div className={styles['section-title']}>URL Status</div>
+                        <div className={styles['section-title']}>{t('verification.urlStatus')}</div>
                         <ul className={styles['url-list']}>
                           {Object.entries(r.url_liveness).map(([url, alive]) => (
                             <li key={url} className={styles['url-item']}>
                               <span
                                 className={styles['url-dot']}
                                 style={{ background: alive ? '#22c55e' : '#ef4444' }}
-                                title={alive ? 'Reachable' : 'Dead link'}
+                                title={alive ? t('verification.urlReachable') : t('verification.urlDead')}
                               />
                               <button className={styles['url-link']} onClick={() => openOverlayWithUrl(url)} title={url}>
                                 {url.length > 50 ? url.slice(0, 50) + '\u2026' : url}
@@ -1534,7 +1663,7 @@ export default function VerificationPage() {
             )
           })() : (
             <div className={styles['detail-empty']}>
-              <p>Select a source to see details</p>
+              <p>{t('verification.selectSource')}</p>
             </div>
           )}
         </div>
