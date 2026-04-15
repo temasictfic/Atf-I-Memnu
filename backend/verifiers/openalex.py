@@ -109,7 +109,7 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
         or str(item.get("id", ""))
     )
 
-    search_query = source.raw_text[:100] if source.raw_text else (source.title or "")
+    search_query = source.title or (source.raw_text[:100] if source.raw_text else "")
     candidate = {
         "database": "OpenAlex",
         "title": title,

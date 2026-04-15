@@ -55,7 +55,7 @@ def _build_arxiv_query(source: ParsedSource) -> str:
     phrase, turning e.g. ti:"16x16 words: Transformers..." into a broken
     query that returns zero results.
     """
-    title = source.title or source.raw_text[:200]
+    title = source.title or ""
     # Remove characters that are Lucene field-separator or escape tokens.
     # The colon is the critical one (field:value syntax breaks phrase search).
     # The hyphen sits at the end of the character class on purpose — putting
@@ -118,7 +118,7 @@ async def search(source: ParsedSource) -> MatchResult | None:
     # NER-based author extraction can't reliably produce the lastname
     # arXiv's strict ``au:`` operator needs, and arXiv's title index is
     # strong enough that authors rarely help disambiguate anyway.
-    if not (source.title or source.raw_text):
+    if not source.title:
         return None
 
     return await _fetch_best_match(session, _build_arxiv_query(source), source)
@@ -168,7 +168,7 @@ def _parse_atom_response(xml_text: str, source: ParsedSource) -> MatchResult | N
     entries = root.findall("atom:entry", NS)
     best: MatchResult | None = None
 
-    search_query = source.raw_text[:100] if source.raw_text else (source.title or "")
+    search_query = source.title or (source.raw_text[:100] if source.raw_text else "")
 
     for entry in entries[:5]:
         title_el = entry.find("atom:title", NS)

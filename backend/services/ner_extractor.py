@@ -131,9 +131,6 @@ def _parse_authors_from_raw(raw_text: str, entities: list[dict]) -> list[str]:
     if not full_text:
         return []
 
-    # Remove leading numbering artifacts like "1] " or "[1] "
-    full_text = re.sub(r"^\[?\d+\]\s*", "", full_text)
-
     # Normalize conjunctions to commas
     full_text = re.sub(r"\s*&\s*", ", ", full_text)
     full_text = re.sub(r"\s+and\s+", ", ", full_text, flags=re.IGNORECASE)

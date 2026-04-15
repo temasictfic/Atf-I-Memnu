@@ -87,7 +87,7 @@ def _paper_to_match(paper: dict[str, Any], source: ParsedSource) -> MatchResult 
     # Prefer a DOI-based URL (direct paper link) over the S2 paper page.
     url = f"https://doi.org/{doi}" if doi else paper.get("url", "")
 
-    search_query = source.raw_text[:100] if source.raw_text else (source.title or "")
+    search_query = source.title or (source.raw_text[:100] if source.raw_text else "")
     candidate = {
         "database": "Semantic Scholar",
         "title": title,

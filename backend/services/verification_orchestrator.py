@@ -17,7 +17,7 @@ from services.search_settings import (
 )
 from services.source_extractor import extract_source_fields
 from services.url_checker import check_urls, is_doi_or_arxiv_url
-from utils.text_cleaning import clean_reference_text, strip_reference_noise
+from utils.text_cleaning import strip_reference_noise
 from verifiers._http import RateLimitedError
 
 
@@ -244,16 +244,17 @@ async def _verify_source(
         if parsed.citation_format:
             await manager.send_log("info", f"Format: {parsed.citation_format}", pdf_id=pdf_id, source_id=source_id)
 
-        # Kurallar General Note: non-conforming references fall back to raw text search
+        # All verifier searches are driven by the NER-extracted title. When the
+        # parse confidence is low we warn but do NOT overwrite the title with
+        # cleaned raw text — the user has explicitly required that every DB
+        # query use the NER title, falling back only when it is genuinely empty.
         if parsed.parse_confidence < 0.3:
             await manager.send_log(
                 "warning",
-                f"Low parse confidence ({parsed.parse_confidence:.2f}), using raw text search",
+                f"Low parse confidence ({parsed.parse_confidence:.2f}), searching with extracted title only",
                 pdf_id=pdf_id,
                 source_id=source_id,
             )
-            cleaned_query = clean_reference_text(source_text)
-            parsed.title = cleaned_query[:200].strip()
 
         # Kick off URL liveness check in parallel with the database searches.
         # Skips doi.org / arxiv.org URLs (validated via API verifiers).
@@ -362,113 +363,112 @@ async def _run_tier1_apis(
     searched: list[str] = []
 
     async def run_verifier(db_id: str, name: str, search_fn: Any):
-        async with api_semaphore:
-            fallback_url = _build_search_url(name, parsed)
-            api_key_names = {
-                "openalex": "openalex",
-                "semantic_scholar": "semantic_scholar",
-                "pubmed": "pubmed",
-                "core": "core",
-            }
-            api_key_name = api_key_names.get(db_id)
-            api_key = (api_keys.get(api_key_name, "") or "").strip() if api_key_name else None
-            try:
-                await manager.broadcast("verify_db_checking", {
-                    "pdf_id": pdf_id, "source_id": source_id, "database": name,
-                })
+        fallback_url = _build_search_url(name, parsed)
+        try:
+            async with api_semaphore:
+                api_key_names = {
+                    "openalex": "openalex",
+                    "semantic_scholar": "semantic_scholar",
+                    "pubmed": "pubmed",
+                    "core": "core",
+                }
+                api_key_name = api_key_names.get(db_id)
+                api_key = (api_keys.get(api_key_name, "") or "").strip() if api_key_name else None
+                try:
+                    await manager.broadcast("verify_db_checking", {
+                        "pdf_id": pdf_id, "source_id": source_id, "database": name,
+                    })
 
-                if _supports_api_key_argument(search_fn):
-                    result = await asyncio.wait_for(
-                        search_fn(parsed, api_key=api_key or None),
-                        timeout=search_timeout,
-                    )
-                else:
-                    result = await asyncio.wait_for(search_fn(parsed), timeout=search_timeout)
+                    if _supports_api_key_argument(search_fn):
+                        result = await asyncio.wait_for(
+                            search_fn(parsed, api_key=api_key or None),
+                            timeout=search_timeout,
+                        )
+                    else:
+                        result = await asyncio.wait_for(search_fn(parsed), timeout=search_timeout)
 
-                searched.append(name)
-                found = result is not None and result.score >= 0.5
-
-                await manager.broadcast("verify_db_checked", {
-                    "pdf_id": pdf_id,
-                    "source_id": source_id,
-                    "database": name,
-                    "found": found,
-                    "match": result.model_dump() if result else None,
-                    "db_status": "found" if found else "not_found",
-                    "search_url": (result.search_url if result else None) or fallback_url,
-                })
-
-                if result and result.score > 0:
-                    matches.append(result)
-            except asyncio.TimeoutError:
-                searched.append(name)
-                await manager.send_log("warning", f"{name} timed out",
-                                      pdf_id=pdf_id, source_id=source_id, database=name)
-                await manager.broadcast("verify_db_checked", {
-                    "pdf_id": pdf_id,
-                    "source_id": source_id,
-                    "database": name,
-                    "found": False,
-                    "db_status": "timeout",
-                    "search_url": fallback_url,
-                })
-            except asyncio.CancelledError:
-                # Short-circuit cancel from the short-circuit path: a
-                # sibling verifier landed a strong DOI-exact match, so
-                # we're being cancelled mid-flight. Emit a distinct
-                # "skipped" event (shielded so the broadcast actually
-                # completes even though our task is being torn down),
-                # then re-raise so the task terminates cancelled.
-                if name not in searched:
                     searched.append(name)
-                    try:
-                        await asyncio.shield(manager.broadcast("verify_db_checked", {
-                            "pdf_id": pdf_id,
-                            "source_id": source_id,
-                            "database": name,
-                            "found": False,
-                            "db_status": "skipped",
-                            "search_url": fallback_url,
-                        }))
-                    except Exception:
-                        pass
-                raise
-            except RateLimitedError as e:
-                # 429 from upstream — distinct from "no match" and from a
-                # hard error, so the UI can show it as a transient state
-                # rather than silently marking the source not_found.
+                    found = result is not None and result.score >= 0.5
+
+                    await manager.broadcast("verify_db_checked", {
+                        "pdf_id": pdf_id,
+                        "source_id": source_id,
+                        "database": name,
+                        "found": found,
+                        "match": result.model_dump() if result else None,
+                        "db_status": "found" if found else "not_found",
+                        "search_url": (result.search_url if result else None) or fallback_url,
+                    })
+
+                    if result and result.score > 0:
+                        matches.append(result)
+                except asyncio.TimeoutError:
+                    searched.append(name)
+                    await manager.send_log("warning", f"{name} timed out",
+                                          pdf_id=pdf_id, source_id=source_id, database=name)
+                    await manager.broadcast("verify_db_checked", {
+                        "pdf_id": pdf_id,
+                        "source_id": source_id,
+                        "database": name,
+                        "found": False,
+                        "db_status": "timeout",
+                        "search_url": fallback_url,
+                    })
+                except RateLimitedError as e:
+                    searched.append(name)
+                    retry_msg = (
+                        f" (retry-after {e.retry_after:.0f}s)"
+                        if e.retry_after is not None else ""
+                    )
+                    await manager.send_log(
+                        "warning",
+                        f"{name} rate limited{retry_msg}",
+                        pdf_id=pdf_id, source_id=source_id, database=name,
+                    )
+                    await manager.broadcast("verify_db_checked", {
+                        "pdf_id": pdf_id,
+                        "source_id": source_id,
+                        "database": name,
+                        "found": False,
+                        "db_status": "rate_limited",
+                        "retry_after": e.retry_after,
+                        "search_url": fallback_url,
+                    })
+                except Exception as e:
+                    searched.append(name)
+                    await manager.send_log("warning", f"{name} search failed: {e}",
+                                          pdf_id=pdf_id, source_id=source_id, database=name)
+                    await manager.broadcast("verify_db_checked", {
+                        "pdf_id": pdf_id,
+                        "source_id": source_id,
+                        "database": name,
+                        "found": False,
+                        "db_status": "error",
+                        "error_message": str(e)[:200],
+                        "search_url": fallback_url,
+                    })
+        except asyncio.CancelledError:
+            # Short-circuit cancel: a sibling verifier landed a strong
+            # DOI-exact match. Emit a "skipped" event so the UI gets a
+            # terminal dot for this db. Handled at the outer level so
+            # cancellations while queued on api_semaphore (before the
+            # body runs) are covered too — otherwise those tasks would
+            # leave empty dots. Shielded so the broadcast completes even
+            # as the task is torn down.
+            if name not in searched:
                 searched.append(name)
-                retry_msg = (
-                    f" (retry-after {e.retry_after:.0f}s)"
-                    if e.retry_after is not None else ""
-                )
-                await manager.send_log(
-                    "warning",
-                    f"{name} rate limited{retry_msg}",
-                    pdf_id=pdf_id, source_id=source_id, database=name,
-                )
-                await manager.broadcast("verify_db_checked", {
-                    "pdf_id": pdf_id,
-                    "source_id": source_id,
-                    "database": name,
-                    "found": False,
-                    "db_status": "rate_limited",
-                    "retry_after": e.retry_after,
-                    "search_url": fallback_url,
-                })
-            except Exception as e:
-                searched.append(name)
-                await manager.send_log("warning", f"{name} search failed: {e}",
-                                      pdf_id=pdf_id, source_id=source_id, database=name)
-                await manager.broadcast("verify_db_checked", {
-                    "pdf_id": pdf_id,
-                    "source_id": source_id,
-                    "database": name,
-                    "found": False,
-                    "db_status": "error",
-                    "error_message": str(e)[:200],
-                    "search_url": fallback_url,
-                })
+                try:
+                    await asyncio.shield(manager.broadcast("verify_db_checked", {
+                        "pdf_id": pdf_id,
+                        "source_id": source_id,
+                        "database": name,
+                        "found": False,
+                        "db_status": "skipped",
+                        "search_url": fallback_url,
+                    }))
+                except Exception:
+                    pass
+            raise
 
     # Create all verifier tasks up front, then walk as_completed so we can
     # inspect results as they land and short-circuit when one verifier
@@ -577,4 +577,5 @@ async def _finalize_result(
         "url_liveness": url_liveness,
         "best_match": best_match.model_dump() if best_match else None,
         "all_results": [m.model_dump() for m in result.all_results],
+        "databases_searched": list(databases_searched),
     })

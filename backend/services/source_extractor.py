@@ -25,11 +25,16 @@ async def extract_source_fields(raw_text: str) -> ParsedSource:
     """
     from services.ner_extractor import extract_fields_ner
 
-    ner_result = await extract_fields_ner(raw_text)
+    # Strip leading reference numbering ("1-", "1.", "[1]", "1)") before
+    # NER sees the text — otherwise the numeric prefix leaks into author
+    # entity spans via raw_text offset reconstruction.
+    cleaned_text = strip_reference_noise(raw_text)
+
+    ner_result = await extract_fields_ner(cleaned_text)
     if ner_result is not None and ner_result.parse_confidence >= 0.3:
         return ner_result
 
-    return _extract_source_fields_regex(raw_text)
+    return _extract_source_fields_regex(cleaned_text)
 
 
 def _extract_source_fields_regex(raw_text: str) -> ParsedSource:

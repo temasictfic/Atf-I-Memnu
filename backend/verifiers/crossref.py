@@ -53,15 +53,11 @@ async def search_by_doi(source: ParsedSource) -> MatchResult | None:
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
-    """Search Crossref — tries DOI lookup first, then enriched bibliographic search.
+    """Search Crossref — tries DOI lookup first, then NER-title search.
 
-    The bare title alone (e.g. "Natural disasters") can match the same chapter
-    across multiple editions published by different houses.  To disambiguate we
-    pass the full raw reference text as query.bibliographic (so Crossref's own
-    relevance ranker sees authors, year, journal, etc.) and layer on specific
-    field params (query.author, query.container-title) plus a ±1-year date
-    filter so that a newer re-edition of the same work cannot shadow the
-    originally cited one.
+    Every search is driven by the NER-extracted title. Author, container-title
+    and year filters layer on for disambiguation so a re-edition of the same
+    work cannot shadow the originally cited one.
     """
     # 1. DOI lookup takes priority — unambiguous when a DOI is present.
     if source.doi:
@@ -69,20 +65,16 @@ async def search(source: ParsedSource) -> MatchResult | None:
         if doi_result and doi_result.score >= 0.5:
             return doi_result
 
-    # 2. Build a title-based query with enriched filters.
-    #    Title-only queries produce better results; author/journal/year filters
-    #    help Crossref disambiguate without polluting the primary search.
-    query = source.title or ""
-    bibliographic_query = (source.raw_text or "").strip() or query
-    if not bibliographic_query:
+    # 2. Title-based query. Without a title there is nothing to search with.
+    query = (source.title or "").strip()
+    if not query:
         return None
 
     params: dict[str, str] = {
-        "query.bibliographic": bibliographic_query,
+        "query.bibliographic": query,
+        "query.title": query,
         "rows": "5",
     }
-    if query:
-        params["query.title"] = query
 
     # Add author disambiguation only when parsing is strong and citation
     # doesn't look editor-led (Ed./Eds.), where Crossref author filtering
