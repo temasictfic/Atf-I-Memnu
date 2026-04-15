@@ -62,8 +62,6 @@ def _migrate_databases(s: AppSettings) -> AppSettings:
     sanitized_timeout = max(5, min(timeout, 300))
     sanitized_concurrent = max(1, min(concurrent, 50))
     sanitized_source_concurrent = max(1, min(source_concurrent, 20))
-    pdf_concurrent = int(s.max_concurrent_pdfs or defaults.max_concurrent_pdfs)
-    sanitized_pdf_concurrent = max(1, min(pdf_concurrent, 10))
 
     if s.search_timeout != sanitized_timeout:
         s.search_timeout = sanitized_timeout
@@ -75,10 +73,6 @@ def _migrate_databases(s: AppSettings) -> AppSettings:
 
     if s.max_concurrent_sources_per_pdf != sanitized_source_concurrent:
         s.max_concurrent_sources_per_pdf = sanitized_source_concurrent
-        changed = True
-
-    if s.max_concurrent_pdfs != sanitized_pdf_concurrent:
-        s.max_concurrent_pdfs = sanitized_pdf_concurrent
         changed = True
 
     if changed:

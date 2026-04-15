@@ -108,23 +108,19 @@ def _load_sources_or_empty(pdf_id: str) -> list[SourceRectangle]:
 
 async def _verify_batch(job_id: str, pdf_ids: list[str], texts: dict[str, str], excluded_ids: set[str]):
     from services.verification_orchestrator import verify_pdf_sources_filtered
-    from services.search_settings import get_max_concurrent_pdfs
 
     await manager.send_log("info", f"Starting batch verification for {len(pdf_ids)} PDFs")
 
-    pdf_semaphore = asyncio.Semaphore(get_max_concurrent_pdfs())
-
-    async def verify_with_limit(pid: str):
+    for pid in pdf_ids:
         sources = _load_sources_or_empty(pid)
         if not sources:
-            return
-        async with pdf_semaphore:
+            continue
+        try:
             await verify_pdf_sources_filtered(
                 pid, sources, verify_results, texts, excluded_ids
             )
-
-    tasks = [asyncio.create_task(verify_with_limit(pid)) for pid in pdf_ids]
-    await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            await manager.send_log("error", f"Verification failed for {pid}: {e}")
 
     # Save results to disk cache
     for pdf_id in pdf_ids:
@@ -146,21 +142,17 @@ async def start_verification(request: VerifyRequest):
 
 async def _verify_all_pdfs(job_id: str, pdf_ids: list[str]):
     from services.verification_orchestrator import verify_pdf_sources
-    from services.search_settings import get_max_concurrent_pdfs
 
     await manager.send_log("info", f"Starting verification for {len(pdf_ids)} PDFs")
 
-    pdf_semaphore = asyncio.Semaphore(get_max_concurrent_pdfs())
-
-    async def verify_with_limit(pid: str):
+    for pid in pdf_ids:
         sources = _load_sources_or_empty(pid)
         if not sources:
-            return
-        async with pdf_semaphore:
+            continue
+        try:
             await verify_pdf_sources(pid, sources, verify_results)
-
-    tasks = [asyncio.create_task(verify_with_limit(pid)) for pid in pdf_ids]
-    await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            await manager.send_log("error", f"Verification failed for {pid}: {e}")
 
     # Save results to disk cache
     for pdf_id in pdf_ids:
@@ -343,27 +335,22 @@ async def score_scholar(request: ScoreScholarRequest):
         })
         scholar_matches.append(match)
 
-    if not scholar_matches:
-        return {"updated": False, "result": None}
-
-    best_scholar = max(scholar_matches, key=lambda m: m.score)
-
     # Merge into existing results
     existing = verify_results.get(request.pdf_id, {}).get(request.source_id)
     if existing is None:
         return {"updated": False, "result": None}
 
-    # Append scholar matches to all_results
-    existing.all_results.extend(scholar_matches)
+    # Always record that Google Scholar was searched, even if it returned
+    # nothing — users need to see the GS link under DATABASE RESULTS.
     if "Google Scholar" not in existing.databases_searched:
         existing.databases_searched.append("Google Scholar")
 
-    # Update best_match if scholar result is better
-    if existing.best_match is None or best_scholar.score > existing.best_match.score:
-        existing.best_match = best_scholar
-
-    # Re-sort all_results by score
-    existing.all_results.sort(key=lambda m: m.score, reverse=True)
+    if scholar_matches:
+        existing.all_results.extend(scholar_matches)
+        best_scholar = max(scholar_matches, key=lambda m: m.score)
+        if existing.best_match is None or best_scholar.score > existing.best_match.score:
+            existing.best_match = best_scholar
+        existing.all_results.sort(key=lambda m: m.score, reverse=True)
 
     # Re-determine status with potentially new best match
     status, problem_tags = determine_verification_status(
@@ -383,6 +370,7 @@ async def score_scholar(request: ScoreScholarRequest):
         "url_liveness": existing.url_liveness,
         "best_match": existing.best_match.model_dump() if existing.best_match else None,
         "all_results": [m.model_dump() for m in existing.all_results],
+        "databases_searched": list(existing.databases_searched),
     })
 
     # Recalculate and broadcast PDF counts

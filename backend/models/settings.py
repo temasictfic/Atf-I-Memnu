@@ -16,10 +16,10 @@ class AppSettings(BaseModel):
     # Contact email advertised to Crossref / arXiv / OpenAlex polite pools.
     # Blank = stay in the anonymous public pool (stricter rate limits).
     polite_pool_email: str = ""
+    language: str = "tr"
     search_timeout: int = app_config.search_timeout
     max_concurrent_apis: int = app_config.max_concurrent_apis
     max_concurrent_sources_per_pdf: int = app_config.max_concurrent_sources_per_pdf
-    max_concurrent_pdfs: int = app_config.max_concurrent_pdfs
     auto_scholar_after_verify: bool = True
 
     @classmethod
@@ -40,5 +40,4 @@ class AppSettings(BaseModel):
             search_timeout=app_config.search_timeout,
             max_concurrent_apis=app_config.max_concurrent_apis,
             max_concurrent_sources_per_pdf=app_config.max_concurrent_sources_per_pdf,
-            max_concurrent_pdfs=app_config.max_concurrent_pdfs,
         )

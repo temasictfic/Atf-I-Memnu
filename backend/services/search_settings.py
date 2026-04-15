@@ -33,15 +33,6 @@ def get_max_concurrent_sources_per_pdf() -> int:
     return max(1, min(configured, 20))
 
 
-def get_max_concurrent_pdfs() -> int:
-    """Return effective PDF-level concurrency limit for batch verification."""
-    try:
-        configured = int(get_current_settings().max_concurrent_pdfs)
-    except Exception:
-        configured = int(app_config.max_concurrent_pdfs)
-    return max(1, min(configured, 10))
-
-
 def get_polite_pool_email() -> str | None:
     """Return the configured polite-pool contact email (or None).
 
