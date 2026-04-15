@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import styles from './UpdateNotification.module.css'
 
 type UpdateStage = 'hidden' | 'available' | 'downloading' | 'ready' | 'error'
@@ -12,6 +13,7 @@ interface UpdateProgressPayload {
 }
 
 export default function UpdateNotification() {
+  const { t } = useTranslation()
   const [stage, setStage] = useState<UpdateStage>('hidden')
   const [visible, setVisible] = useState(false)
   const [version, setVersion] = useState('')
@@ -40,7 +42,7 @@ export default function UpdateNotification() {
     })
 
     const offError = window.electronAPI.onUpdateError((message: string) => {
-      setErrorMessage(message || 'Update failed.')
+      setErrorMessage(message || '')
       setStage('error')
       setVisible(true)
     })
@@ -55,30 +57,35 @@ export default function UpdateNotification() {
 
   const message = useMemo(() => {
     if (stage === 'available') {
-      return version ? `v${version} is available.` : 'A new version is available.'
+      return version ? t('update.availableWithVersion', { version }) : t('update.availableGeneric')
     }
     if (stage === 'downloading') {
-      return `Downloading update: ${progressPercent.toFixed(1)}%`
+      return t('update.downloading', { percent: progressPercent.toFixed(1) })
     }
     if (stage === 'ready') {
-      return 'Update is ready to install.'
+      return t('update.ready')
     }
     if (stage === 'error') {
-      return errorMessage || 'Update failed.'
+      return errorMessage || t('update.failed')
     }
     return ''
-  }, [errorMessage, progressPercent, stage, version])
+  }, [errorMessage, progressPercent, stage, version, t])
 
   if (!visible || stage === 'hidden') {
     return null
   }
 
-  return (
-    <aside className={styles['update-card']} role="status" aria-live="polite">
-      <span className={`${styles['status-dot']} ${styles[`dot-${stage}`]}`} aria-hidden="true" />
-      <p className={styles['message']}>{message}</p>
+  const baseLabel = (() => {
+    if (stage === 'available') return version ? t('update.availableWithVersion', { version }) : t('update.availableGeneric')
+    if (stage === 'downloading') return `${progressPercent.toFixed(1)}%`
+    if (stage === 'ready') return t('update.ready')
+    if (stage === 'error') return t('update.failed')
+    return ''
+  })()
 
-      {stage === 'available' && (
+  const hoverAction = (() => {
+    if (stage === 'available') {
+      return (
         <button
           type="button"
           className={styles['primary-btn']}
@@ -87,21 +94,38 @@ export default function UpdateNotification() {
             window.electronAPI.downloadUpdate()
           }}
         >
-          Download
+          {t('update.download')}
         </button>
-      )}
-
-      {stage === 'ready' && (
+      )
+    }
+    if (stage === 'downloading') {
+      return (
+        <button
+          type="button"
+          className={styles['secondary-btn']}
+          onClick={() => {
+            window.electronAPI.cancelUpdate()
+            setVisible(false)
+            setStage('hidden')
+          }}
+        >
+          {t('update.dismiss')}
+        </button>
+      )
+    }
+    if (stage === 'ready') {
+      return (
         <button
           type="button"
           className={styles['primary-btn']}
           onClick={() => window.electronAPI.installUpdate()}
         >
-          Restart
+          {t('update.restart')}
         </button>
-      )}
-
-      {stage === 'error' && (
+      )
+    }
+    if (stage === 'error') {
+      return (
         <button
           type="button"
           className={styles['secondary-btn']}
@@ -111,22 +135,36 @@ export default function UpdateNotification() {
             setStage('hidden')
           }}
         >
-          Dismiss
+          {t('update.dismiss')}
+        </button>
+      )
+    }
+    return null
+  })()
+
+  void message
+
+  return (
+    <aside className={styles['update-card']} role="status" aria-live="polite">
+      <span className={`${styles['status-dot']} ${styles[`dot-${stage}`]}`} aria-hidden="true" />
+      <div className={styles['hover-area']}>
+        <span className={styles['base-label']}>{baseLabel}</span>
+        {hoverAction && <div className={styles['hover-action']}>{hoverAction}</div>}
+      </div>
+
+      {stage === 'available' && (
+        <button
+          type="button"
+          className={styles['close-btn']}
+          aria-label={t('update.dismissAria')}
+          onClick={() => {
+            setVisible(false)
+            setStage('hidden')
+          }}
+        >
+          ×
         </button>
       )}
-
-      <button
-        type="button"
-        className={styles['close-btn']}
-        aria-label="Dismiss update notification"
-        onClick={() => {
-          window.electronAPI.cancelUpdate()
-          setVisible(false)
-          setStage('hidden')
-        }}
-      >
-        ×
-      </button>
     </aside>
   )
 }

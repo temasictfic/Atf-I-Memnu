@@ -6,6 +6,7 @@ import {
   useRef,
   useCallback,
 } from "react";
+import { useTranslation } from "react-i18next";
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { usePdfStore } from "../../stores/pdf-store";
 import {
@@ -102,6 +103,7 @@ function statusColorStyle(status: string): string {
 }
 
 export default function ParsingPage() {
+  const { t } = useTranslation();
   const allPdfs = usePdfStore((s) => s.pdfs);
   const pdfPathsById = usePdfStore((s) => s.pathsById);
   const selectedPdfId = usePdfStore((s) => s.selectedPdfId);
@@ -803,9 +805,11 @@ export default function ParsingPage() {
       useVerificationStore.getState().resultsByPdf[selectedPdfId] ?? {};
     const stats = await generateAutoNotesForPdf({
       pdfId: selectedPdfId,
+      pdfName: selectedPdf?.name ?? selectedPdfId,
       sources,
       resultsBySourceId: results,
       pageHeightFor: (pageNum) => pages[pageNum]?.height ?? 0,
+      pageWidthFor: (pageNum) => pages[pageNum]?.width ?? 0,
     });
     if (stats.highlightsAdded === 0 && stats.calloutsAdded === 0) {
       window.alert(
@@ -1237,59 +1241,48 @@ export default function ParsingPage() {
       <aside className={styles["pdf-list-panel"]}>
         <div className={styles["panel-header"]}>
           <h2 className={styles["panel-title"]}>
-            Documents
-            {allPdfs.length > 0 && (() => {
-              const eligible = allPdfs.filter(
-                (p) => p.status !== "pending" && p.status !== "parsing",
-              );
-              const approvedCount = allPdfs.filter(
-                (p) => p.status === "approved",
-              ).length;
-              const allEligibleApproved =
-                eligible.length > 0 &&
-                eligible.every((p) => p.status === "approved");
-              return (
-                <span
-                  className={styles["title-count"]}
-                  role="button"
-                  tabIndex={eligible.length === 0 ? -1 : 0}
-                  onClick={() => {
-                    if (eligible.length === 0) return;
-                    void handleToggleAllApproval();
-                  }}
-                  onKeyDown={(e) => {
-                    if (eligible.length === 0) return;
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      void handleToggleAllApproval();
-                    }
-                  }}
-                  title={
-                    eligible.length === 0
-                      ? "No PDFs ready to approve yet"
-                      : allEligibleApproved
-                        ? "Unapprove all"
-                        : "Approve all"
-                  }
-                >
-                  {approvedCount} / {allPdfs.length}
-                </span>
-              );
-            })()}
+            {t("parsing.documents")}
           </h2>
           <button
             className={styles["import-btn"]}
             onClick={handleImport}
             disabled={loading}
+            title={t("parsing.import")}
+            aria-label={t("parsing.import")}
           >
-            {loading ? (
-              <>
-                <span>&#x25CC;</span> Importing...
-              </>
-            ) : (
-              "+ Import"
-            )}
+            {loading ? <span>&#x25CC;</span> : <span>+</span>}
           </button>
+          {allPdfs.length > 0 && (() => {
+            const eligible = allPdfs.filter(
+              (p) => p.status !== "pending" && p.status !== "parsing",
+            );
+            const approvedCount = allPdfs.filter(
+              (p) => p.status === "approved",
+            ).length;
+            const allEligibleApproved =
+              eligible.length > 0 &&
+              eligible.every((p) => p.status === "approved");
+            return (
+              <button
+                type="button"
+                className={styles["approve-all-btn"]}
+                disabled={eligible.length === 0}
+                onClick={() => {
+                  if (eligible.length === 0) return;
+                  void handleToggleAllApproval();
+                }}
+                title={
+                  eligible.length === 0
+                    ? t("parsing.noPdfsReadyToApprove")
+                    : allEligibleApproved
+                      ? t("parsing.unapproveAll")
+                      : t("parsing.approveAll")
+                }
+              >
+                {approvedCount} / {allPdfs.length}
+              </button>
+            );
+          })()}
         </div>
 
         {allPdfs.length > 0 && (
@@ -1297,7 +1290,7 @@ export default function ParsingPage() {
             <button
               className={`${styles["sort-btn"]} ${styles["sort-btn-status"]} ${sortKey === "status" ? styles["sort-active"] : ""}`}
               onClick={() => toggleSort("status")}
-              title="Sort by status"
+              title={t("parsing.sort.byStatus")}
             >
               &#x25CF;
               {sortKey === "status" && (
@@ -1309,9 +1302,9 @@ export default function ParsingPage() {
             <button
               className={`${styles["sort-btn"]} ${styles["sort-btn-grow"]} ${sortKey === "name" ? styles["sort-active"] : ""}`}
               onClick={() => toggleSort("name")}
-              title="Sort by name"
+              title={t("parsing.sort.byName")}
             >
-              Name
+              {t("parsing.sort.name")}
               {sortKey === "name" && (
                 <span className={styles["sort-arrow"]}>
                   {sortAsc ? "\u2191" : "\u2193"}
@@ -1321,7 +1314,7 @@ export default function ParsingPage() {
             <button
               className={`${styles["sort-btn"]} ${styles["sort-btn-numbered"]} ${sortKey === "numbered" ? styles["sort-active"] : ""}`}
               onClick={() => toggleSort("numbered")}
-              title="Sort by numbered (unnumbered first)"
+              title={t("parsing.sort.byNumbered")}
             >
               N
               {sortKey === "numbered" && (
@@ -1333,7 +1326,7 @@ export default function ParsingPage() {
             <button
               className={`${styles["sort-btn"]} ${styles["sort-btn-count"]} ${sortKey === "count" ? styles["sort-active"] : ""}`}
               onClick={() => toggleSort("count")}
-              title="Sort by source count"
+              title={t("parsing.sort.byCount")}
             >
               #
               {sortKey === "count" && (
@@ -1349,9 +1342,9 @@ export default function ParsingPage() {
           {allPdfs.length === 0 ? (
             <div className={styles["empty-state"]}>
               <div className={styles["empty-icon"]}>&#x1F4C4;</div>
-              <p>No PDFs imported yet</p>
+              <p>{t("parsing.noPdfsImported")}</p>
               <p className={styles["empty-sub"]}>
-                Click Import to select one or more PDF files
+                {t("parsing.emptyStateSub")}
               </p>
             </div>
           ) : (
@@ -1367,7 +1360,7 @@ export default function ParsingPage() {
                 >
                   <span
                     className={`${styles["pdf-status"]} ${styles["pdf-status-removable"]}`}
-                    title="Remove from list"
+                    title={t("parsing.removeFromList")}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -1405,12 +1398,12 @@ export default function ParsingPage() {
         {!selectedPdfId ? (
           <div className={styles["viewer-empty"]}>
             <div className={styles["viewer-empty-icon"]}>&#x25E7;</div>
-            <p>Select a PDF to view</p>
+            <p>{t("parsing.selectPdfToView")}</p>
           </div>
         ) : loadingPages ? (
           <div className={styles["viewer-empty"]}>
             <div className={styles["viewer-loading"]}>&#x25CC;</div>
-            <p>Loading document...</p>
+            <p>{t("parsing.loadingDocument")}</p>
           </div>
         ) : pages.length > 0 ? (
           <>
@@ -1421,9 +1414,9 @@ export default function ParsingPage() {
                   className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
                   onClick={handleRevert}
                   disabled={!canRevertCurrent}
-                  title="Undo"
+                  title={t("parsing.undo")}
                 >
-                  &#x21B6; Undo
+                  &#x21B6; {t("parsing.undo")}
                 </button>
                 <button
                   className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
@@ -1431,11 +1424,11 @@ export default function ParsingPage() {
                   disabled={!canResetCurrent}
                   title={
                     activeNoteKind !== null
-                      ? "Clear all notes"
-                      : "Reset"
+                      ? t("parsing.resetAllNotes")
+                      : t("parsing.reset")
                   }
                 >
-                  &#x21BA; Reset
+                  &#x21BA; {t("parsing.reset")}
                 </button>
               </div>
 
@@ -1444,22 +1437,22 @@ export default function ParsingPage() {
                   <button
                     className={styles["zoom-btn"]}
                     onClick={zoomOut}
-                    title="Zoom out"
+                    title={t("parsing.zoomOut")}
                   >
                     -
                   </button>
                   <button
                     className={`${styles["zoom-btn"]} ${styles["zoom-pct"]}`}
                     onClick={zoomFit}
-                    title="Fit to width"
-                    aria-label="Fit to width"
+                    title={t("parsing.fitToWidth")}
+                    aria-label={t("parsing.fitToWidth")}
                   >
                     {zoomPercent}%
                   </button>
                   <button
                     className={styles["zoom-btn"]}
                     onClick={zoomIn}
-                    title="Zoom in"
+                    title={t("parsing.zoomIn")}
                   >
                     +
                   </button>
@@ -1471,28 +1464,28 @@ export default function ParsingPage() {
                   <span className={styles["hints-icon"]}>i</span>
                   <div className={styles["hints-popup"]}>
                     <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Left click</span>
-                      <span className={styles["hint-desc"]}>Select / Move</span>
+                      <span className={styles["hint-keys"]}>{t("parsing.hints.leftClick")}</span>
+                      <span className={styles["hint-desc"]}>{t("parsing.hints.selectMove")}</span>
                     </div>
                     <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Right hold</span>
-                      <span className={styles["hint-desc"]}>Draw new</span>
+                      <span className={styles["hint-keys"]}>{t("parsing.hints.rightHold")}</span>
+                      <span className={styles["hint-desc"]}>{t("parsing.hints.drawNew")}</span>
                     </div>
                     <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Del</span>
-                      <span className={styles["hint-desc"]}>Remove source</span>
+                      <span className={styles["hint-keys"]}>{t("parsing.hints.del")}</span>
+                      <span className={styles["hint-desc"]}>{t("parsing.hints.removeSource")}</span>
                     </div>
                     <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Space</span>
-                      <span className={styles["hint-desc"]}>Merge with closest</span>
+                      <span className={styles["hint-keys"]}>{t("parsing.hints.space")}</span>
+                      <span className={styles["hint-desc"]}>{t("parsing.hints.mergeClosest")}</span>
                     </div>
                     <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Ctrl + Z</span>
-                      <span className={styles["hint-desc"]}>Undo</span>
+                      <span className={styles["hint-keys"]}>{t("parsing.hints.ctrlZ")}</span>
+                      <span className={styles["hint-desc"]}>{t("parsing.hints.undo")}</span>
                     </div>
                     <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>Ctrl + Scroll</span>
-                      <span className={styles["hint-desc"]}>Zoom</span>
+                      <span className={styles["hint-keys"]}>{t("parsing.hints.ctrlScroll")}</span>
+                      <span className={styles["hint-desc"]}>{t("parsing.hints.zoom")}</span>
                     </div>
                   </div>
                 </div>
@@ -1501,7 +1494,7 @@ export default function ParsingPage() {
                   onClick={handleApprove}
                   disabled={!sources.length}
                 >
-                  {isApproved ? "Approved" : "Approve"}
+                  {isApproved ? t("parsing.approved") : t("parsing.approve")}
                 </button>
               </div>
             </div>
@@ -1514,7 +1507,7 @@ export default function ParsingPage() {
               data-scrollable
               role="button"
               tabIndex={0}
-              aria-label="Document view"
+              aria-label={t("parsing.documentView")}
               onClick={onPageClick}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -1621,7 +1614,7 @@ export default function ParsingPage() {
                           width: (source.bbox.x1 - source.bbox.x0) * scale,
                           height: (source.bbox.y1 - source.bbox.y0) * scale,
                         }}
-                        title={source.text || "(no text)"}
+                        title={source.text || t("parsing.noText")}
                         onMouseDown={(e) => onRectMouseDown(e, source)}
                       >
                         <span className={styles["ref-label"]}>
@@ -1654,7 +1647,7 @@ export default function ParsingPage() {
                               width: (bbox.x1 - bbox.x0) * scale,
                               height: (bbox.y1 - bbox.y0) * scale,
                             }}
-                            title={source.text || "(no text)"}
+                            title={source.text || t("parsing.noText")}
                             onMouseDown={(e) => onRectMouseDown(e, source)}
                           >
                             <span
@@ -1683,7 +1676,7 @@ export default function ParsingPage() {
           </>
         ) : (
           <div className={styles["viewer-empty"]}>
-            <p>Unable to load document</p>
+            <p>{t("parsing.unableToLoad")}</p>
           </div>
         )}
       </section>
@@ -1699,18 +1692,18 @@ export default function ParsingPage() {
                     type="button"
                     className={`${styles["panel-tab"]}`}
                     onClick={() => setActiveKind(null)}
-                    title="Show source detail"
+                    title={t("parsing.showSourceDetail")}
                   >
-                    Source Detail
+                    {t("parsing.sourceDetail")}
                   </button>
                   <span className={styles["panel-tab-sep"]}>|</span>
                   <button
                     type="button"
                     className={`${styles["panel-tab"]} ${styles["panel-tab-active"]}`}
                     onClick={() => setActiveKind("highlight")}
-                    title="Show notes"
+                    title={t("parsing.showNotes")}
                   >
-                    Notes{notes.length > 0 ? ` (${notes.length})` : ""}
+                    {t("parsing.notesTab")}{notes.length > 0 ? ` (${notes.length})` : ""}
                   </button>
                 </div>
               </div>
@@ -1718,7 +1711,7 @@ export default function ParsingPage() {
 
             <div
               className={styles["actions-content"]}
-              style={{ display: "flex", flexDirection: "column", gap: 12, padding: 12 }}
+              style={{ display: "flex", flexDirection: "column", gap: 12, padding: 16 }}
             >
               {/* Tool toggles */}
               <div style={{ display: "flex", gap: 6 }}>
@@ -1730,9 +1723,9 @@ export default function ParsingPage() {
                     background:
                       activeNoteKind === "highlight" ? activeNoteColor : undefined,
                   }}
-                  title="Highlight: drag a box to create"
+                  title={t("parsing.highlightTool")}
                 >
-                  Highlight
+                  {t("parsing.highlight")}
                 </button>
                 <button
                   className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
@@ -1742,9 +1735,9 @@ export default function ParsingPage() {
                     background:
                       activeNoteKind === "callout" ? activeNoteColor : undefined,
                   }}
-                  title="Callout: drag to draw a box"
+                  title={t("parsing.calloutTool")}
                 >
-                  Callout
+                  {t("parsing.callout")}
                 </button>
               </div>
 
@@ -1761,7 +1754,7 @@ export default function ParsingPage() {
                   type="color"
                   value={activeNoteColor}
                   onChange={(e) => applyColorChoice(e.target.value)}
-                  title="Note color"
+                  title={t("parsing.noteColor")}
                   style={{
                     width: 24,
                     height: 20,
@@ -1813,7 +1806,7 @@ export default function ParsingPage() {
                   fontSize: 11,
                   color: "#52525b",
                 }}
-                title="Callout background opacity"
+                title={t("parsing.calloutOpacity")}
               >
                 <input
                   type="range"
@@ -1823,7 +1816,7 @@ export default function ParsingPage() {
                   onChange={(e) =>
                     setCalloutOpacity(Number(e.target.value) / 100)
                   }
-                  aria-label="Callout opacity"
+                  aria-label={t("parsing.calloutOpacityAria")}
                   style={{
                     flex: 1,
                     accentColor: activeNoteColor,
@@ -1857,9 +1850,9 @@ export default function ParsingPage() {
                 >
                   <label
                     style={{ display: "flex", alignItems: "center", gap: 4 }}
-                    title="Callout text color"
+                    title={t("parsing.calloutTextColor")}
                   >
-                    <span>Text</span>
+                    <span>{t("parsing.text")}</span>
                     <input
                       type="color"
                       value={calloutTextColor}
@@ -1889,9 +1882,9 @@ export default function ParsingPage() {
                   </label>
                   <label
                     style={{ display: "flex", alignItems: "center", gap: 4 }}
-                    title="Callout font size"
+                    title={t("parsing.calloutFontSize")}
                   >
-                    <span>Size</span>
+                    <span>{t("parsing.size")}</span>
                     <input
                       type="number"
                       min={CALLOUT_FONT_SIZE_MIN}
@@ -1944,7 +1937,7 @@ export default function ParsingPage() {
                         });
                       }
                     }}
-                    title="Toggle bold"
+                    title={t("parsing.toggleBold")}
                     style={{
                       height: 22,
                       padding: "0 10px",
@@ -1971,9 +1964,9 @@ export default function ParsingPage() {
                 className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
                 onClick={handleAutoAnnotate}
                 disabled={!selectedPdfId || sources.length === 0}
-                title="Highlight every Not Found and Problematic reference and add a Turkish explanation callout below each"
+                title={t("parsing.autoAnnotateTitle")}
               >
-                Auto-annotate non-Found
+                {t("parsing.autoAnnotate")}
               </button>
 
               {/* Selected-note inline editor */}
@@ -1989,8 +1982,8 @@ export default function ParsingPage() {
                   }}
                 >
                   <span style={{ fontSize: 11, color: "#71717a" }}>
-                    {selectedNote.kind === "callout" ? "Callout" : "Highlight"}{" "}
-                    · Page {selectedNote.pageNum + 1}
+                    {selectedNote.kind === "callout" ? t("parsing.calloutLabel") : t("parsing.highlightLabel")}{" "}
+                    · {t("parsing.page")} {selectedNote.pageNum + 1}
                   </span>
                   {selectedNote.kind === "callout" && (
                     <textarea
@@ -2003,7 +1996,7 @@ export default function ParsingPage() {
                         // undoes the whole typing burst (not per-key).
                         if (selectedPdfId) beginNoteEdit(selectedPdfId);
                       }}
-                      placeholder="Callout text (Enter for new line)…"
+                      placeholder={t("parsing.calloutTextPlaceholder")}
                       ref={noteEditorRef}
                       rows={4}
                       style={{
@@ -2021,14 +2014,14 @@ export default function ParsingPage() {
                     className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
                     onClick={handleDeleteSelectedNote}
                   >
-                    Delete note
+                    {t("parsing.deleteNote")}
                   </button>
                 </div>
               ) : (
                 <span style={{ color: "#a8a29e", fontSize: 12 }}>
                   {activeNoteKind === "highlight"
-                    ? "Drag a box to highlight."
-                    : "Drag a box to place a callout."}
+                    ? t("parsing.dragToHighlight")
+                    : t("parsing.dragToCallout")}
                 </span>
               )}
 
@@ -2037,14 +2030,14 @@ export default function ParsingPage() {
                 className={`${styles["zoom-btn"]} ${styles["zoom-text"]} ${exportSuccess ? styles["export-success"] : ""}`}
                 onClick={handleExportAnnotatedPdf}
                 disabled={exportingPdf || notes.length === 0 || !pdfDoc}
-                title="Save a copy of the PDF with notes baked in"
+                title={t("parsing.exportTitle")}
                 style={{ marginTop: "auto" }}
               >
                 {exportingPdf
-                  ? "Exporting…"
+                  ? t("parsing.exporting")
                   : exportSuccess
-                    ? "\u2713 Exported"
-                    : "Export PDF"}
+                    ? t("parsing.exported")
+                    : t("parsing.export")}
               </button>
             </div>
           </>
@@ -2057,19 +2050,19 @@ export default function ParsingPage() {
                     type="button"
                     className={`${styles["panel-tab"]} ${styles["panel-tab-active"]}`}
                     onClick={() => setActiveKind(null)}
-                    title="Show source detail"
+                    title={t("parsing.showSourceDetail")}
                   >
-                    Source Detail
+                    {t("parsing.sourceDetail")}
                   </button>
                   <span className={styles["panel-tab-sep"]}>|</span>
                   <button
                     type="button"
                     className={`${styles["panel-tab"]}`}
                     onClick={() => setActiveKind("highlight")}
-                    title="Show notes"
+                    title={t("parsing.showNotes")}
                     disabled={!pdfDoc}
                   >
-                    Notes{notes.length > 0 ? ` (${notes.length})` : ""}
+                    {t("parsing.notesTab")}{notes.length > 0 ? ` (${notes.length})` : ""}
                   </button>
                 </div>
               </div>
@@ -2080,7 +2073,7 @@ export default function ParsingPage() {
                 <div className={styles["source-detail"]}>
                   <div className={styles["detail-meta-row"]}>
                     <div className={styles["detail-meta-group"]}>
-                      <span className={styles["detail-label"]}>Ref #</span>
+                      <span className={styles["detail-label"]}>{t("parsing.refHash")}</span>
                       <span className={styles["detail-value"]}>
                         {selectedSource.ref_number != null
                           ? selectedSource.ref_number
@@ -2088,7 +2081,7 @@ export default function ParsingPage() {
                       </span>
                     </div>
                     <div className={styles["detail-meta-group"]}>
-                      <span className={styles["detail-label"]}>Page</span>
+                      <span className={styles["detail-label"]}>{t("parsing.page")}</span>
                       <span className={styles["detail-value"]}>
                         {selectedSource.bbox.page + 1}
                       </span>
@@ -2096,8 +2089,8 @@ export default function ParsingPage() {
                     <button
                       className={styles["detail-remove-icon"]}
                       onClick={() => handleRemoveSource(selectedSource.id)}
-                      title="Remove source"
-                      aria-label="Remove source"
+                      title={t("parsing.removeSource")}
+                      aria-label={t("parsing.removeSource")}
                     >
                       &#x2715;
                     </button>
@@ -2105,19 +2098,19 @@ export default function ParsingPage() {
 
                   {/* Extracted fields */}
                   {parsedFieldsLoading && (
-                    <div className={styles["fields-loading"]}>Extracting fields...</div>
+                    <div className={styles["fields-loading"]}>{t("parsing.extractingFields")}</div>
                   )}
                   {parsedFields && !parsedFieldsLoading && (
                     <div className={styles["parsed-fields"]}>
                       {parsedFields.title && (
                         <div className={styles["field-row"]}>
-                          <span className={styles["field-label"]}>Title</span>
+                          <span className={styles["field-label"]}>{t("parsing.fields.title")}</span>
                           <span className={styles["field-value"]}>{parsedFields.title}</span>
                         </div>
                       )}
                       {parsedFields.authors.length > 0 && (
                         <div className={styles["field-row"]}>
-                          <span className={styles["field-label"]}>Authors</span>
+                          <span className={styles["field-label"]}>{t("parsing.fields.authors")}</span>
                           <span className={styles["field-value"]}>
                             {parsedFields.authors.join(", ")}
                           </span>
@@ -2125,19 +2118,19 @@ export default function ParsingPage() {
                       )}
                       {parsedFields.year && (
                         <div className={styles["field-row"]}>
-                          <span className={styles["field-label"]}>Year</span>
+                          <span className={styles["field-label"]}>{t("parsing.fields.year")}</span>
                           <span className={styles["field-value"]}>{parsedFields.year}</span>
                         </div>
                       )}
                       {parsedFields.source && (
                         <div className={styles["field-row"]}>
-                          <span className={styles["field-label"]}>Source</span>
+                          <span className={styles["field-label"]}>{t("parsing.fields.source")}</span>
                           <span className={styles["field-value"]}>{parsedFields.source}</span>
                         </div>
                       )}
                       {parsedFields.url && (
                         <div className={styles["field-row"]}>
-                          <span className={styles["field-label"]}>URL</span>
+                          <span className={styles["field-label"]}>{t("parsing.fields.url")}</span>
                           <a
                             className={styles["field-link"]}
                             href={parsedFields.url}
@@ -2151,7 +2144,7 @@ export default function ParsingPage() {
                         </div>
                       )}
                       <div className={styles["field-row"]}>
-                        <span className={styles["field-label"]}>Method</span>
+                        <span className={styles["field-label"]}>{t("parsing.fields.method")}</span>
                         <span className={styles["extraction-method-badge"]}>
                           {parsedFields.extraction_method.toUpperCase()}
                         </span>
@@ -2172,21 +2165,21 @@ export default function ParsingPage() {
                         <span className={styles["raw-text-toggle-icon"]}>
                           {rawTextExpanded ? "\u25BC" : "\u25B6"}
                         </span>
-                        Raw Text
+                        {t("parsing.rawText")}
                       </button>
                       {selectedSourceStatus && (
                         <div className={styles["source-status-tags"]}>
                           <span
                             className={`${styles["source-status-tag"]} ${styles["source-status-tag-active"]}`}
                           >
-                            {selectedSourceStatus}
+                            {t(`parsing.sourceStatus.${selectedSourceStatus}`)}
                           </span>
                         </div>
                       )}
                     </div>
                     {rawTextExpanded && (
                       <div className={styles["detail-text-display"]}>
-                        {selectedSource.text || "(no text detected)"}
+                        {selectedSource.text || t("parsing.noTextDetected")}
                       </div>
                     )}
                   </div>
@@ -2196,7 +2189,7 @@ export default function ParsingPage() {
               {!selectedSource && (
                 <div className={styles["actions-empty"]}>
                   <p className={styles["actions-empty-text"]}>
-                    Select a source box to see details
+                    {t("parsing.selectSourceBox")}
                   </p>
                 </div>
               )}
@@ -2205,7 +2198,7 @@ export default function ParsingPage() {
         ) : (
           <div className={styles["actions-empty"]}>
             <p className={styles["actions-empty-text"]}>
-              Select a document to see actions
+              {t("parsing.selectDocumentActions")}
             </p>
           </div>
         )}

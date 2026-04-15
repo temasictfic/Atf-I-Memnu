@@ -33,7 +33,7 @@ function configureScholarPanelSession(): void {
   // navigator.webdriver, chrome.runtime) so Cloudflare Turnstile sees the guest
   // page as plain Chrome rather than Electron.
   const preloadPath = join(__dirname, '../preload/scholar-preload.js')
-  sess.setPreloads([...sess.getPreloads(), preloadPath])
+  sess.registerPreloadScript({ type: 'frame', filePath: preloadPath })
 
   // Drop assets we never render against: Scholar pages are text, and the
   // scanner extracts from the DOM — images, fonts, media, and tracker

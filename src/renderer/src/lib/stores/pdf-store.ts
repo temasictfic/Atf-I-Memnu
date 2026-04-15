@@ -145,7 +145,7 @@ export const usePdfStore = create<PdfState>()((set, _get) => ({
   pathsById: {},
   selectedPdfId: null,
   loading: false,
-  parsingSortKey: 'numbered' as ParsingSortKey,
+  parsingSortKey: 'name' as ParsingSortKey,
   parsingSortAsc: true,
 
   selectPdf: (id) => set({ selectedPdfId: id }),
