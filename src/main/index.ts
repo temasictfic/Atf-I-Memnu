@@ -263,12 +263,11 @@ ipcMain.handle('dialog:selectDirectory', async () => {
   return result.canceled ? null : result.filePaths[0]
 })
 
-ipcMain.handle('dialog:selectPdfs', async (_event, defaultPath?: string) => {
+ipcMain.handle('dialog:selectPdfs', async () => {
   if (!mainWindow) return []
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile', 'multiSelections'],
     title: 'Select PDF Files',
-    defaultPath,
     filters: [
       { name: 'PDF Files', extensions: ['pdf'] },
     ],

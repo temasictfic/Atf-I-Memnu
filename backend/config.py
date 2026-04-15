@@ -39,7 +39,6 @@ class Settings(BaseSettings):
     port: int = 0
     host: str = "0.0.0.0"
     output_dir: str = _default_output_dir()
-    kaynaklar_dir: str = ""
 
     # Search
     search_timeout: int = 20

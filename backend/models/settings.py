@@ -7,12 +7,9 @@ class DatabaseConfig(BaseModel):
     id: str
     name: str
     enabled: bool = True
-    tier: int = 1  # 1 = API, 2 = meta-search fallback
-    type: str = "api"
 
 
 class AppSettings(BaseModel):
-    last_directory: str = ""
     annotated_pdf_dir: str = ""
     databases: list[DatabaseConfig] = []
     api_keys: dict[str, str] = {}
@@ -29,16 +26,16 @@ class AppSettings(BaseModel):
     def default(cls) -> "AppSettings":
         return cls(
             databases=[
-                DatabaseConfig(id="crossref", name="Crossref", tier=1, type="api"),
-                DatabaseConfig(id="arxiv", name="arXiv", tier=1, type="api"),
-                DatabaseConfig(id="semantic_scholar", name="Semantic Scholar", tier=1, type="api"),
-                DatabaseConfig(id="openalex", name="OpenAlex", tier=1, type="api"),
-                DatabaseConfig(id="europe_pmc", name="Europe PMC", tier=1, type="api"),
-                DatabaseConfig(id="pubmed", name="PubMed", tier=1, type="api"),
-                DatabaseConfig(id="plos", name="PLOS", tier=1, type="api"),
-                DatabaseConfig(id="open_library", name="Open Library", tier=1, type="api"),
-                DatabaseConfig(id="trdizin", name="TRDizin", tier=1, type="api"),
-                DatabaseConfig(id="core", name="CORE", enabled=False, tier=1, type="api"),
+                DatabaseConfig(id="crossref", name="Crossref"),
+                DatabaseConfig(id="arxiv", name="arXiv"),
+                DatabaseConfig(id="semantic_scholar", name="Semantic Scholar"),
+                DatabaseConfig(id="openalex", name="OpenAlex"),
+                DatabaseConfig(id="europe_pmc", name="Europe PMC"),
+                DatabaseConfig(id="pubmed", name="PubMed"),
+                DatabaseConfig(id="plos", name="PLOS"),
+                DatabaseConfig(id="open_library", name="Open Library"),
+                DatabaseConfig(id="trdizin", name="TRDizin"),
+                DatabaseConfig(id="core", name="CORE", enabled=False),
             ],
             search_timeout=app_config.search_timeout,
             max_concurrent_apis=app_config.max_concurrent_apis,

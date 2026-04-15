@@ -84,19 +84,11 @@ export async function startPythonBackend(): Promise<void> {
   const launch = getBackendLaunchCommand(backendPort)
   const backendExecutablePath = launch.command
   const outputDir = join(app.getPath('userData'), 'output')
-  const packagedKaynaklarDir = join(process.resourcesPath, 'kaynaklar')
-  const devKaynaklarDir = join(__dirname, '../../kaynaklar')
   const envVars: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUTF8: '1',
     ATFI_PORT: String(backendPort),
     ATFI_OUTPUT_DIR: outputDir
-  }
-
-  if (app.isPackaged && existsSync(packagedKaynaklarDir)) {
-    envVars.ATFI_KAYNAKLAR_DIR = packagedKaynaklarDir
-  } else if (existsSync(devKaynaklarDir)) {
-    envVars.ATFI_KAYNAKLAR_DIR = devKaynaklarDir
   }
 
   console.log(`Starting backend from: ${launch.command}`)

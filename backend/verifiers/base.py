@@ -8,7 +8,6 @@ from models.verification_result import MatchResult
 
 class AbstractVerifier(ABC):
     name: str = ""
-    tier: int = 1  # 1 = API, 2 = meta-search
     base_url: str = ""
 
     @abstractmethod

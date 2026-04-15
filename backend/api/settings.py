@@ -46,7 +46,6 @@ def _migrate_databases(s: AppSettings) -> AppSettings:
     merged = []
     for db in defaults.databases:
         if db.id in stored_map:
-            # Preserve user's enabled state, update tier/type from defaults
             merged.append(db.model_copy(update={"enabled": stored_map[db.id].enabled}))
         else:
             merged.append(db)

@@ -94,12 +94,9 @@ export interface DatabaseConfig {
   id: string
   name: string
   enabled: boolean
-  tier: 1 | 2
-  type: 'api'
 }
 
 export interface AppSettings {
-  last_directory?: string
   annotated_pdf_dir?: string
   databases: DatabaseConfig[]
   api_keys?: Record<string, string>

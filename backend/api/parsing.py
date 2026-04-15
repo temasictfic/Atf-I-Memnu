@@ -78,31 +78,6 @@ class ExtractFieldsRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Last-directory (used by the file picker to remember where the user was)
-# ---------------------------------------------------------------------------
-
-
-def _save_last_directory(directory: str) -> None:
-    try:
-        from api.settings import _load_settings, _save_settings
-        s = _load_settings()
-        s.last_directory = directory
-        _save_settings(s)
-    except Exception:
-        pass
-
-
-@router.get("/parse/last-directory")
-async def get_last_directory():
-    try:
-        from api.settings import _load_settings
-        s = _load_settings()
-        return {"directory": s.last_directory}
-    except Exception:
-        return {"directory": ""}
-
-
-# ---------------------------------------------------------------------------
 # Source cache CRUD
 # ---------------------------------------------------------------------------
 

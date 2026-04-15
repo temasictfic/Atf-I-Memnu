@@ -7,7 +7,7 @@ export interface SaveDialogOptions {
 
 export interface ElectronAPI {
   selectDirectory: () => Promise<string | null>
-  selectPdfs: (defaultPath?: string) => Promise<string[]>
+  selectPdfs: () => Promise<string[]>
   openExternal: (url: string) => Promise<void>
   openCacheFolder: () => Promise<{ ok: boolean; path: string; error: string | null }>
   getBackendPort: () => Promise<number>

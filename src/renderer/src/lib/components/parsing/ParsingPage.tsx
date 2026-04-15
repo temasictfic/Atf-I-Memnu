@@ -543,16 +543,7 @@ export default function ParsingPage() {
 
   async function handleImport() {
     try {
-      let defaultPath: string | undefined;
-      try {
-        const lastDirectoryResponse = await api.getLastDirectory();
-        defaultPath = lastDirectoryResponse.directory?.trim()
-          ? lastDirectoryResponse.directory
-          : undefined;
-      } catch {
-        defaultPath = undefined;
-      }
-      const files = await window.electronAPI.selectPdfs(defaultPath);
+      const files = await window.electronAPI.selectPdfs();
       if (files.length > 0) {
         await usePdfStore.getState().loadFiles(files);
       }

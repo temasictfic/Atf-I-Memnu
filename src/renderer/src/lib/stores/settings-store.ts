@@ -3,16 +3,16 @@ import type { AppSettings, DatabaseConfig } from '../api/types'
 import { api } from '../api/rest-client'
 
 const defaultDatabases: DatabaseConfig[] = [
-  { id: 'crossref', name: 'Crossref', enabled: true, tier: 1, type: 'api' },
-  { id: 'arxiv', name: 'arXiv', enabled: true, tier: 1, type: 'api' },
-  { id: 'semantic_scholar', name: 'Semantic Scholar', enabled: true, tier: 1, type: 'api' },
-  { id: 'openalex', name: 'OpenAlex', enabled: true, tier: 1, type: 'api' },
-  { id: 'europe_pmc', name: 'Europe PMC', enabled: true, tier: 1, type: 'api' },
-  { id: 'pubmed', name: 'PubMed', enabled: true, tier: 1, type: 'api' },
-  { id: 'plos', name: 'PLOS', enabled: true, tier: 1, type: 'api' },
-  { id: 'open_library', name: 'Open Library', enabled: true, tier: 1, type: 'api' },
-  { id: 'trdizin', name: 'TRDizin', enabled: true, tier: 1, type: 'api' },
-  { id: 'core', name: 'CORE', enabled: false, tier: 1, type: 'api' },
+  { id: 'crossref', name: 'Crossref', enabled: true },
+  { id: 'arxiv', name: 'arXiv', enabled: true },
+  { id: 'semantic_scholar', name: 'Semantic Scholar', enabled: true },
+  { id: 'openalex', name: 'OpenAlex', enabled: true },
+  { id: 'europe_pmc', name: 'Europe PMC', enabled: true },
+  { id: 'pubmed', name: 'PubMed', enabled: true },
+  { id: 'plos', name: 'PLOS', enabled: true },
+  { id: 'open_library', name: 'Open Library', enabled: true },
+  { id: 'trdizin', name: 'TRDizin', enabled: true },
+  { id: 'core', name: 'CORE', enabled: false },
 ]
 
 interface SettingsState {
@@ -54,7 +54,6 @@ function _debouncedSave(get: () => SettingsState) {
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   saveStatus: 'idle' as const,
   settings: {
-    last_directory: '',
     annotated_pdf_dir: '',
     databases: defaultDatabases,
     api_keys: {},

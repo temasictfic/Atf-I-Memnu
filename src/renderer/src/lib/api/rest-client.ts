@@ -55,9 +55,6 @@ export const api = {
   extractFields: (text: string) =>
     request<import('./types').ParsedSource>('POST', '/api/parse/extract-fields', { text }),
 
-  getLastDirectory: () =>
-    request<{ directory: string }>('GET', '/api/parse/last-directory'),
-
   // Verification
   verify: (pdfIds: string[]) =>
     request<{ job_id: string }>('POST', '/api/verify', { pdf_ids: pdfIds }),

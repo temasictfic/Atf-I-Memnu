@@ -13,8 +13,8 @@ const electronAPI = {
   selectDirectory: (): Promise<string | null> => {
     return ipcRenderer.invoke('dialog:selectDirectory')
   },
-  selectPdfs: (defaultPath?: string): Promise<string[]> => {
-    return ipcRenderer.invoke('dialog:selectPdfs', defaultPath)
+  selectPdfs: (): Promise<string[]> => {
+    return ipcRenderer.invoke('dialog:selectPdfs')
   },
   openExternal: (url: string): Promise<void> => {
     return ipcRenderer.invoke('shell:openExternal', url)
