@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { AppSettings, DatabaseConfig } from '../api/types'
 import { api } from '../api/rest-client'
+import i18n from '../i18n'
 
 const defaultDatabases: DatabaseConfig[] = [
   { id: 'crossref', name: 'Crossref', enabled: true },
@@ -61,13 +62,16 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     search_timeout: 30,
     max_concurrent_apis: 5,
     max_concurrent_sources_per_pdf: 3,
-    max_concurrent_pdfs: 2,
+    language: 'tr',
   },
 
   loadSettings: async () => {
     try {
       const s = await api.getSettings()
       set({ settings: s })
+      if (s.language && i18n.language !== s.language) {
+        i18n.changeLanguage(s.language)
+      }
     } catch {
       // Use defaults
     }
@@ -84,6 +88,9 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   updateSetting: (key, value) => {
     set(state => ({ settings: { ...state.settings, [key]: value } }))
+    if (key === 'language' && typeof value === 'string') {
+      i18n.changeLanguage(value)
+    }
     _debouncedSave(get)
   },
 

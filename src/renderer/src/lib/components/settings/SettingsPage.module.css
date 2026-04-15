@@ -6,7 +6,7 @@
 }
 .settings-container {
   max-width: 720px;
-  margin: 0 auto;
+  margin: 0 0 0 calc(var(--tab-center-vp, 50%) - 360px - 32px);
 }
 .settings-header {
   display: flex;

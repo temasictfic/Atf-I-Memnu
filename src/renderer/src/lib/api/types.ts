@@ -104,8 +104,8 @@ export interface AppSettings {
   search_timeout: number
   max_concurrent_apis: number
   max_concurrent_sources_per_pdf: number
-  max_concurrent_pdfs: number
   auto_scholar_after_verify?: boolean
+  language?: 'tr' | 'en'
 }
 
 // WebSocket event types

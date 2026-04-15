@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useSettingsStore } from '../../stores/settings-store'
 import styles from './SettingsPage.module.css'
 import pkg from '../../../../../../package.json'
@@ -19,6 +20,7 @@ const defaultDatabaseIds = new Set([
 const GITHUB_REPO_URL = 'https://github.com/temasictfic/Atf-I-Memnu'
 
 export default function SettingsPage() {
+  const { t } = useTranslation()
   const settings = useSettingsStore(s => s.settings)
   const saveStatus = useSettingsStore(s => s.saveStatus)
   const { toggleDatabase, updateSetting, removeDatabase, moveDatabase, updateApiKey } = useSettingsStore.getState()
@@ -27,13 +29,13 @@ export default function SettingsPage() {
   const handleOpenCacheFolder = async () => {
     try {
       const result = await window.electronAPI.openCacheFolder()
-      setCacheOpenMessage(result.ok ? `Opened: ${result.path}` : 'Failed to open cache folder')
+      setCacheOpenMessage(result.ok ? t('settings.cache.openedAt', { path: result.path }) : t('settings.cache.openFailed'))
       if (!result.ok && result.error) {
         console.error('Failed to open cache folder:', result.error)
       }
     } catch (error) {
       console.error('Failed to open cache folder:', error)
-      setCacheOpenMessage('Failed to open cache folder')
+      setCacheOpenMessage(t('settings.cache.openFailed'))
     }
   }
 
@@ -52,20 +54,47 @@ export default function SettingsPage() {
         {saveStatus !== 'idle' && (
           <div className={styles['save-toast']}>
             <span className={`${styles['save-toast-inner']} ${styles[`save-toast-inner--${saveStatus}`]}`}>
-              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : 'Save failed'}
+              {saveStatus === 'saving' ? t('settings.save.saving') : saveStatus === 'saved' ? t('settings.save.saved') : t('settings.save.error')}
             </span>
           </div>
         )}
 
         <div className={styles['settings-header']}>
-          <h1 className={styles['settings-title']}>Settings</h1>
-          <span style={{ marginLeft: 'auto', marginRight: 10, color: '#78716c', fontSize: 13, fontWeight: 700 }}>v{pkg.version}</span>
+          <h1 className={styles['settings-title']}>{t('settings.title')}</h1>
+          <div style={{ flex: 1 }} />
+          <button
+            type="button"
+            className={styles['header-icon-button']}
+            onClick={() => updateSetting('language', (settings.language ?? 'tr') === 'tr' ? 'en' : 'tr')}
+            title={t('settings.language.label')}
+            aria-label={t('settings.language.label')}
+            style={{ padding: 0, overflow: 'hidden' }}
+          >
+            {(settings.language ?? 'tr') === 'tr' ? (
+              <svg viewBox="0 0 24 16" width="24" height="16" aria-hidden="true">
+                <rect width="24" height="16" fill="#e30a17" />
+                <circle cx="9" cy="8" r="3.5" fill="#fff" />
+                <circle cx="9.9" cy="8" r="2.8" fill="#e30a17" />
+                <polygon fill="#fff" points="15,6 15.447,7.385 16.902,7.382 15.723,8.235 16.176,9.618 15,8.76 13.824,9.618 14.277,8.235 13.098,7.382 14.553,7.385" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 16" width="24" height="16" aria-hidden="true">
+                <rect width="24" height="16" fill="#012169" />
+                <path d="M0,0 L24,16 M24,0 L0,16" stroke="#fff" strokeWidth="3.2" />
+                <path d="M0,0 L24,16 M24,0 L0,16" stroke="#c8102e" strokeWidth="1.6" clipPath="inset(0)" />
+                <path d="M12,0 V16 M0,8 H24" stroke="#fff" strokeWidth="5.3" />
+                <path d="M12,0 V16 M0,8 H24" stroke="#c8102e" strokeWidth="3.2" />
+              </svg>
+            )}
+          </button>
+          <div style={{ flex: 1 }} />
+          <span style={{ marginRight: 10, color: '#78716c', fontSize: 13, fontWeight: 700 }}>v{pkg.version}</span>
           <button
             type="button"
             className={styles['header-icon-button']}
             onClick={handleOpenGithubRepo}
-            title="Open GitHub Repository"
-            aria-label="Open GitHub Repository"
+            title={t('settings.githubRepo')}
+            aria-label={t('settings.githubRepo')}
           >
             <svg viewBox="0 0 24 24" className={styles['header-icon']} aria-hidden="true">
               <path d="M12 1.5a10.5 10.5 0 0 0-3.32 20.47c.52.09.7-.22.7-.5v-1.93c-2.85.62-3.45-1.2-3.45-1.2-.46-1.18-1.12-1.5-1.12-1.5-.92-.63.07-.62.07-.62 1.02.07 1.56 1.04 1.56 1.04.9 1.54 2.36 1.1 2.94.84.09-.66.35-1.1.64-1.36-2.27-.26-4.66-1.14-4.66-5.05 0-1.12.4-2.03 1.04-2.75-.1-.26-.45-1.32.1-2.75 0 0 .86-.28 2.8 1.05a9.82 9.82 0 0 1 5.1 0c1.95-1.33 2.8-1.05 2.8-1.05.55 1.43.2 2.5.1 2.75.65.72 1.04 1.63 1.04 2.75 0 3.92-2.4 4.78-4.68 5.03.36.32.68.94.68 1.9v2.82c0 .28.18.59.7.5A10.5 10.5 0 0 0 12 1.5Z" />
@@ -75,8 +104,8 @@ export default function SettingsPage() {
 
         {/* Databases Section */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>Search Databases</h2>
-          <p className={styles['section-desc']}>Enable or disable databases and drag to reorder. Databases search first in this order and lists results</p>
+          <h2 className={styles['section-title']}>{t('settings.databases.title')}</h2>
+          <p className={styles['section-desc']}>{t('settings.databases.description')}</p>
 
           <div className={styles['db-list']}>
             {settings.databases.map((db, i) => (
@@ -87,8 +116,8 @@ export default function SettingsPage() {
                     className={styles['db-reorder-btn']}
                     disabled={i === 0}
                     onClick={() => moveDatabase(db.id, 'up')}
-                    title="Move up"
-                    aria-label={`Move ${db.name} up`}
+                    title={t('settings.databases.moveUp')}
+                    aria-label={`${t('settings.databases.moveUp')}: ${db.name}`}
                   >
                     <svg width="10" height="10" viewBox="0 0 10 10"><path d="M5 2L1 7h8z" fill="currentColor" /></svg>
                   </button>
@@ -96,8 +125,8 @@ export default function SettingsPage() {
                     className={styles['db-reorder-btn']}
                     disabled={i === settings.databases.length - 1}
                     onClick={() => moveDatabase(db.id, 'down')}
-                    title="Move down"
-                    aria-label={`Move ${db.name} down`}
+                    title={t('settings.databases.moveDown')}
+                    aria-label={`${t('settings.databases.moveDown')}: ${db.name}`}
                   >
                     <svg width="10" height="10" viewBox="0 0 10 10"><path d="M5 8L1 3h8z" fill="currentColor" /></svg>
                   </button>
@@ -110,7 +139,7 @@ export default function SettingsPage() {
                   <span className={styles['db-name']}>{db.name}</span>
                 </div>
                 {!defaultDatabaseIds.has(db.id) && (
-                  <button className={styles['db-remove']} onClick={() => removeDatabase(db.id)} title="Remove">&#10005;</button>
+                  <button className={styles['db-remove']} onClick={() => removeDatabase(db.id)} title={t('settings.databases.removeTitle')}>&#10005;</button>
                 )}
               </div>
             ))}
@@ -119,35 +148,33 @@ export default function SettingsPage() {
 
         {/* API Keys Section */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>API Keys</h2>
-          <p className={styles['section-desc']}>Optional API keys for improved rate limits and access</p>
+          <h2 className={styles['section-title']}>{t('settings.apiKeys.title')}</h2>
+          <p className={styles['section-desc']}>{t('settings.apiKeys.description')}</p>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Polite Pool Email for Crossref, arXiv, and OpenAlex</span>
-              <span className={styles['setting-desc']}>
-                Your contact email. Sent to Crossref, arXiv, and OpenAlex
-              </span>
+              <span className={styles['setting-label']}>{t('settings.apiKeys.politeEmailLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.apiKeys.politeEmailDesc')}</span>
             </div>
             <input
               type="text"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.polite_pool_email ?? ''}
-              placeholder="Optional - you@example.com"
+              placeholder={t('settings.apiKeys.politeEmailPlaceholder')}
               onChange={e => updateSetting('polite_pool_email', e.target.value)}
             />
           </div>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Semantic Scholar API Key</span>
+              <span className={styles['setting-label']}>{t('settings.apiKeys.semanticScholarLabel')}</span>
               <span className={styles['setting-desc']}>
-                Strongly recommended.{' '}
+                {t('settings.apiKeys.semanticScholarDesc')}{' '}
                 <a
                   href="https://www.semanticscholar.org/product/api#api-key-form"
                   onClick={handleOpenExternalLink('https://www.semanticscholar.org/product/api#api-key-form')}
                 >
-                  Request a free key
+                  {t('settings.apiKeys.requestFreeKey')}
                 </a>.
               </span>
             </div>
@@ -155,35 +182,35 @@ export default function SettingsPage() {
               type="password"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.semantic_scholar ?? ''}
-              placeholder="Optional"
+              placeholder={t('settings.apiKeys.optional')}
               onChange={e => updateApiKey('semantic_scholar', e.target.value)}
             />
           </div>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>PubMed (NCBI) API Key</span>
-              <span className={styles['setting-desc']}>Optional - increases rate limits (get from NCBI)</span>
+              <span className={styles['setting-label']}>{t('settings.apiKeys.pubmedLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.apiKeys.pubmedDesc')}</span>
             </div>
             <input
               type="password"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.pubmed ?? ''}
-              placeholder="Optional"
+              placeholder={t('settings.apiKeys.optional')}
               onChange={e => updateApiKey('pubmed', e.target.value)}
             />
           </div>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>CORE API Key</span>
-              <span className={styles['setting-desc']}>Required for CORE - free key from core.ac.uk</span>
+              <span className={styles['setting-label']}>{t('settings.apiKeys.coreLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.apiKeys.coreDesc')}</span>
             </div>
             <input
               type="password"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.core ?? ''}
-              placeholder="Required"
+              placeholder={t('settings.apiKeys.required')}
               onChange={e => updateApiKey('core', e.target.value)}
             />
           </div>
@@ -191,12 +218,12 @@ export default function SettingsPage() {
 
         {/* Search Configuration */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>Search Configuration</h2>
+          <h2 className={styles['section-title']}>{t('settings.search.title')}</h2>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Search Timeout (seconds)</span>
-              <span className={styles['setting-desc']}>Max time per database per source</span>
+              <span className={styles['setting-label']}>{t('settings.search.timeoutLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.search.timeoutDesc')}</span>
             </div>
             <input type="number" className={styles['setting-input']} value={settings.search_timeout}
               onChange={e => updateSetting('search_timeout', Number(e.target.value))} min={5} max={120} />
@@ -204,8 +231,8 @@ export default function SettingsPage() {
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Max Concurrent API Calls</span>
-              <span className={styles['setting-desc']}>Parallel API requests limit</span>
+              <span className={styles['setting-label']}>{t('settings.search.maxApisLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.search.maxApisDesc')}</span>
             </div>
             <input type="number" className={styles['setting-input']} value={settings.max_concurrent_apis}
               onChange={e => updateSetting('max_concurrent_apis', Number(e.target.value))} min={1} max={20} />
@@ -213,8 +240,8 @@ export default function SettingsPage() {
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Concurrent Sources per PDF</span>
-              <span className={styles['setting-desc']}>How many references verify in parallel for one PDF</span>
+              <span className={styles['setting-label']}>{t('settings.search.concurrentSourcesLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.search.concurrentSourcesDesc')}</span>
             </div>
             <input type="number" className={styles['setting-input']} value={settings.max_concurrent_sources_per_pdf}
               onChange={e => updateSetting('max_concurrent_sources_per_pdf', Number(e.target.value))} min={1} max={20} />
@@ -222,17 +249,8 @@ export default function SettingsPage() {
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Concurrent PDFs</span>
-              <span className={styles['setting-desc']}>How many PDFs verify in parallel during batch verification</span>
-            </div>
-            <input type="number" className={styles['setting-input']} value={settings.max_concurrent_pdfs}
-              onChange={e => updateSetting('max_concurrent_pdfs', Number(e.target.value))} min={1} max={10} />
-          </div>
-
-          <div className={styles['setting-row']}>
-            <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Auto Google Scholar after verify</span>
-              <span className={styles['setting-desc']}>Automatically run Google Scholar scan for non-found sources after single PDF verification finishes</span>
+              <span className={styles['setting-label']}>{t('settings.search.autoScholarLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.search.autoScholarDesc')}</span>
             </div>
             <label className={styles['db-toggle']}>
               <input type="checkbox" checked={settings.auto_scholar_after_verify ?? true}
@@ -246,21 +264,19 @@ export default function SettingsPage() {
 
         {/* Notes */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>Notes</h2>
+          <h2 className={styles['section-title']}>{t('settings.notes.title')}</h2>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Annotated PDF folder</span>
-              <span className={styles['setting-desc']}>
-                Default location for saved annotated PDFs. Leave empty to prompt each time.
-              </span>
+              <span className={styles['setting-label']}>{t('settings.notes.annotatedPdfLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.notes.annotatedPdfDesc')}</span>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input
                 type="text"
                 className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
                 value={settings.annotated_pdf_dir ?? ''}
-                placeholder="(prompt each time)"
+                placeholder={t('settings.notes.annotatedPdfPlaceholder')}
                 onChange={e => updateSetting('annotated_pdf_dir', e.target.value)}
               />
               <button
@@ -271,24 +287,24 @@ export default function SettingsPage() {
                   if (dir) updateSetting('annotated_pdf_dir', dir)
                 }}
               >
-                Browse…
+                {t('common.browse')}
               </button>
             </div>
           </div>
         </section>
 
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>Cache</h2>
+          <h2 className={styles['section-title']}>{t('settings.cache.title')}</h2>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>Cache Folder</span>
-              <span className={styles['setting-desc']}>Folder where cache files are stored</span>
+              <span className={styles['setting-label']}>{t('settings.cache.folderLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.cache.folderDesc')}</span>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {cacheOpenMessage && <span className={styles['action-message']}>{cacheOpenMessage}</span>}
               <button type="button" className={styles['action-button']} onClick={handleOpenCacheFolder}>
-                Open
+                {t('common.open')}
               </button>
             </div>
           </div>

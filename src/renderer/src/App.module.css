@@ -24,7 +24,8 @@
 }
 
 .header-inner {
-  display: flex;
+  display: grid;
+  grid-template-columns: 260px 1fr 280px;
   align-items: center;
   padding: 0 20px 0 0;
   height: 54px;
@@ -39,6 +40,7 @@
   justify-content: flex-start;
   width: 260px;
   flex-shrink: 0;
+  min-width: 0;
 }
 .brand-image {
   display: block;
@@ -51,7 +53,8 @@
 .tab-nav {
   display: flex;
   gap: 4px;
-  margin: 0 auto;
+  justify-self: center;
+  min-width: 0;
 }
 .tab-btn {
   position: relative;
@@ -86,8 +89,8 @@
 .tab-indicator {
   position: absolute;
   bottom: 0;
-  left: 20%;
-  right: 20%;
+  left: 20px;
+  right: 20px;
   height: 2px;
   background: linear-gradient(90deg, transparent, #fbbf24, transparent);
   border-radius: 2px 2px 0 0;
@@ -103,7 +106,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 200px;
+  min-width: 0;
   justify-content: flex-end;
 }
 .status-icon-ring {
@@ -115,6 +118,13 @@
   background: rgba(80, 42, 0, 0.2);
   box-shadow: 0 0 10px rgba(251, 191, 36, 0.55), 0 0 20px rgba(251, 191, 36, 0.35);
   animation: pulse-dot 4s ease-in-out infinite;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  margin-right: 26px;
+}
+.status-icon-ring:hover {
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.85), 0 0 28px rgba(251, 191, 36, 0.5);
 }
 .status-icon-ring::after {
   content: '';

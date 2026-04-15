@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { wsClient } from './lib/api/ws-client'
 import { initPdfListeners } from './lib/stores/pdf-store'
 import { initVerificationListeners } from './lib/stores/verification-store'
@@ -15,18 +16,38 @@ type TabId = 'parsing' | 'verification' | 'settings'
 
 interface Tab {
   id: TabId
-  label: string
   icon: string
 }
 
 const tabs: Tab[] = [
-  { id: 'parsing', label: 'Parsing', icon: '\u25E7' },
-  { id: 'verification', label: 'Verification', icon: '\u25C9' },
-  { id: 'settings', label: 'Settings', icon: '\u2699' },
+  { id: 'parsing', icon: '\u2B12' },
+  { id: 'verification', icon: '\u25C9' },
 ]
 
 export default function App() {
+  const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<TabId>('parsing')
+  const tabNavRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const el = tabNavRef.current
+    if (!el) return
+    const root = document.documentElement
+    const update = () => {
+      const rect = el.getBoundingClientRect()
+      root.style.setProperty('--tab-left-vp', `${rect.left}px`)
+      root.style.setProperty('--tab-right-vp', `${rect.right}px`)
+      root.style.setProperty('--tab-center-vp', `${(rect.left + rect.right) / 2}px`)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    window.addEventListener('resize', update)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', update)
+    }
+  }, [])
 
   // Initialize WebSocket, listeners, and settings on mount
   useEffect(() => {
@@ -52,7 +73,7 @@ export default function App() {
           </div>
 
           {/* Tabs */}
-          <nav className={styles['tab-nav']}>
+          <nav className={styles['tab-nav']} ref={tabNavRef}>
             {tabs.map(tab => (
               <button
                 key={tab.id}
@@ -60,7 +81,7 @@ export default function App() {
                 onClick={() => setActiveTab(tab.id)}
               >
                 <span className={styles['tab-icon']}>{tab.icon}</span>
-                <span>{tab.label}</span>
+                <span>{t(`app.tabs.${tab.id}`)}</span>
                 {activeTab === tab.id && <div className={styles['tab-indicator']} />}
               </button>
             ))}
@@ -69,9 +90,15 @@ export default function App() {
           {/* Status */}
           <div className={styles['header-status']}>
             <UpdateNotification />
-            <div className={styles['status-icon-ring']}>
+            <button
+              type="button"
+              className={styles['status-icon-ring']}
+              onClick={() => setActiveTab('settings')}
+              title={t('app.tabs.settings')}
+              aria-label={t('app.tabs.settings')}
+            >
               <img src={iconUrl} alt="App icon" className={styles['status-icon']} />
-            </div>
+            </button>
           </div>
         </div>
       </header>
@@ -95,8 +122,8 @@ export default function App() {
               el.scrollTo({ top: 0, behavior: 'smooth' })
             })
           }}
-          title="Scroll to top"
-          aria-label="Scroll to top"
+          title={t('app.scrollToTop')}
+          aria-label={t('app.scrollToTop')}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M8 12V4" />
