@@ -46,9 +46,11 @@ const measureFontReady = loadMeasureFonts()
 
 interface GenerateArgs {
   pdfId: string
+  pdfName: string
   sources: SourceRectangle[]
   resultsBySourceId: Record<string, VerificationResult>
   pageHeightFor: (pageNum: number) => number
+  pageWidthFor: (pageNum: number) => number
 }
 
 interface GenerateStats {
@@ -58,9 +60,11 @@ interface GenerateStats {
 
 export async function generateAutoNotesForPdf({
   pdfId,
+  pdfName,
   sources,
   resultsBySourceId,
   pageHeightFor,
+  pageWidthFor,
 }: GenerateArgs): Promise<GenerateStats> {
   // Wait for Liberation Sans to be available to the canvas measurer
   // before we size any callouts. If loading fails we fall back to the
@@ -160,7 +164,58 @@ export async function generateAutoNotesForPdf({
     calloutsAdded++
   }
 
+  // Title callout: PDF file name, centered above the header at the top of
+  // the first page. Uses the same callout palette as the status callouts,
+  // bolded and sized one step up so it reads as a title. Skipped when no
+  // status annotations were produced — matches the "nothing to do" alert.
+  const titleName = stripPdfExtension(pdfName).trim()
+  if (titleName.length > 0 && (highlightsAdded > 0 || calloutsAdded > 0)) {
+    const titlePageNum = 0
+    const titlePageH = pageHeightFor(titlePageNum)
+    const titlePageW = pageWidthFor(titlePageNum)
+    if (titlePageH > 0 && titlePageW > 0) {
+      const titleFontSize = calloutFontSize + 1
+      const titleLineHeight = titleFontSize * 1.2 * SCALE
+      const titleHeightPx = titleLineHeight + CALLOUT_INNER_PAD_PX * 2
+      const titleTextWidthPx = measureTextWidthScalePx(
+        titleName,
+        titleFontSize,
+        true,
+      )
+      const maxTitleWidth = Math.max(titlePageW - 20 * SCALE, 0)
+      const titleWidthPx = Math.min(
+        titleTextWidthPx + CALLOUT_INNER_PAD_PX * 2 + 1,
+        maxTitleWidth > 0 ? maxTitleWidth : titlePageW,
+      )
+      const titleTopMarginPx = 8 * SCALE
+      const titleX0 = Math.max((titlePageW - titleWidthPx) / 2, 0)
+      const titleRect = {
+        x0: titleX0,
+        y0: titleTopMarginPx,
+        x1: titleX0 + titleWidthPx,
+        y1: titleTopMarginPx + titleHeightPx,
+      }
+      addNote({
+        pdfId,
+        pageNum: titlePageNum,
+        kind: 'callout',
+        bbox: titleRect,
+        text: titleName,
+        color: '#ffffff',
+        textColor: calloutTextColor,
+        fontSize: titleFontSize,
+        bold: true,
+        autoForSourceId: `__pdf_title__${pdfId}`,
+      })
+      calloutsAdded++
+    }
+  }
+
   return { highlightsAdded, calloutsAdded }
+}
+
+function stripPdfExtension(name: string): string {
+  return name.replace(/\.pdf$/i, '')
 }
 
 // Place the callout directly below the anchor at the requested compact
