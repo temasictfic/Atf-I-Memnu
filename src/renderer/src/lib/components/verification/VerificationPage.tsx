@@ -6,6 +6,7 @@ import { useSettingsStore } from '../../stores/settings-store'
 import { useScholarScanStore } from '../../stores/scholar-scan-store'
 import { scholarScanner } from '../../services/scholar-scanner'
 import type { VerificationResult, MatchResult, DbCheckEntry } from '../../api/types'
+import { api } from '../../api/rest-client'
 import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../../utils/reference-text'
 import styles from './VerificationPage.module.css'
 
@@ -511,13 +512,46 @@ export default function VerificationPage() {
     return sanitizeReferenceTextForSearch(text)
   }, [selectedSourceId, verifyTexts, currentSource])
 
-  // Prefer the verified paper title for external searches — falls back to the
-  // raw reference text when no match has been found yet.
+  // Titles parsed from each source's raw reference text via the NER extractor.
+  // Keyed by `${sourceId}::${rawText}` so edits to the reference text trigger a
+  // re-extraction instead of returning a stale cached title.
+  const [parsedTitles, setParsedTitles] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    if (!selectedSourceId) return
+    const rawText = verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
+    if (!rawText.trim()) return
+    const key = `${selectedSourceId}::${rawText}`
+    if (parsedTitles[key] !== undefined) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const parsed = await api.extractFields(rawText)
+        if (cancelled) return
+        setParsedTitles(prev => ({ ...prev, [key]: parsed?.title?.trim() ?? '' }))
+      } catch {
+        if (cancelled) return
+        setParsedTitles(prev => ({ ...prev, [key]: '' }))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [selectedSourceId, verifyTexts, currentSource, parsedTitles])
+
+  const selectedParsedTitle = useMemo(() => {
+    if (!selectedSourceId) return ''
+    const rawText = verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
+    const key = `${selectedSourceId}::${rawText}`
+    return parsedTitles[key] ?? ''
+  }, [selectedSourceId, verifyTexts, currentSource, parsedTitles])
+
+  // External searches (Google Scholar / Google Search / DB result links) use
+  // the title parsed from the raw reference text — falling back to the raw
+  // reference text itself when no parsed title is available yet.
   const selectedTitleOrText = useMemo(() => {
-    const title = currentResult?.best_match?.title?.trim()
+    const title = selectedParsedTitle.trim()
     if (title) return sanitizeReferenceTextForSearch(title)
     return selectedSearchText
-  }, [currentResult, selectedSearchText])
+  }, [selectedParsedTitle, selectedSearchText])
 
   function getOverlayMaxHeight(): number {
     const minHeight = 220
@@ -1453,7 +1487,7 @@ export default function VerificationPage() {
                         const match = r.all_results.find((m: MatchResult) => m.database === db)
                         const searched = r.databases_searched.includes(db)
                         const dbCheck = selectedProgress?.checkedDbs.find(d => d.name === db)
-                        const searchText = match?.title ?? r.best_match?.title ?? verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
+                        const searchText = selectedParsedTitle || verifyTexts[selectedSourceId] || currentSource?.text || ''
                         const linkUrl = buildDbSearchUrl(db, searchText) || match?.search_url || dbCheck?.searchUrl
                         return (
                           <div key={db} className={styles['db-row']}>
