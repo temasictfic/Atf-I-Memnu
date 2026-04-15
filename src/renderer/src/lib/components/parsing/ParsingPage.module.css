@@ -865,6 +865,12 @@
 .raw-text-section {
   margin-top: 6px;
 }
+.raw-text-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .raw-text-toggle {
   display: flex;
   align-items: center;

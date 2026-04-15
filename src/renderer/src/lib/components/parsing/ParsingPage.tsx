@@ -2074,15 +2074,6 @@ export default function ParsingPage() {
                     Notes{notes.length > 0 ? ` (${notes.length})` : ""}
                   </button>
                 </div>
-                {selectedSourceStatus && (
-                  <div className={styles["source-status-tags"]}>
-                    <span
-                      className={`${styles["source-status-tag"]} ${styles["source-status-tag-active"]}`}
-                    >
-                      {selectedSourceStatus}
-                    </span>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -2175,15 +2166,26 @@ export default function ParsingPage() {
 
                   {/* Collapsible raw text */}
                   <div className={styles["raw-text-section"]}>
-                    <button
-                      className={styles["raw-text-toggle"]}
-                      onClick={() => setRawTextExpanded((v) => !v)}
-                    >
-                      <span className={styles["raw-text-toggle-icon"]}>
-                        {rawTextExpanded ? "\u25BC" : "\u25B6"}
-                      </span>
-                      Raw Text
-                    </button>
+                    <div className={styles["raw-text-header"]}>
+                      <button
+                        className={styles["raw-text-toggle"]}
+                        onClick={() => setRawTextExpanded((v) => !v)}
+                      >
+                        <span className={styles["raw-text-toggle-icon"]}>
+                          {rawTextExpanded ? "\u25BC" : "\u25B6"}
+                        </span>
+                        Raw Text
+                      </button>
+                      {selectedSourceStatus && (
+                        <div className={styles["source-status-tags"]}>
+                          <span
+                            className={`${styles["source-status-tag"]} ${styles["source-status-tag-active"]}`}
+                          >
+                            {selectedSourceStatus}
+                          </span>
+                        </div>
+                      )}
+                    </div>
                     {rawTextExpanded && (
                       <div className={styles["detail-text-display"]}>
                         {selectedSource.text || "(no text detected)"}
