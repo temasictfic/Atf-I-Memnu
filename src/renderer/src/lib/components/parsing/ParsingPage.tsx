@@ -48,7 +48,6 @@ import {
   updateNote,
   useNotesStore,
   DEFAULT_CALLOUT_FONT_SIZE,
-  DEFAULT_CALLOUT_TEXT_COLOR,
   CALLOUT_FONT_SIZE_MIN,
   CALLOUT_FONT_SIZE_MAX,
 } from "../../stores/notes-store";
@@ -797,12 +796,12 @@ export default function ParsingPage() {
     setSelectedNoteId(note.id);
   }
 
-  function handleAutoAnnotate() {
+  async function handleAutoAnnotate() {
     if (!selectedPdfId) return;
     beginNoteEdit(selectedPdfId);
     const results =
       useVerificationStore.getState().resultsByPdf[selectedPdfId] ?? {};
-    const stats = generateAutoNotesForPdf({
+    const stats = await generateAutoNotesForPdf({
       pdfId: selectedPdfId,
       sources,
       resultsBySourceId: results,

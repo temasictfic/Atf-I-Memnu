@@ -22,18 +22,27 @@ import {
   AUTO_CALLOUT_TEXT_PROBLEMATIC,
 } from '../stores/notes-store'
 import { SCALE } from '../pdf/types'
+// Load the exact same TTFs that annotation-writer embeds into the
+// exported PDF. The `?url` asset import gives us a URL we can feed into
+// the FontFace API so canvas.measureText renders with the very font the
+// exporter draws with — no Arial/Liberation metric drift to compensate
+// for.
+// @ts-expect-error Vite ?url import returns a string
+import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
+// @ts-expect-error Vite ?url import returns a string
+import boldFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Bold.ttf?url'
 
 // Whitespace padding between the reference and the callout, in SCALE pixels.
 const CALLOUT_GAP_PX = 6
 // Horizontal padding inside the callout box — matches annotation-writer.
 const CALLOUT_INNER_PAD_PX = 4 * SCALE
-// Safety multiplier on the measured text width. Canvas measureText runs
-// against the OS Arial/Helvetica, but the exported PDF is drawn with
-// Liberation Sans — the metrics are close but not identical, so without
-// headroom the last word can wrap onto a second line that the compact
-// single-line box would clip. 1.20 (20% extra) is enough to cover the
-// drift we've seen for Turkish glyphs (ı/ş/ğ/ç), including bold.
-const CALLOUT_WIDTH_SAFETY = 1.2
+// Private family name we register the TTFs under so the canvas can
+// reference them without colliding with any OS-installed Liberation.
+const MEASURE_FONT_FAMILY = '__atfi_liberation_measure__'
+// Once-per-session font load. Kicked off at module import so the first
+// auto-annotate click (after the app has been open for a moment) doesn't
+// need to wait.
+const measureFontReady = loadMeasureFonts()
 
 interface GenerateArgs {
   pdfId: string
@@ -47,12 +56,18 @@ interface GenerateStats {
   calloutsAdded: number
 }
 
-export function generateAutoNotesForPdf({
+export async function generateAutoNotesForPdf({
   pdfId,
   sources,
   resultsBySourceId,
   pageHeightFor,
-}: GenerateArgs): GenerateStats {
+}: GenerateArgs): Promise<GenerateStats> {
+  // Wait for Liberation Sans to be available to the canvas measurer
+  // before we size any callouts. If loading fails we fall back to the
+  // generic sans-serif metric (with a small safety margin baked in
+  // below); otherwise widths match the exporter exactly.
+  await measureFontReady.catch(() => undefined)
+
   removeAutoNotesForPdf(pdfId)
 
   // Pull the user's persisted defaults (colors, text color, font size,
@@ -107,10 +122,15 @@ export function generateAutoNotesForPdf({
     const calloutText = isNotFound
       ? AUTO_CALLOUT_TEXT_NOT_FOUND
       : AUTO_CALLOUT_TEXT_PROBLEMATIC
-    const textWidthPx =
-      measureTextWidthScalePx(calloutText, calloutFontSize, calloutBold) *
-      CALLOUT_WIDTH_SAFETY
-    const calloutWidthPx = textWidthPx + CALLOUT_INNER_PAD_PX * 2
+    const textWidthPx = measureTextWidthScalePx(
+      calloutText,
+      calloutFontSize,
+      calloutBold,
+    )
+    // Add one hair of rounding headroom so a floating-point tie doesn't
+    // push the exporter's <=-check on the wrong side. One SCALE pixel
+    // (~0.48 pt) is imperceptible visually but eliminates the edge case.
+    const calloutWidthPx = textWidthPx + CALLOUT_INNER_PAD_PX * 2 + 1
 
     const calloutRect = computeCalloutRectBelow(
       anchor,
@@ -181,11 +201,38 @@ function getMeasureCtx(): CanvasRenderingContext2D | null {
   return measureCtx
 }
 
+// Register the same Liberation Sans TTFs the exporter uses with the
+// browser's font system so canvas.measureText can see them. Runs once,
+// on module import. Returns a promise that resolves when both weights
+// are ready (or rejects if the TTF fetch fails — callers fall back to
+// generic sans-serif in that case).
+async function loadMeasureFonts(): Promise<void> {
+  if (typeof document === 'undefined' || typeof FontFace === 'undefined') return
+  const regular = new FontFace(
+    MEASURE_FONT_FAMILY,
+    `url(${regularFontUrl as string})`,
+    { weight: '400', style: 'normal' },
+  )
+  const bold = new FontFace(
+    MEASURE_FONT_FAMILY,
+    `url(${boldFontUrl as string})`,
+    { weight: '700', style: 'normal' },
+  )
+  const [regLoaded, boldLoaded] = await Promise.all([regular.load(), bold.load()])
+  document.fonts.add(regLoaded)
+  document.fonts.add(boldLoaded)
+  // Give the browser one tick to commit the registration so the first
+  // canvas.font assignment actually picks up the new family.
+  await document.fonts.ready
+}
+
 // Width of a single-line text at the given font size (and optional bold),
 // expressed in SCALE pixels — the same coordinate space as note bboxes.
-// One SCALE pixel equals one CSS pixel in the rendered DOM, so setting the
-// canvas font to `${fontSizePt * SCALE}px` returns measurements directly
-// in our space.
+// One SCALE pixel equals one CSS pixel in the rendered DOM, so setting
+// the canvas font to `${fontSizePt * SCALE}px` returns measurements
+// directly in our space. We render with the private Liberation Sans
+// family loaded by `loadMeasureFonts`, falling back to generic sans if
+// that load failed.
 function measureTextWidthScalePx(
   text: string,
   fontSizePt: number,
@@ -197,6 +244,13 @@ function measureTextWidthScalePx(
     return text.length * 0.55 * fontSizePt * SCALE
   }
   const weight = bold ? '700' : '400'
-  ctx.font = `${weight} ${fontSizePt * SCALE}px Helvetica, Arial, sans-serif`
+  ctx.font = `${weight} ${fontSizePt * SCALE}px '${MEASURE_FONT_FAMILY}', sans-serif`
+  // pdf-lib's widthOfTextAtSize sums raw glyph advances with no kerning
+  // applied. Canvas applies kerning by default, which returns a slightly
+  // SMALLER width — enough to convince our compact box to fit when the
+  // exporter then computes a wider (kerning-free) width and wraps the
+  // last word. Disabling canvas kerning aligns the two measurements.
+  const anyCtx = ctx as unknown as { fontKerning?: string }
+  anyCtx.fontKerning = 'none'
   return ctx.measureText(text).width
 }
