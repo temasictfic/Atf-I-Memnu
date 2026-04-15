@@ -1763,11 +1763,12 @@ export default function ParsingPage() {
                   onChange={(e) => applyColorChoice(e.target.value)}
                   title="Note color"
                   style={{
-                    width: 32,
-                    height: 24,
+                    width: 24,
+                    height: 20,
                     border: "1px solid #d4d4d8",
                     background: "transparent",
                     padding: 0,
+                    boxSizing: "border-box",
                   }}
                 />
                 {[
@@ -1794,6 +1795,7 @@ export default function ParsingPage() {
                             : "1px solid #d4d4d8",
                         background: swatch,
                         cursor: "pointer",
+                        boxSizing: "border-box",
                       }}
                     />
                   ),
@@ -1813,7 +1815,6 @@ export default function ParsingPage() {
                 }}
                 title="Callout background opacity"
               >
-                <span>Opacity</span>
                 <input
                   type="range"
                   min={0}
@@ -1831,8 +1832,9 @@ export default function ParsingPage() {
                 <span
                   style={{
                     minWidth: 32,
-                    textAlign: "right",
+                    textAlign: "left",
                     fontVariantNumeric: "tabular-nums",
+                    marginRight: "auto",
                   }}
                 >
                   {Math.round(calloutOpacity * 100)}%
@@ -1877,10 +1879,11 @@ export default function ParsingPage() {
                       }}
                       style={{
                         width: 28,
-                        height: 20,
+                        height: 22,
                         border: "1px solid #d4d4d8",
                         background: "transparent",
                         padding: 0,
+                        boxSizing: "border-box",
                       }}
                     />
                   </label>
@@ -1916,10 +1919,12 @@ export default function ParsingPage() {
                       }}
                       style={{
                         width: 44,
+                        height: 22,
                         padding: "2px 4px",
                         border: "1px solid #d4d4d8",
                         borderRadius: 4,
                         fontSize: 12,
+                        boxSizing: "border-box",
                       }}
                     />
                   </label>
@@ -1941,13 +1946,16 @@ export default function ParsingPage() {
                     }}
                     title="Toggle bold"
                     style={{
-                      padding: "2px 10px",
+                      height: 22,
+                      padding: "0 10px",
                       border: "1px solid #d4d4d8",
                       borderRadius: 4,
                       background: calloutDefaultBold ? "#1f2937" : "#fff",
                       color: calloutDefaultBold ? "#fff" : "#111",
                       fontWeight: 700,
                       cursor: "pointer",
+                      boxSizing: "border-box",
+                      lineHeight: 1,
                     }}
                   >
                     B
