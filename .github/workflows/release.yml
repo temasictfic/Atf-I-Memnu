@@ -42,12 +42,15 @@ jobs:
       - name: Build app
         run: npm run build
 
-      - name: Package NSIS installer and publish
-        run: npx electron-builder --win nsis --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package Windows builds
+        run: npx electron-builder --win --publish never
 
-      - name: Package portable exe and publish
-        run: npx electron-builder --win portable --publish always
+      - name: Create release and upload artifacts
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            dist/*.exe dist/*.blockmap dist/latest.yml
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
