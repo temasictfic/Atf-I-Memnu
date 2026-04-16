@@ -280,7 +280,7 @@
     },
     "exportPdf": "Doğrulama Sonuçlarını PDF'e Aktar",
     "exportPdfNoResults": "Dışa aktarılacak doğrulama sonucu yok.",
-    "exportPdfHeader": "Doğrulama Raporu",
+    "exportPdfHeader": "ARDEB Kaynakça Kontrol Sistemi\nDoğrulama Raporu",
     "exportPdfBestMatch": "En İyi Eşleşme",
     "exportPdfProblems": "Sorunlar",
     "exportPdfNoMatch": "Eşleşme bulunamadı",

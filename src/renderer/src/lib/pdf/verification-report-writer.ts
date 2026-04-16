@@ -13,7 +13,7 @@
 //   │ └──────────────────────────────────┘ │
 //   └──────────────────────────────────────┘
 
-import { PDFDocument, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFString, PDFArray, PDFNumber, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 // @ts-expect-error Vite ?url import returns a string
 import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
@@ -101,6 +101,7 @@ export interface ReportBestMatch {
 export interface ReportSource {
   refNumber: number; text: string; status: string
   problemTags: string[]; bestMatch?: ReportBestMatch
+  scholarUrl?: string; googleUrl?: string
 }
 export interface ReportData {
   pdfName: string
@@ -198,6 +199,40 @@ class PW {
     if (opts.fill) this.pg.drawRectangle({ x, y, width: w, height: h, color: opts.fill })
     if (opts.border) this.pg.drawRectangle({ x, y, width: w, height: h, borderColor: opts.border, borderWidth: opts.bw ?? 0.75 })
   }
+
+  /** Add a clickable URI link annotation over a text region. */
+  addLink(url: string, x: number, y: number, w: number, h: number) {
+    const ctx = this.doc.context
+
+    // Build the /A (action) dictionary manually with proper PDF types
+    const actionDict = ctx.obj(new Map<PDFName, any>())
+    actionDict.set(PDFName.of('Type'), PDFName.of('Action'))
+    actionDict.set(PDFName.of('S'), PDFName.of('URI'))
+    actionDict.set(PDFName.of('URI'), PDFString.of(url))
+
+    const rect = PDFArray.withContext(ctx)
+    rect.push(PDFNumber.of(x))
+    rect.push(PDFNumber.of(y))
+    rect.push(PDFNumber.of(x + w))
+    rect.push(PDFNumber.of(y + h))
+
+    const border = PDFArray.withContext(ctx)
+    border.push(PDFNumber.of(0))
+    border.push(PDFNumber.of(0))
+    border.push(PDFNumber.of(0))
+
+    const annotDict = ctx.obj(new Map<PDFName, any>())
+    annotDict.set(PDFName.of('Type'), PDFName.of('Annot'))
+    annotDict.set(PDFName.of('Subtype'), PDFName.of('Link'))
+    annotDict.set(PDFName.of('Rect'), rect)
+    annotDict.set(PDFName.of('Border'), border)
+    annotDict.set(PDFName.of('A'), actionDict)
+
+    const ref = ctx.register(annotDict)
+    const existing = this.pg.node.Annots()
+    if (existing) existing.push(ref)
+    else this.pg.node.set(PDFName.of('Annots'), ctx.obj([ref]))
+  }
 }
 
 // --- Pre-measure helpers ---
@@ -276,7 +311,7 @@ interface CardMeasure {
   metaLine: string; urlLine: string; totalHeight: number
 }
 
-function measureCard(m: ReportBestMatch, rf: PDFFont, bf: PDFFont): CardMeasure {
+function measureCard(m: ReportBestMatch, src: ReportSource, rf: PDFFont, bf: PDFFont): CardMeasure {
   const lh = SMALL_SIZE * LH, tlh = TINY_SIZE * LH
   const titleLines = wrapText(san(m.title), bf, SMALL_SIZE, CARD_INNER_W)
   const authorLines = m.authors.length ? wrapText(san(m.authors.join(', ')), rf, SMALL_SIZE, CARD_INNER_W) : []
@@ -294,6 +329,8 @@ function measureCard(m: ReportBestMatch, rf: PDFFont, bf: PDFFont): CardMeasure 
   if (metaLine) h += 2 + lh
   h += 3 + lh // db + score
   if (urlLine) h += 2 + wrapText(san(urlLine), rf, TINY_SIZE, CARD_INNER_W).length * tlh
+  // Google Scholar + Google Search links (side by side, one row)
+  if (src.scholarUrl || src.googleUrl) h += tlh
   h += CARD_PAD
 
   return { titleLines, authorLines, journalLines, metaLine, urlLine, totalHeight: h }
@@ -301,7 +338,7 @@ function measureCard(m: ReportBestMatch, rf: PDFFont, bf: PDFFont): CardMeasure 
 
 function measureBottom(src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont): { tags: TagItem[]; card: CardMeasure | null; noMatch: boolean; height: number } {
   const tags = measureTags(src, labels, bf)
-  const card = src.bestMatch ? measureCard(src.bestMatch, rf, bf) : null
+  const card = src.bestMatch ? measureCard(src.bestMatch, src, rf, bf) : null
   const noMatch = !src.bestMatch && src.status === 'not_found'
 
   let h = 0
@@ -325,14 +362,18 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
   const w = new PW(doc, rf, bf)
   const { labels, summary, pdfName } = data
 
-  // --- Page header ---
-  {
-    const titleW = bf.widthOfTextAtSize(san(labels.header), TITLE_SIZE)
-    const titleX = MARGIN_L + (CONTENT_W - titleW) / 2
-    w.text(labels.header, titleX, TITLE_SIZE, bf, COLOR_DARK)
+  // --- Page header (multi-line, each line centered) ---
+  for (const line of labels.header.split('\n')) {
+    const trimmed = san(line.trim())
+    if (!trimmed) continue
+    const lineW = bf.widthOfTextAtSize(trimmed, TITLE_SIZE)
+    const lineX = MARGIN_L + (CONTENT_W - lineW) / 2
+    w.text(trimmed, lineX, TITLE_SIZE, bf, COLOR_DARK)
   }
   w.skip(4)
-  w.text(pdfName, MARGIN_L, SUBTITLE_SIZE, rf, COLOR_MUTED)
+  // Strip .pdf extension from displayed name
+  const displayName = pdfName.replace(/\.pdf$/i, '')
+  w.text(displayName, MARGIN_L, SUBTITLE_SIZE, rf, COLOR_MUTED)
   w.skip(8)
 
   // Summary stats on a single row: "222 referans   ● Bulundu: 5   ● Sorunlu: 64   ● Bulunamadı: 153"
@@ -513,7 +554,7 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
       })
       w.skip(SMALL_SIZE * LH)
 
-      // URL (underlined, no label)
+      // URL (underlined, clickable)
       if (m.url) {
         w.skip(2)
         const urlLines = wrapText(san(m.url), rf, TINY_SIZE, CARD_INNER_W)
@@ -522,6 +563,29 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
           w.pg.drawText(san(uline), { x: ccx, y: uy, size: TINY_SIZE, font: rf, color: COLOR_LINK })
           const uw = rf.widthOfTextAtSize(san(uline), TINY_SIZE)
           w.pg.drawLine({ start: { x: ccx, y: uy - 1 }, end: { x: ccx + uw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
+          w.skip(TINY_SIZE * LH)
+        }
+        w.addLink(m.url, ccx, w.y, rf.widthOfTextAtSize(san(urlLines[0]), TINY_SIZE), urlLines.length * TINY_SIZE * LH)
+      }
+
+      // Google Scholar + Google Search links side by side (clickable)
+      {
+        const gLinks = [
+          { label: 'Google Scholar', url: src.scholarUrl },
+          { label: 'Google Search', url: src.googleUrl },
+        ].filter(l => l.url)
+        if (gLinks.length) {
+          const uy = w.y - TINY_SIZE
+          const gap = 12
+          let gx = ccx
+          for (const link of gLinks) {
+            const lt = san(link.label)
+            const lw = bf.widthOfTextAtSize(lt, TINY_SIZE)
+            w.pg.drawText(lt, { x: gx, y: uy, size: TINY_SIZE, font: bf, color: COLOR_LINK })
+            w.pg.drawLine({ start: { x: gx, y: uy - 1 }, end: { x: gx + lw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
+            w.addLink(link.url!, gx, uy - 1, lw, TINY_SIZE + 2)
+            gx += lw + gap
+          }
           w.skip(TINY_SIZE * LH)
         }
       }

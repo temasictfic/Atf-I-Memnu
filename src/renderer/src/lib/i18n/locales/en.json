@@ -280,7 +280,7 @@
     },
     "exportPdf": "Export Verification Results to PDF",
     "exportPdfNoResults": "No verification results to export.",
-    "exportPdfHeader": "Verification Report",
+    "exportPdfHeader": "ARDEB Citation Control System\nVerification Report",
     "exportPdfBestMatch": "Best Match",
     "exportPdfProblems": "Problems",
     "exportPdfNoMatch": "No match found",
