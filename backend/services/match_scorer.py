@@ -21,13 +21,11 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
     # 1. Title similarity (fuzzy)
     title_score = 0.0
     if source.title and candidate.get("title"):
-        title_score = (
-            fuzz.token_sort_ratio(
-                source.title.lower(),
-                candidate["title"].lower(),
-            )
-            / 100.0
-        )
+        src_lower = source.title.lower()
+        cand_lower = candidate["title"].lower()
+        token_sort = fuzz.token_sort_ratio(src_lower, cand_lower) / 100.0
+        sequential = fuzz.ratio(src_lower, cand_lower) / 100.0
+        title_score = 0.6 * token_sort + 0.4 * sequential
     details.title_similarity = title_score
 
     # 2. Author match
