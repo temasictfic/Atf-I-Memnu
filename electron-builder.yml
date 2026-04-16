@@ -17,6 +17,7 @@ electronLanguages:
   - tr
 win:
   icon: icon.ico
+  artifactName: "Atf-I-Memnu-${version}.${ext}"
   target:
     - target: nsis
       arch:
@@ -25,6 +26,7 @@ win:
       arch:
         - x64
 nsis:
+  artifactName: "Atf-I-Memnu-Setup-${version}.${ext}"
   installerIcon: icon.ico
   uninstallerIcon: icon.ico
   installerHeaderIcon: icon.ico
