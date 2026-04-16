@@ -33,3 +33,6 @@ class VerificationResult(BaseModel):
     best_match: MatchResult | None = None
     all_results: list[MatchResult] = []
     databases_searched: list[str] = []
+    # Pre-built Google Scholar / Google Search URLs using the NER-extracted title
+    scholar_url: str = ""
+    google_url: str = ""

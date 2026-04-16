@@ -371,6 +371,8 @@ async def score_scholar(request: ScoreScholarRequest):
         "best_match": existing.best_match.model_dump() if existing.best_match else None,
         "all_results": [m.model_dump() for m in existing.all_results],
         "databases_searched": list(existing.databases_searched),
+        "scholar_url": existing.scholar_url,
+        "google_url": existing.google_url,
     })
 
     # Recalculate and broadcast PDF counts

@@ -66,6 +66,14 @@ def _build_search_url(db_name: str, parsed: ParsedSource) -> str:
     return urls.get(db_name, "")
 
 
+def _build_google_urls(parsed: ParsedSource) -> tuple[str, str]:
+    """Build Google Scholar and Google Search URLs from NER-extracted title."""
+    query = parsed.title or parsed.raw_text[:200]
+    scholar_url = f"https://scholar.google.com/scholar?q={quote_plus(query)}"
+    google_url = f"https://www.google.com/search?q={quote_plus(query)}"
+    return scholar_url, google_url
+
+
 def _supports_api_key_argument(search_fn: Any) -> bool:
     """Check whether a verifier accepts an ``api_key`` keyword argument."""
     try:
@@ -558,6 +566,9 @@ async def _finalize_result(
         # Failure to parse → fall back to not_found
         status, problem_tags = "not_found", []
 
+    # Build Google Scholar / Google Search URLs from NER-extracted title
+    scholar_url, google_url = _build_google_urls(parsed) if parsed else ("", "")
+
     result = VerificationResult(
         source_id=source_id,
         status=status,
@@ -566,6 +577,8 @@ async def _finalize_result(
         best_match=best_match,
         all_results=sorted(all_matches, key=lambda m: m.score, reverse=True),
         databases_searched=databases_searched,
+        scholar_url=scholar_url,
+        google_url=google_url,
     )
     results_store[pdf_id][source_id] = result
 
@@ -578,4 +591,6 @@ async def _finalize_result(
         "best_match": best_match.model_dump() if best_match else None,
         "all_results": [m.model_dump() for m in result.all_results],
         "databases_searched": list(databases_searched),
+        "scholar_url": scholar_url,
+        "google_url": google_url,
     })
