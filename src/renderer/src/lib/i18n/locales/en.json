@@ -78,12 +78,12 @@
       "concurrentSourcesLabel": "Concurrent Sources per PDF",
       "concurrentSourcesDesc": "How many references verify in parallel for one PDF",
       "autoScholarLabel": "Auto Google Scholar after verify",
-      "autoScholarDesc": "Automatically run Google Scholar scan for non-found sources after single PDF verification finishes"
+      "autoScholarDesc": "Automatically run Google Scholar scan for non-found sources after verification finishes"
     },
     "notes": {
       "title": "Notes",
-      "annotatedPdfLabel": "Annotated PDF folder",
-      "annotatedPdfDesc": "Default location for annotated PDFs. Leave empty to prompt each time.",
+      "annotatedPdfLabel": "PDF export folder",
+      "annotatedPdfDesc": "Default save location for annotated PDFs and verification reports. Leave empty to prompt each time.",
       "annotatedPdfPlaceholder": "(prompt each time)"
     },
     "cache": {
@@ -240,6 +240,7 @@
     "disableAll": "Disable All",
     "enabledCount": "{{count}}/{{total}} enabled",
     "searchPlaceholder": "Search references...",
+    "searchPlaceholderPdf": "Search {{name}}",
     "verificationComplete": "Verification complete: {{name}}",
     "browser": {
       "back": "Go back",
@@ -260,6 +261,9 @@
       "in_progress": "Searching…"
     },
     "titleShort": "title",
+    "highScoreWarning": "Not found but best match scored {{percent}}% — may need manual review",
+    "citationTag": "Citation",
+    "citationTagTooltip": "High title match but citation details (authors, year, source, or DOI) differ",
     "problemTag": {
       "!authors": "!authors",
       "!doi/arXiv": "!doi/arXiv",
@@ -273,6 +277,14 @@
       "url": "Non-DOI/arXiv URL is not reachable",
       "year": "Year mismatch (>1 year difference)",
       "source": "Source venue (journal / conference / book) mismatch"
-    }
+    },
+    "exportPdf": "Export Verification Results to PDF",
+    "exportPdfNoResults": "No verification results to export.",
+    "exportPdfHeader": "Verification Report",
+    "exportPdfBestMatch": "Best Match",
+    "exportPdfProblems": "Problems",
+    "exportPdfNoMatch": "No match found",
+    "exportPdfReferences": "references",
+    "exportPdfCitationError": "CITATION ERROR"
   }
 }

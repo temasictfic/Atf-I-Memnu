@@ -210,7 +210,7 @@
   border-color: #a8a29e;
   box-shadow: 0 0 0 2px rgba(168, 162, 158, 0.2);
 }
-.toolbar-search::placeholder { color: #a8a29e; }
+.toolbar-search::placeholder { color: #a8a29e; text-align: center; }
 .toolbar-btn {
   font-size: 11px;
   font-weight: 600;
@@ -241,6 +241,8 @@
   color: #d97706;
 }
 .toolbar-btn-accent:hover { background: #d97706; color: white; border-color: #d97706; }
+.toolbar-btn-export { display: flex; align-items: center; justify-content: center; padding: 4px 6px; }
+.toolbar-btn-export:hover:not(:disabled) { border-color: #3b82f6; color: #3b82f6; }
 
 .toolbar-right { display: flex; align-items: center; gap: 6px; justify-self: end; }
 
@@ -417,6 +419,17 @@
 }
 .drag-handle:active { cursor: grabbing; }
 .drag-handle:hover { color: #78716c; }
+.citation-tag {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #fff1e6;
+  color: #c2410c;
+  border: 1px solid #fb923c;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 
 .copy-btn {
   display: flex;
@@ -466,6 +479,7 @@
   padding: 1px 8px;
   border-radius: 8px;
   flex-shrink: 0;
+  align-self: flex-end;
 }
 
 .card-status-group {
@@ -502,6 +516,16 @@
   border: 1px solid #5eead4;
   white-space: nowrap;
   cursor: help;
+}
+.warning-tag {
+  font-size: 15px;
+  line-height: 16px;
+  height: 16px;
+  overflow: hidden;
+  padding: 0px 2px;
+  white-space: nowrap;
+  cursor: help;
+  align-self: flex-end;
 }
 
 .card-textarea {

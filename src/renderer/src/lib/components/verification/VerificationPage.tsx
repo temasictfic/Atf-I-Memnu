@@ -94,6 +94,14 @@ function buildDbSearchUrl(db: string, text: string): string {
   return urls[db] ?? ''
 }
 
+function buildDefaultSavePath(dir: string | undefined, filename: string): string {
+  const trimmed = dir?.trim()
+  if (!trimmed) return filename
+  const sep = trimmed.includes('\\') ? '\\' : '/'
+  const stripped = trimmed.replace(/[\\/]+$/, '')
+  return `${stripped}${sep}${filename}`
+}
+
 const statusOrder: Record<string, number> = { found: 0, problematic: 1, not_found: 2, in_progress: 3, pending: 4 }
 type CardSortMode = 'default' | 'status' | 'ref' | 'enabled'
 const MIN_BROWSER_ZOOM = 0.5
@@ -158,11 +166,15 @@ export default function VerificationPage() {
   // Single-source reverify runs awaiting completion to trigger a per-source GS scan.
   // Maps sourceId -> pdfId.
   const pendingSingleSourceGsRef = useRef<Map<string, string>>(new Map())
+  // Deferred toast: when Scholar scan will run after verification, hold the
+  // toast until the scan finishes so the user sees one final notification.
+  const deferredToastNameRef = useRef<string | null>(null)
   // Sequential "Verify All" queue state
   const verifyAllQueueRef = useRef<string[]>([])
   const verifyAllCurrentRef = useRef<string | null>(null)
   const verifyAllActiveRef = useRef(false)
   const [verifyAllActive, setVerifyAllActive] = useState(false)
+  const [exportingReport, setExportingReport] = useState(false)
 
   // Fire completion-time side effects (toast + auto Scholar scan) when a
   // pending verification run transitions to completed. We trigger off
@@ -177,14 +189,14 @@ export default function VerificationPage() {
 
       const pdf = allPdfs.find(p => p.id === pdfId)
       const name = pdf?.name ?? 'PDF'
-      if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
-      setVerifyToast(t('verification.verificationComplete', { name }))
-      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+
+      let willRunScholar = false
 
       if (autoGsPdfIdsRef.current.has(pdfId)) {
         autoGsPdfIdsRef.current.delete(pdfId)
         const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
         if (autoGs) {
+          willRunScholar = true
           setTimeout(() => {
             useScholarScanStore.getState().startScanForPdf(pdfId)
           }, 500)
@@ -193,9 +205,22 @@ export default function VerificationPage() {
 
       if (forceGsPdfIdsRef.current.has(pdfId)) {
         forceGsPdfIdsRef.current.delete(pdfId)
-        setTimeout(() => {
-          useScholarScanStore.getState().startScanForPdf(pdfId)
-        }, 500)
+        const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
+        if (autoGs) {
+          willRunScholar = true
+          setTimeout(() => {
+            useScholarScanStore.getState().startScanForPdf(pdfId)
+          }, 500)
+        }
+      }
+
+      if (willRunScholar) {
+        // Defer the toast until Scholar scan finishes
+        deferredToastNameRef.current = name
+      } else {
+        if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
+        setVerifyToast(t('verification.verificationComplete', { name }))
+        verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
       }
 
       // Advance the sequential "Verify All" queue if this PDF was the active one.
@@ -462,15 +487,104 @@ export default function VerificationPage() {
       const r = resultsByPdf[pdfId]?.[sourceId]
       if (!r || r.status === 'in_progress') continue
       pendingSingleSourceGsRef.current.delete(sourceId)
-      setTimeout(() => {
-        useScholarScanStore.getState().startScanForSource(pdfId, sourceId)
-      }, 500)
+      const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
+      if (autoGs) {
+        setTimeout(() => {
+          useScholarScanStore.getState().startScanForSource(pdfId, sourceId)
+        }, 500)
+      }
     }
   }, [resultsByPdf])
 
   async function handleOverride(status: 'found' | 'problematic' | 'not_found') {
     if (!effectivePdfId || !selectedSourceId || !currentResult) return
     await useVerificationStore.getState().overrideStatus(effectivePdfId, selectedSourceId, status)
+  }
+
+  async function handleExportVerificationReport() {
+    if (!effectivePdfId) return
+    const pdfResults = resultsByPdf[effectivePdfId]
+    if (!pdfResults || Object.keys(pdfResults).length === 0) {
+      window.alert(t('verification.exportPdfNoResults'))
+      return
+    }
+    setExportingReport(true)
+    try {
+      const pdfName = pdfs.find(p => p.id === effectivePdfId)?.name ?? effectivePdfId
+      const defaultName = `${pdfName.replace(/\.[^.]+$/, '')}-verification.pdf`
+      const configuredDir = useSettingsStore.getState().settings.annotated_pdf_dir?.trim()
+
+      let target: string | null
+      if (configuredDir) {
+        target = buildDefaultSavePath(configuredDir, defaultName)
+      } else {
+        target = await window.electronAPI.showSaveAs({
+          title: t('verification.exportPdf'),
+          defaultPath: defaultName,
+          filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+        })
+      }
+      if (!target) return
+
+      const currentSources = sourcesByPdf[effectivePdfId] ?? []
+      const allVerifyTexts = useVerificationStore.getState().verifyTexts
+
+      const reportSources = currentSources.map(s => {
+        const r = pdfResults[s.id]
+        const bm = r?.best_match
+        return {
+          refNumber: s.ref_number ?? 0,
+          text: allVerifyTexts[s.id] ?? s.text ?? '',
+          status: r?.status ?? 'pending',
+          problemTags: r?.problem_tags ?? [],
+          bestMatch: bm ? {
+            title: bm.title,
+            authors: bm.authors,
+            year: bm.year,
+            journal: bm.journal,
+            doi: bm.doi,
+            url: bm.url,
+            database: bm.database,
+            score: bm.score,
+            titleSimilarity: bm.match_details?.title_similarity ?? 0,
+            authorMatch: bm.match_details?.author_match ?? 0,
+            yearMatch: bm.match_details?.year_match ?? 0,
+          } : undefined,
+        }
+      })
+
+      const { generateVerificationReport } = await import('../../pdf/verification-report-writer')
+      const pdfBytes = await generateVerificationReport({
+        pdfName,
+        summary: summaries[effectivePdfId] ?? { found: 0, problematic: 0, not_found: 0, total: currentSources.length },
+        sources: reportSources,
+        labels: {
+          header: t('verification.exportPdfHeader'),
+          found: t('verification.status.found'),
+          problematic: t('verification.status.problematic'),
+          notFound: t('verification.status.not_found'),
+          bestMatch: t('verification.exportPdfBestMatch'),
+          problems: t('verification.exportPdfProblems'),
+          noMatch: t('verification.exportPdfNoMatch'),
+          references: t('verification.exportPdfReferences'),
+          titleTag: t('verification.titleShort'),
+          citationTag: t('verification.citationTag'),
+          citationError: t('verification.exportPdfCitationError'),
+          highScoreWarning: t('verification.highScoreWarning'),
+          tagLabel: (tag: string) => problemTagLabel(tag),
+        },
+      })
+
+      await window.electronAPI.writePdfFile(target, pdfBytes)
+      setVerifyToast(t('verification.exportPdf'))
+      if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
+      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+    } catch (err) {
+      console.error('[VerificationPage] report PDF export failed:', err)
+      window.alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setExportingReport(false)
+    }
   }
 
   async function openExternal(url: string) {
@@ -532,6 +646,17 @@ export default function VerificationPage() {
       lastUpdated: scholarLastDoneUpdated,
     }
   }, [scholarQueue, scholarCurrentIndex, scholarLastDoneSourceId, scholarLastDoneUpdated, allPdfs, sourcesByPdf])
+
+  // Show deferred verification-complete toast after Scholar scan finishes.
+  useEffect(() => {
+    if ((scholarStatus === 'done' || scholarStatus === 'cancelled') && deferredToastNameRef.current) {
+      const name = deferredToastNameRef.current
+      deferredToastNameRef.current = null
+      if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
+      setVerifyToast(t('verification.verificationComplete', { name }))
+      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+    }
+  }, [scholarStatus])
 
   // Wire the hidden webview to the scanner via callback ref
   const scholarScanWebviewRef = useCallback((node: any) => {
@@ -1194,6 +1319,18 @@ export default function VerificationPage() {
                   disabled={!effectivePdfId || (effectivePdfId ? isPdfVerifying(effectivePdfId) : true)}
                   title={t('verification.verifyNonFound')}
                 >{t('verification.nfShort')}</button>
+                <button
+                  className={`${styles['toolbar-btn']} ${styles['toolbar-btn-export']}`}
+                  onClick={handleExportVerificationReport}
+                  disabled={!effectivePdfId || !currentSummary || exportingReport}
+                  title={t('verification.exportPdf')}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                </button>
               </div>
               <div className={styles['toolbar-center']}>
                 <input
@@ -1201,8 +1338,8 @@ export default function VerificationPage() {
                   className={styles['toolbar-search']}
                   value={cardSearchQuery}
                   onChange={(e) => setCardSearchQuery(e.target.value)}
-                  placeholder={t('verification.searchPlaceholder')}
-                  aria-label={t('verification.searchPlaceholder')}
+                  placeholder={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
+                  aria-label={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
                 />
               </div>
               <div className={styles['toolbar-right']}>
@@ -1276,6 +1413,12 @@ export default function VerificationPage() {
                           title={t('verification.dragToReorder')}
                           aria-hidden="true"
                         >&#x2807;</span>
+                        {card.result?.best_match && card.result.best_match.match_details.title_similarity >= 0.9 &&
+                          card.result.problem_tags?.some(tag => ['!authors', '!year', '!source', '!doi/arXiv'].includes(tag)) && (
+                          <span className={styles['citation-tag']} title={t('verification.citationTagTooltip')}>
+                            {t('verification.citationTag')}
+                          </span>
+                        )}
                         <span className={styles['card-actions']}>
                           <button
                             className={styles['copy-btn']}
@@ -1311,11 +1454,24 @@ export default function VerificationPage() {
                                   {t('verification.titleShort')}: {Math.round(card.result.best_match.match_details.title_similarity * 100)}%
                                 </span>
                               )}
-                              {card.result?.problem_tags?.map((tag) => (
+                              {card.result?.problem_tags?.filter(tag => {
+                                const bm = card.result?.best_match
+                                if (!bm) return true
+                                if (tag === '!authors' && bm.authors.length === 0) return false
+                                if (tag === '!year' && bm.year == null) return false
+                                if (tag === '!source' && !bm.journal) return false
+                                if (tag === '!doi/arXiv' && !bm.doi) return false
+                                return true
+                              }).map((tag) => (
                                 <span key={tag} className={styles['problem-tag']} title={problemTagDescription(tag)}>
                                   {problemTagLabel(tag)}
                                 </span>
                               ))}
+                            </span>
+                          )}
+                          {card.result?.status === 'not_found' && card.result.best_match && card.result.best_match.score > 0.75 && (
+                            <span className={styles['warning-tag']} title={t('verification.highScoreWarning', { percent: Math.round(card.result.best_match.score * 100) })}>
+                              ⚠️
                             </span>
                           )}
                           {card.result && (

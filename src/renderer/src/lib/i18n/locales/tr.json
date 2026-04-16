@@ -78,12 +78,12 @@
       "concurrentSourcesLabel": "PDF başına eş zamanlı referans",
       "concurrentSourcesDesc": "Bir PDF için paralel olarak kaç referansın doğrulanacağı",
       "autoScholarLabel": "Doğrulama sonrası otomatik Google Scholar",
-      "autoScholarDesc": "Tek PDF doğrulaması bittikten sonra bulunamayan referanslar için otomatik olarak Google Scholar taraması çalıştır"
+      "autoScholarDesc": "Doğrulama bittikten sonra bulunamayan referanslar için otomatik olarak Google Scholar taraması çalıştır"
     },
     "notes": {
       "title": "Notlar",
-      "annotatedPdfLabel": "Not eklenmiş PDF konumu",
-      "annotatedPdfDesc": "Not eklenmiş PDF'ler için varsayılan konum. Her seferinde sormak için boş bırakın.",
+      "annotatedPdfLabel": "PDF dışa aktarma konumu",
+      "annotatedPdfDesc": "Not eklenmiş PDF'ler ve doğrulama raporları için varsayılan kayıt konumu. Her seferinde sormak için boş bırakın.",
       "annotatedPdfPlaceholder": "(her seferinde sor)"
     },
     "cache": {
@@ -240,6 +240,7 @@
     "disableAll": "Tümünü devre dışı bırak",
     "enabledCount": "{{count}}/{{total}} etkin",
     "searchPlaceholder": "Referanslarda ara...",
+    "searchPlaceholderPdf": "{{name}} içinde ara",
     "verificationComplete": "Doğrulama tamamlandı: {{name}}",
     "browser": {
       "back": "Geri",
@@ -260,6 +261,9 @@
       "in_progress": "Aranıyor…"
     },
     "titleShort": "başlık",
+    "highScoreWarning": "Bulunamadı ancak en iyi eşleşme %{{percent}} puan aldı — manuel inceleme gerekebilir",
+    "citationTag": "Künye",
+    "citationTagTooltip": "Başlık yüksek oranda eşleşiyor ancak künye bilgileri (yazar, yıl, dergi veya DOI) farklı",
     "problemTag": {
       "!authors": "!yazarlar",
       "!doi/arXiv": "!doi/arXiv",
@@ -273,6 +277,14 @@
       "url": "DOI/arXiv olmayan URL erişilemiyor",
       "year": "Yıl uyuşmazlığı (>1 yıl fark)",
       "source": "Yayın yeri (dergi / konferans / kitap) uyuşmazlığı"
-    }
+    },
+    "exportPdf": "Doğrulama Sonuçlarını PDF'e Aktar",
+    "exportPdfNoResults": "Dışa aktarılacak doğrulama sonucu yok.",
+    "exportPdfHeader": "Doğrulama Raporu",
+    "exportPdfBestMatch": "En İyi Eşleşme",
+    "exportPdfProblems": "Sorunlar",
+    "exportPdfNoMatch": "Eşleşme bulunamadı",
+    "exportPdfReferences": "referans",
+    "exportPdfCitationError": "KÜNYE HATASI"
   }
 }
