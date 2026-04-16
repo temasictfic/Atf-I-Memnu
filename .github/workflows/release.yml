@@ -39,7 +39,15 @@ jobs:
       - name: Build backend executable
         run: npm run build:backend
 
-      - name: Build app and publish release artifacts
-        run: npm run build && npx electron-builder --win --publish always
+      - name: Build app
+        run: npm run build
+
+      - name: Package NSIS installer and publish
+        run: npx electron-builder --win nsis --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package portable exe and publish
+        run: npx electron-builder --win portable --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
