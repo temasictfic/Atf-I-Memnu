@@ -81,9 +81,9 @@
       "autoScholarDesc": "Doğrulama bittikten sonra bulunamayan referanslar için otomatik olarak Google Scholar taraması çalıştır"
     },
     "notes": {
-      "title": "Notlar",
+      "title": "PDF olarak dışa aktar",
       "annotatedPdfLabel": "PDF dışa aktarma konumu",
-      "annotatedPdfDesc": "Not eklenmiş PDF'ler ve doğrulama raporları için varsayılan kayıt konumu. Her seferinde sormak için boş bırakın.",
+      "annotatedPdfDesc": "Not eklenmiş PDF'ler ve doğrulama raporları kayıt konumu",
       "annotatedPdfPlaceholder": "(her seferinde sor)"
     },
     "cache": {

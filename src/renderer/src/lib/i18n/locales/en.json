@@ -81,9 +81,9 @@
       "autoScholarDesc": "Automatically run Google Scholar scan for non-found sources after verification finishes"
     },
     "notes": {
-      "title": "Notes",
+      "title": "Export as PDF",
       "annotatedPdfLabel": "PDF export folder",
-      "annotatedPdfDesc": "Default save location for annotated PDFs and verification reports. Leave empty to prompt each time.",
+      "annotatedPdfDesc": "Save location for annotated PDFs and verification reports",
       "annotatedPdfPlaceholder": "(prompt each time)"
     },
     "cache": {
