@@ -77,6 +77,9 @@ export interface VerificationResult {
   best_match?: MatchResult
   all_results: MatchResult[]
   databases_searched: string[]
+  // Pre-built Google Scholar / Google Search URLs using the NER-extracted title
+  scholar_url?: string
+  google_url?: string
 }
 
 export interface PdfVerificationSummary {

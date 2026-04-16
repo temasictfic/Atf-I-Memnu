@@ -1032,6 +1032,8 @@ export function initVerificationListeners(): () => void {
             databases_searched: (data.databases_searched as string[] | undefined)
               ?? existing[sourceId]?.databases_searched
               ?? [],
+            scholar_url: (data.scholar_url as string | undefined) || existing[sourceId]?.scholar_url,
+            google_url: (data.google_url as string | undefined) || existing[sourceId]?.google_url,
           },
         }
 

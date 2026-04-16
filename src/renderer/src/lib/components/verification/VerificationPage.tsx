@@ -430,9 +430,16 @@ export default function VerificationPage() {
       verifyAllCurrentRef.current = null
       if (cur) {
         autoGsPdfIdsRef.current.delete(cur)
+        forceGsPdfIdsRef.current.delete(cur)
         pendingVerifyPdfIdsRef.current.delete(cur)
         await useVerificationStore.getState().cancelPdf(cur)
       } else {
+        // Clear all tracking refs so the completion effect doesn't
+        // trigger Scholar scans for cancelled verifications.
+        autoGsPdfIdsRef.current.clear()
+        forceGsPdfIdsRef.current.clear()
+        pendingVerifyPdfIdsRef.current.clear()
+        deferredToastNameRef.current = null
         await useVerificationStore.getState().cancelAll()
       }
     } else {
@@ -532,11 +539,27 @@ export default function VerificationPage() {
       const reportSources = currentSources.map(s => {
         const r = pdfResults[s.id]
         const bm = r?.best_match
+        const refText = allVerifyTexts[s.id] ?? s.text ?? ''
+        // Prefer backend-provided URLs (built from NER-extracted title).
+        // Fall back to local computation only when backend URLs aren't available.
+        let scholarUrl = r?.scholar_url
+        let googleUrl = r?.google_url
+        if (!scholarUrl || !googleUrl) {
+          const cacheKey = `${s.id}::${refText}`
+          const extractedTitle = parsedTitles[cacheKey]?.trim() ?? ''
+          const searchText = extractedTitle
+            ? sanitizeReferenceTextForSearch(extractedTitle)
+            : sanitizeReferenceTextForSearch(refText)
+          if (!scholarUrl && searchText) scholarUrl = buildDbSearchUrl('Google Scholar', searchText)
+          if (!googleUrl && searchText) googleUrl = googleSearchUrl(searchText)
+        }
         return {
           refNumber: s.ref_number ?? 0,
-          text: allVerifyTexts[s.id] ?? s.text ?? '',
+          text: refText,
           status: r?.status ?? 'pending',
           problemTags: r?.problem_tags ?? [],
+          scholarUrl,
+          googleUrl,
           bestMatch: bm ? {
             title: bm.title,
             authors: bm.authors,
@@ -907,16 +930,22 @@ export default function VerificationPage() {
   }
 
   function openScholarOverlay() {
-    const url = selectedTitleOrText
-      ? `https://scholar.google.com/scholar?q=${encodeURIComponent(selectedTitleOrText)}`
-      : 'https://scholar.google.com/'
+    // Prefer the backend-provided URL (built from NER-extracted title) to
+    // avoid the race where the frontend hasn't finished NER extraction yet.
+    const backendUrl = currentResult?.scholar_url
+    const url = backendUrl
+      || (selectedTitleOrText
+        ? `https://scholar.google.com/scholar?q=${encodeURIComponent(selectedTitleOrText)}`
+        : 'https://scholar.google.com/')
     openOverlayWithUrl(url)
   }
 
   function openGoogleOverlay() {
-    const url = selectedTitleOrText
-      ? `https://www.google.com/search?q=${encodeURIComponent(selectedTitleOrText)}`
-      : 'https://www.google.com/'
+    const backendUrl = currentResult?.google_url
+    const url = backendUrl
+      || (selectedTitleOrText
+        ? `https://www.google.com/search?q=${encodeURIComponent(selectedTitleOrText)}`
+        : 'https://www.google.com/')
     openOverlayWithUrl(url)
   }
 
@@ -1773,7 +1802,8 @@ export default function VerificationPage() {
                         const searched = r.databases_searched.includes(db)
                         const dbCheck = selectedProgress?.checkedDbs.find(d => d.name === db)
                         const searchText = selectedParsedTitle || verifyTexts[selectedSourceId] || currentSource?.text || ''
-                        const linkUrl = buildDbSearchUrl(db, searchText) || match?.search_url || dbCheck?.searchUrl
+                        // Prefer backend-provided URLs (built with NER title) over local computation
+                        const linkUrl = match?.search_url || dbCheck?.searchUrl || buildDbSearchUrl(db, searchText)
                         return (
                           <div key={db} className={styles['db-row']}>
                             <span className={styles['db-icon']} style={{ color: match ? dbScoreColor(match.score) : searched ? '#a8a29e' : '#d6d3d1' }}>
