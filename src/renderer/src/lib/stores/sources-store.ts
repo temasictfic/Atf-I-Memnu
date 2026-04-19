@@ -92,6 +92,78 @@ export function addRectangle(pdfId: string, rect: SourceRectangle): void {
 }
 
 /**
+ * Merge two source rectangles by id. Joins their text in reading order
+ * (sorted by page then y0), unions bboxes per page, renumbers the list,
+ * and returns the id of the resulting merged source.
+ */
+function mergeTwo(pdfId: string, aId: string, bId: string): string | null {
+  const all = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+  const a = all.find(s => s.id === aId)
+  const b = all.find(s => s.id === bId)
+  if (!a || !b || a.id === b.id) return null
+
+  pushHistory(pdfId)
+
+  // Sort the pair by (page, y0) so text is joined in reading order
+  const ordered = [a, b].sort((x, y) => {
+    if (x.bbox.page !== y.bbox.page) return x.bbox.page - y.bbox.page
+    return x.bbox.y0 - y.bbox.y0
+  })
+  const first = ordered[0]
+  const second = ordered[1]
+
+  // Build the merged bbox list — group by page, union bboxes per page
+  const byPage = new Map<number, { x0: number; y0: number; x1: number; y1: number }>()
+  const collectBboxes = (s: SourceRectangle): void => {
+    const allBboxes = s.bboxes && s.bboxes.length > 0 ? s.bboxes : [s.bbox]
+    for (const bb of allBboxes) {
+      const existing = byPage.get(bb.page)
+      if (existing) {
+        existing.x0 = Math.min(existing.x0, bb.x0)
+        existing.y0 = Math.min(existing.y0, bb.y0)
+        existing.x1 = Math.max(existing.x1, bb.x1)
+        existing.y1 = Math.max(existing.y1, bb.y1)
+      } else {
+        byPage.set(bb.page, { x0: bb.x0, y0: bb.y0, x1: bb.x1, y1: bb.y1 })
+      }
+    }
+  }
+  collectBboxes(first)
+  collectBboxes(second)
+
+  const mergedBboxes = Array.from(byPage.entries())
+    .sort(([p1], [p2]) => p1 - p2)
+    .map(([page, bb]) => ({ ...bb, page }))
+
+  const mergedText = `${first.text.trim()} ${second.text.trim()}`.trim()
+
+  const merged: SourceRectangle = {
+    ...first,
+    bbox: mergedBboxes[0],
+    bboxes: mergedBboxes.length > 1 ? mergedBboxes : [],
+    text: mergedText,
+    status: 'edited',
+  }
+
+  useSourcesStore.setState(state => ({
+    sourcesByPdf: {
+      ...state.sourcesByPdf,
+      [pdfId]: (state.sourcesByPdf[pdfId] ?? [])
+        .filter(s => s.id !== first.id && s.id !== second.id)
+        .concat(merged),
+    },
+  }))
+  renumberSources(pdfId)
+  updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  autoUnapproveOnEdit(pdfId)
+
+  // Find the new id of the merged source after renumbering
+  const renumbered = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+  const newOne = renumbered.find(s => s.text === mergedText)
+  return newOne?.id ?? null
+}
+
+/**
  * Merge a source rectangle with its closest neighbor (by bbox center distance).
  * Same-page neighbors are preferred. Returns the id of the resulting merged source,
  * or null if there is no other source to merge with.
@@ -120,65 +192,23 @@ export function mergeWithClosest(pdfId: string, sourceId: string): string | null
   }
   if (!closest) return null
 
-  pushHistory(pdfId)
+  return mergeTwo(pdfId, target.id, closest.id)
+}
 
-  // Sort target+closest by (page, y0) so text is joined in reading order
-  const ordered = [target, closest].sort((a, b) => {
-    if (a.bbox.page !== b.bbox.page) return a.bbox.page - b.bbox.page
-    return a.bbox.y0 - b.bbox.y0
-  })
-  const first = ordered[0]
-  const second = ordered[1]
-
-  // Build the merged bbox list — group by page, union bboxes per page
-  const byPage = new Map<number, { x0: number; y0: number; x1: number; y1: number }>()
-  const collectBboxes = (s: SourceRectangle): void => {
-    const allBboxes = s.bboxes && s.bboxes.length > 0 ? s.bboxes : [s.bbox]
-    for (const bb of allBboxes) {
-      const existing = byPage.get(bb.page)
-      if (existing) {
-        existing.x0 = Math.min(existing.x0, bb.x0)
-        existing.y0 = Math.min(existing.y0, bb.y0)
-        existing.x1 = Math.max(existing.x1, bb.x1)
-        existing.y1 = Math.max(existing.y1, bb.y1)
-      } else {
-        byPage.set(bb.page, { x0: bb.x0, y0: bb.y0, x1: bb.x1, y1: bb.y1 })
-      }
-    }
-  }
-  collectBboxes(first)
-  collectBboxes(second)
-
-  const mergedBboxes = Array.from(byPage.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([page, b]) => ({ ...b, page }))
-
-  const mergedText = `${first.text.trim()} ${second.text.trim()}`.trim()
-
-  const merged: SourceRectangle = {
-    ...first,
-    bbox: mergedBboxes[0],
-    bboxes: mergedBboxes.length > 1 ? mergedBboxes : [],
-    text: mergedText,
-    status: 'edited',
-  }
-
-  useSourcesStore.setState(state => ({
-    sourcesByPdf: {
-      ...state.sourcesByPdf,
-      [pdfId]: (state.sourcesByPdf[pdfId] ?? [])
-        .filter(s => s.id !== first.id && s.id !== second.id)
-        .concat(merged),
-    },
-  }))
-  renumberSources(pdfId)
-  updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
-  autoUnapproveOnEdit(pdfId)
-
-  // Find the new id of the merged source after renumbering
-  const renumbered = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
-  const newOne = renumbered.find(s => s.text === mergedText)
-  return newOne?.id ?? null
+/**
+ * Merge a source rectangle with the one immediately preceding it in reading
+ * order (ref_number - 1). The merged result inherits the previous source's
+ * number, so the selected box does not introduce a new reference. Returns
+ * the id of the resulting merged source, or null if there is no previous.
+ */
+export function mergeWithPrevious(pdfId: string, sourceId: string): string | null {
+  const all = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+  const target = all.find(s => s.id === sourceId)
+  if (!target || target.ref_number == null) return null
+  const prevNumber = target.ref_number - 1
+  const prev = all.find(s => s.ref_number === prevNumber)
+  if (!prev) return null
+  return mergeTwo(pdfId, target.id, prev.id)
 }
 
 
