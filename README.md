@@ -11,11 +11,11 @@ A Windows desktop app for parsing academic PDFs, extracting their reference list
 
 ## Supported verifiers
 
-- [Crossref](https://www.crossref.org/) · [OpenAlex](https://openalex.org/) · [Semantic Scholar](https://www.semanticscholar.org/) · [arXiv](https://arxiv.org/)
-- [Europe PMC](https://europepmc.org/) · [PubMed](https://pubmed.ncbi.nlm.nih.gov/) · [PLOS](https://journals.plos.org/)
-- [CORE](https://core.ac.uk/) · [Open Library](https://openlibrary.org/) · [TR Dizin](https://trdizin.gov.tr/)
+- [Crossref](https://www.crossref.org/) · [OpenAlex](https://openalex.org/) · [OpenAIRE](https://explore.openaire.eu/) · [Europe PMC](https://europepmc.org/)
+- [arXiv](https://arxiv.org/) · [PubMed](https://pubmed.ncbi.nlm.nih.gov/) · [TR Dizin](https://trdizin.gov.tr/)
+- [Open Library](https://openlibrary.org/) · [Semantic Scholar](https://www.semanticscholar.org/)
 
-Each verifier shares a single pooled `aiohttp` session and reports `found` / `not_found` / `error` / `timeout` per source. API keys for OpenAlex, Semantic Scholar, PubMed, and CORE can be set in the Settings page.
+Each verifier shares a single pooled `aiohttp` session and reports `found` / `not_found` / `error` / `timeout` per source. API keys for OpenAlex, Semantic Scholar, and PubMed can be set in the Settings page.
 
 ## Architecture
 
