@@ -31,6 +31,8 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Sync backend environment
         run: uv sync --frozen
