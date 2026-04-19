@@ -317,6 +317,7 @@ async def score_scholar(request: ScoreScholarRequest):
     """Score Google Scholar candidates against a source and merge into results."""
     from services.source_extractor import extract_source_fields
     from services.match_scorer import score_match, determine_verification_status
+    from services.author_matcher import clean_scholar_authors
 
     parsed = await extract_source_fields(request.source_text)
 
@@ -326,7 +327,7 @@ async def score_scholar(request: ScoreScholarRequest):
     for cand in request.candidates:
         match = score_match(parsed, {
             "title": cand.title,
-            "authors": cand.authors,
+            "authors": clean_scholar_authors(cand.authors),
             "year": cand.year,
             "doi": cand.doi,
             "url": cand.url,

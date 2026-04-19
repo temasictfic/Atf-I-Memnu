@@ -57,6 +57,37 @@ _BARE_INITIALS_RE = re.compile(r"[A-ZÇĞİÖŞÜ]{2,3}")
 # non-breaking-space hyphen: "JM Keller\xa0- …\xa0learning and performance".
 # This regex captures the separator so we can strip everything after it.
 _GS_METADATA_RE = re.compile(r"[\u00a0\s]-\s.*$|\s-\s.*$", re.DOTALL)
+_GS_TRAILING_ELLIPSIS_RE = re.compile(r"[\u2026…\.]+\s*$")
+_GS_YEAR_ONLY_RE = re.compile(r"^\(?\s*(?:19|20)\d{2}[a-z]?\s*\)?$")
+_GS_DIGITS_ONLY_RE = re.compile(r"^\d+$")
+
+
+def clean_scholar_author(raw: str) -> str:
+    """Strip Google Scholar publication-metadata leakage from an author
+    string. Returns '' when the entry is not a plausible author name
+    (pure year, digits-only, empty after cleanup).
+
+    Examples:
+        "JH Lee\xa0- Cells"                      -> "JH Lee"
+        "S Niknazar…\xa0- Journal of Lasers in…" -> "S Niknazar"
+        "2024"                                    -> ""
+        "T Nairuz"                                -> "T Nairuz"
+    """
+    if not raw:
+        return ""
+    s = _GS_METADATA_RE.sub("", raw)
+    s = _GS_TRAILING_ELLIPSIS_RE.sub("", s)
+    s = s.strip().strip(".,;")
+    if not s or _GS_YEAR_ONLY_RE.match(s) or _GS_DIGITS_ONLY_RE.match(s):
+        return ""
+    return s
+
+
+def clean_scholar_authors(authors: list[str] | None) -> list[str]:
+    """Clean a Google Scholar author list, dropping non-name entries."""
+    if not authors:
+        return []
+    return [c for c in (clean_scholar_author(a) for a in authors) if c]
 
 
 def _normalize_initial(ch: str) -> str:
@@ -204,7 +235,11 @@ def _last_names_match(a: str, b: str) -> bool:
         return False
     if a == b:
         return True
-    if fuzz.ratio(a, b) >= 85:
+    # Short surnames (min length <= 6) require a tighter fuzz.ratio: a single
+    # edit on a 3-6 char name is a large fraction of the string and produces
+    # false positives like Wang/Wan or Miyake/Miyatake.
+    threshold = 90 if min(len(a), len(b)) <= 6 else 85
+    if fuzz.ratio(a, b) >= threshold:
         return True
     # Multi-word surname salvage: handles "van der berg" vs "berg"
     # or "de la cruz" vs "cruz".
