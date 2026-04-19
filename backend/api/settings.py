@@ -22,15 +22,35 @@ def get_current_settings() -> AppSettings:
 def _load_settings() -> AppSettings:
     global _current_settings
     settings_path = app_config.get_settings_path()
-    if settings_path.exists():
-        try:
-            data = json.loads(settings_path.read_text(encoding="utf-8"))
-            _current_settings = AppSettings(**data)
-            _current_settings = _migrate_databases(_current_settings)
-        except Exception:
-            _current_settings = AppSettings.default()
-    else:
+    if not settings_path.exists():
         _current_settings = AppSettings.default()
+        return _current_settings
+
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+
+    # Per-field load: one invalid/renamed field shouldn't wipe the rest of
+    # the file across version upgrades (the UI's auto-save would otherwise
+    # overwrite the good file with defaults on the next change).
+    valid: dict = {}
+    for key, value in data.items():
+        if key not in AppSettings.model_fields:
+            continue
+        try:
+            AppSettings.model_validate({key: value})
+            valid[key] = value
+        except Exception:
+            continue
+
+    try:
+        _current_settings = AppSettings(**valid)
+    except Exception:
+        _current_settings = AppSettings.default()
+    _current_settings = _migrate_databases(_current_settings)
     return _current_settings
 
 
