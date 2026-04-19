@@ -5,15 +5,14 @@ import i18n from '../i18n'
 
 const defaultDatabases: DatabaseConfig[] = [
   { id: 'crossref', name: 'Crossref', enabled: true },
-  { id: 'arxiv', name: 'arXiv', enabled: true },
-  { id: 'semantic_scholar', name: 'Semantic Scholar', enabled: true },
   { id: 'openalex', name: 'OpenAlex', enabled: true },
+  { id: 'openaire', name: 'OpenAIRE', enabled: true },
   { id: 'europe_pmc', name: 'Europe PMC', enabled: true },
+  { id: 'arxiv', name: 'arXiv', enabled: true },
   { id: 'pubmed', name: 'PubMed', enabled: true },
-  { id: 'plos', name: 'PLOS', enabled: true },
-  { id: 'open_library', name: 'Open Library', enabled: true },
+  { id: 'semantic_scholar', name: 'Semantic Scholar', enabled: true },
   { id: 'trdizin', name: 'TRDizin', enabled: true },
-  { id: 'core', name: 'CORE', enabled: false },
+  { id: 'open_library', name: 'Open Library', enabled: true },
 ]
 
 interface SettingsState {
@@ -27,6 +26,8 @@ interface SettingsState {
   removeDatabase: (dbId: string) => void
   moveDatabase: (dbId: string, direction: 'up' | 'down') => void
   updateApiKey: (key: string, value: string) => void
+  connectOpenaire: (refreshToken: string) => Promise<{ ok: boolean; error?: string }>
+  disconnectOpenaire: () => Promise<void>
   addInstance: (engine: string, url: string) => void
   removeInstance: (engine: string, url: string) => void
   reorderInstances: (engine: string, urls: string[]) => void
@@ -147,6 +148,34 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       },
     }))
     _debouncedSave(get)
+  },
+
+  connectOpenaire: async (refreshToken: string) => {
+    // The OpenAIRE exchange is authoritative: we only persist a token that
+    // already traded for an access token, so a successful return means the
+    // user is truly connected and the backend has the rotated value.
+    try {
+      const res = await api.validateOpenaireToken(refreshToken)
+      if (res.valid && res.settings) {
+        set({ settings: res.settings })
+        return { ok: true }
+      }
+      return { ok: false, error: res.error ?? 'Validation failed.' }
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Network error.',
+      }
+    }
+  },
+
+  disconnectOpenaire: async () => {
+    try {
+      const updated = await api.disconnectOpenaire()
+      set({ settings: updated })
+    } catch (err) {
+      console.error('Failed to disconnect OpenAIRE:', err)
+    }
   },
 
   addInstance: () => {

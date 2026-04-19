@@ -1,7 +1,9 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from config import settings as app_config
 from models.settings import AppSettings
@@ -117,5 +119,74 @@ async def get_settings():
 
 @router.put("/settings")
 async def update_settings(new_settings: AppSettings):
+    # If the user cleared or rotated the OpenAIRE refresh token via the
+    # generic settings path, drop our cached access token so the next
+    # verifier request re-exchanges against the new value.
+    try:
+        from services.openaire_token_manager import invalidate_cache
+        previous = get_current_settings()
+        if previous.api_keys.get("openaire", "") != new_settings.api_keys.get(
+            "openaire", ""
+        ):
+            invalidate_cache()
+    except Exception:
+        pass
+
     _save_settings(new_settings)
     return new_settings.model_dump()
+
+
+class OpenaireValidateRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post("/settings/openaire/validate")
+async def validate_openaire_token(payload: OpenaireValidateRequest):
+    """Exchange the pasted refresh token against OpenAIRE and persist on success.
+
+    This is the primary entry point for the "Connect" button. Keeping the
+    refresh-token exchange on the server side means the renderer never has
+    to deal with OpenAIRE's CORS stance, and validation + persistence are
+    one atomic step: if the exchange fails, nothing is saved.
+    """
+    from services.openaire_token_manager import (
+        exchange_refresh_token,
+        invalidate_cache,
+    )
+
+    token = (payload.refresh_token or "").strip()
+    if not token:
+        return {"valid": False, "error": "Token is empty."}
+
+    try:
+        await exchange_refresh_token(token)
+    except RuntimeError as exc:
+        return {"valid": False, "error": str(exc)}
+
+    current = get_current_settings()
+    updated_keys = dict(current.api_keys)
+    updated_keys["openaire"] = token
+    updated = current.model_copy(update={
+        "api_keys": updated_keys,
+        "openaire_token_saved_at": datetime.now(timezone.utc).date().isoformat(),
+    })
+    _save_settings(updated)
+    invalidate_cache()
+
+    return {"valid": True, "settings": updated.model_dump()}
+
+
+@router.post("/settings/openaire/disconnect")
+async def disconnect_openaire():
+    """Clear the stored OpenAIRE refresh token and reset its saved-at date."""
+    from services.openaire_token_manager import invalidate_cache
+
+    current = get_current_settings()
+    updated_keys = {k: v for k, v in current.api_keys.items() if k != "openaire"}
+    updated = current.model_copy(update={
+        "api_keys": updated_keys,
+        "openaire_token_saved_at": "",
+    })
+    _save_settings(updated)
+    invalidate_cache()
+    return updated.model_dump()

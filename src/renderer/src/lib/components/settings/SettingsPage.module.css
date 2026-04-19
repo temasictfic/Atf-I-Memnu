@@ -303,3 +303,91 @@
 }
 .instance-btn:hover { color: #292524; background: #f5f5f4; }
 .instance-btn-remove:hover { color: #ef4444; background: rgba(239,68,68,0.1); }
+
+/* OpenAIRE connection card */
+.openaire-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.openaire-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #166534;
+}
+.openaire-status-row--warn {
+  background: #fefce8;
+  border-color: #fef08a;
+  color: #854d0e;
+}
+.openaire-status-check {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.openaire-status-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.openaire-status-hint {
+  font-size: 11px;
+  color: #65a30d;
+}
+.openaire-status-row--warn .openaire-status-hint { color: #a16207; }
+.openaire-disconnect {
+  border: none;
+  background: transparent;
+  color: #78716c;
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.openaire-disconnect:hover { color: #292524; }
+.openaire-step-hint {
+  font-size: 11px;
+  color: #78716c;
+  margin: 0;
+}
+.openaire-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.openaire-input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #d6d3d1;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  outline: none;
+  background: #fafaf9;
+}
+.openaire-input:focus { border-color: #d97706; }
+.openaire-paste-btn {
+  padding: 8px 10px;
+  border: 1px solid #d6d3d1;
+  background: white;
+  color: #57534e;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.openaire-paste-btn:hover { background: #f5f5f4; color: #292524; }
+.openaire-error {
+  font-size: 11px;
+  color: #dc2626;
+  margin: 0;
+}

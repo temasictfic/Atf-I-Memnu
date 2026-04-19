@@ -7,24 +7,80 @@ import pkg from '../../../../../../package.json'
 const defaultDatabaseIds = new Set([
   'crossref',
   'openalex',
-  'arxiv',
-  'semantic_scholar',
+  'openaire',
   'europe_pmc',
-  'trdizin',
+  'arxiv',
   'pubmed',
-  'core',
-  'plos',
+  'trdizin',
   'open_library',
+  'semantic_scholar',
 ])
 
 const GITHUB_REPO_URL = 'https://github.com/temasictfic/Atf-I-Memnu'
+
+const OPENAIRE_TOKEN_PAGE_URL = 'https://develop.openaire.eu/personal-token'
+// OpenAIRE refresh tokens live for 1 month. Surface the warning state a week
+// before expiry so the user has a realistic chance to rotate without losing
+// the rate-limit boost mid-batch.
+const OPENAIRE_TOKEN_LIFETIME_DAYS = 30
+const OPENAIRE_WARN_DAYS_BEFORE_EXPIRY = 7
+
+function daysUntilOpenaireExpiry(savedAt: string | undefined): number | null {
+  if (!savedAt) return null
+  const saved = new Date(savedAt)
+  if (Number.isNaN(saved.getTime())) return null
+  const expiry = new Date(saved)
+  expiry.setUTCDate(expiry.getUTCDate() + OPENAIRE_TOKEN_LIFETIME_DAYS)
+  const msPerDay = 24 * 60 * 60 * 1000
+  return Math.round((expiry.getTime() - Date.now()) / msPerDay)
+}
 
 export default function SettingsPage() {
   const { t } = useTranslation()
   const settings = useSettingsStore(s => s.settings)
   const saveStatus = useSettingsStore(s => s.saveStatus)
-  const { toggleDatabase, updateSetting, removeDatabase, moveDatabase, updateApiKey } = useSettingsStore.getState()
+  const {
+    toggleDatabase,
+    updateSetting,
+    removeDatabase,
+    moveDatabase,
+    updateApiKey,
+    connectOpenaire,
+    disconnectOpenaire,
+  } = useSettingsStore.getState()
   const [cacheOpenMessage, setCacheOpenMessage] = useState<string | null>(null)
+  const [openaireTokenInput, setOpenaireTokenInput] = useState('')
+  const [openaireError, setOpenaireError] = useState<string | null>(null)
+  const [openaireBusy, setOpenaireBusy] = useState(false)
+
+  const openaireConnected = !!settings.api_keys?.openaire
+  const openaireDaysLeft = daysUntilOpenaireExpiry(settings.openaire_token_saved_at)
+  const openaireExpiringSoon =
+    openaireDaysLeft !== null && openaireDaysLeft <= OPENAIRE_WARN_DAYS_BEFORE_EXPIRY
+
+  const handleOpenaireConnect = async () => {
+    const token = openaireTokenInput.trim()
+    if (!token) return
+    setOpenaireBusy(true)
+    setOpenaireError(null)
+    const res = await connectOpenaire(token)
+    setOpenaireBusy(false)
+    if (res.ok) {
+      setOpenaireTokenInput('')
+    } else {
+      setOpenaireError(res.error ?? t('settings.openaire.validationError'))
+    }
+  }
+
+  const handleOpenairePaste = async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      setOpenaireTokenInput(text.trim())
+      setOpenaireError(null)
+    } catch {
+      setOpenaireError(t('settings.openaire.pasteFailed'))
+    }
+  }
 
   const handleOpenCacheFolder = async () => {
     try {
@@ -200,19 +256,120 @@ export default function SettingsPage() {
               onChange={e => updateApiKey('pubmed', e.target.value)}
             />
           </div>
+        </section>
 
-          <div className={styles['setting-row']}>
-            <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>{t('settings.apiKeys.coreLabel')}</span>
-              <span className={styles['setting-desc']}>{t('settings.apiKeys.coreDesc')}</span>
-            </div>
-            <input
-              type="password"
-              className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
-              value={settings.api_keys?.core ?? ''}
-              placeholder={t('settings.apiKeys.required')}
-              onChange={e => updateApiKey('core', e.target.value)}
-            />
+        {/* OpenAIRE Connection */}
+        <section className={styles['settings-section']}>
+          <h2 className={styles['section-title']}>{t('settings.openaire.title')}</h2>
+          <p className={styles['section-desc']}>{t('settings.openaire.description')}</p>
+
+          <div className={styles['openaire-card']}>
+            {openaireConnected ? (
+              <div
+                className={`${styles['openaire-status-row']} ${openaireExpiringSoon ? styles['openaire-status-row--warn'] : ''}`}
+              >
+                <svg
+                  className={styles['openaire-status-check']}
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M16.707 5.293a1 1 0 010 1.414L8.414 15 3.293 9.879a1 1 0 011.414-1.414L8.414 12.17l6.879-6.878a1 1 0 011.414 0z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                <span className={styles['openaire-status-text']}>
+                  <strong>{t('settings.openaire.connected')}</strong>
+                  {openaireDaysLeft !== null && (
+                    <span className={styles['openaire-status-hint']}>
+                      {openaireExpiringSoon
+                        ? t('settings.openaire.expiresSoon', { days: Math.max(openaireDaysLeft, 0) })
+                        : t('settings.openaire.autoRenews', { days: openaireDaysLeft })}
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  className={styles['openaire-disconnect']}
+                  onClick={() => {
+                    setOpenaireError(null)
+                    disconnectOpenaire()
+                  }}
+                >
+                  {t('settings.openaire.disconnect')}
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className={styles['setting-row']} style={{ borderBottom: 'none', padding: 0 }}>
+                  <div className={styles['setting-info']}>
+                    <span className={styles['setting-label']}>
+                      {t('settings.openaire.tokenPageLabel')}
+                    </span>
+                    <span className={styles['setting-desc']}>
+                      {t('settings.openaire.tokenPageDesc')}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className={styles['action-button']}
+                    onClick={() =>
+                      window.electronAPI
+                        .openExternal(OPENAIRE_TOKEN_PAGE_URL)
+                        .catch(err => console.error('Failed to open URL:', err))
+                    }
+                  >
+                    {t('settings.openaire.openTokenPage')}
+                  </button>
+                </div>
+
+                <p className={styles['openaire-step-hint']}>{t('settings.openaire.stepHint')}</p>
+
+                <div className={styles['openaire-input-row']}>
+                  <input
+                    type="password"
+                    className={styles['openaire-input']}
+                    value={openaireTokenInput}
+                    placeholder={t('settings.openaire.tokenPlaceholder')}
+                    onChange={e => {
+                      setOpenaireTokenInput(e.target.value)
+                      if (openaireError) setOpenaireError(null)
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && openaireTokenInput.trim() && !openaireBusy) {
+                        handleOpenaireConnect()
+                      }
+                    }}
+                    disabled={openaireBusy}
+                  />
+                  <button
+                    type="button"
+                    className={styles['openaire-paste-btn']}
+                    onClick={handleOpenairePaste}
+                    disabled={openaireBusy}
+                    title={t('settings.openaire.pasteButton')}
+                  >
+                    📋 {t('settings.openaire.pasteButton')}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles['action-button']}
+                    onClick={handleOpenaireConnect}
+                    disabled={openaireBusy || !openaireTokenInput.trim()}
+                  >
+                    {openaireBusy
+                      ? t('settings.openaire.connecting')
+                      : t('settings.openaire.connectButton')}
+                  </button>
+                </div>
+
+                {openaireError && (
+                  <p className={styles['openaire-error']}>{openaireError}</p>
+                )}
+              </>
+            )}
           </div>
         </section>
 

@@ -96,5 +96,18 @@ export const api = {
     request<import('./types').AppSettings>('GET', '/api/settings'),
 
   updateSettings: (settings: import('./types').AppSettings) =>
-    request<import('./types').AppSettings>('PUT', '/api/settings', settings)
+    request<import('./types').AppSettings>('PUT', '/api/settings', settings),
+
+  // OpenAIRE auth — validates by exchanging the refresh token against
+  // OpenAIRE; on success the backend persists it and returns the updated
+  // settings so the store can sync without a second GET.
+  validateOpenaireToken: (refreshToken: string) =>
+    request<{ valid: boolean; error?: string; settings?: import('./types').AppSettings }>(
+      'POST',
+      '/api/settings/openaire/validate',
+      { refresh_token: refreshToken },
+    ),
+
+  disconnectOpenaire: () =>
+    request<import('./types').AppSettings>('POST', '/api/settings/openaire/disconnect'),
 }
