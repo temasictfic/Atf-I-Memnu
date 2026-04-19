@@ -44,7 +44,7 @@ _MAX_SEQ_LEN = 512
 # is unsafe on DirectML (it crashes the Gather op in the position-embedding
 # layer under concurrent Run calls). One-at-a-time inference is also all a
 # single GPU can actually do, and the model is small (~30-80 ms/call on CPU,
-# ~15-40 ms on DirectML) so serializing doesn't bottleneck interactive use.
+# ~130-140 ms on DirectML) so serializing doesn't bottleneck interactive use.
 _inference_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
 

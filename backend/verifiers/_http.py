@@ -87,11 +87,14 @@ def check_rate_limit(resp: aiohttp.ClientResponse) -> None:
     host = resp.url.host or ""
     retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
     # Cap the park window so one rude server can't stall the app forever.
-    # Default (no Retry-After header) is 20s — short enough that within
-    # a single ~80-120s PDF run the park clears and later sources get a
-    # fresh shot at the API, instead of the first 429 killing the DB for
-    # the whole batch.
-    park_seconds = min(retry_after if retry_after is not None else 20.0, 900.0)
+    # Default (no Retry-After header) is 10s — with the new stride-based
+    # rotation that caps concurrent per-DB hits at 2 (down from 3), 429s
+    # without a server-provided Retry-After are almost always transient
+    # contention rather than a sustained quota breach, so a shorter park
+    # lets subsequent sources in the same PDF retry sooner. A real quota
+    # exhaustion still gets respected because the server will send its
+    # own Retry-After value, which we honor verbatim up to the 900s cap.
+    park_seconds = min(retry_after if retry_after is not None else 10.0, 900.0)
     if host:
         rate_limiter.park(host, park_seconds)
     raise RateLimitedError(host, retry_after, status=resp.status)

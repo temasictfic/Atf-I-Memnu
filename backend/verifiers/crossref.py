@@ -16,6 +16,25 @@ from verifiers._http import check_parked_url, check_rate_limit, get_session
 CROSSREF_API = "https://api.crossref.org/works"
 _HOST = "api.crossref.org"
 
+# Crossref's December 2025 rate-limit regime caps list/query requests at
+# 1 req/s (anonymous) and 3 req/s (polite pool with mailto). The polite
+# ceiling is still tight for a variant-walking search — 0.35 s leaves
+# headroom for Cloudflare's burst shaping without tripping 429s. The
+# anonymous path defers to the limiter's conservative 1.0 s default.
+_POLITE_POOL_PACE_SECONDS = 0.35
+
+
+def _crossref_pace_seconds() -> float | None:
+    """Return the per-request pacing to use for the current Crossref call.
+
+    Returns ``None`` to let the rate limiter fall back to its host default
+    (the anonymous-safe 1.0 s) when no contact email is configured. When
+    the user has supplied a ``polite_pool_email`` — which our User-Agent
+    already advertises as ``mailto:…`` — Crossref routes us into the polite
+    pool and we can cadence at the faster 0.35 s.
+    """
+    return _POLITE_POOL_PACE_SECONDS if get_polite_pool_email() else None
+
 
 def _build_headers() -> dict[str, str]:
     """Return a User-Agent header advertising the polite-pool mailto, when set.
@@ -42,7 +61,7 @@ async def search_by_doi(source: ParsedSource) -> MatchResult | None:
     session = get_session()
     url = f"{CROSSREF_API}/{quote(source.doi, safe='')}"
     check_parked_url(url)
-    await rate_limiter.acquire(_HOST)
+    await rate_limiter.acquire(_HOST, rate=_crossref_pace_seconds())
     async with session.get(url, headers=_build_headers()) as resp:
         check_rate_limit(resp)
         if resp.status != 200:
@@ -159,7 +178,7 @@ async def _fetch_best_match(
 ) -> MatchResult | None:
     """Execute one Crossref API request and return the highest-scoring match."""
     check_parked_url(CROSSREF_API)
-    await rate_limiter.acquire(_HOST)
+    await rate_limiter.acquire(_HOST, rate=_crossref_pace_seconds())
     async with session.get(CROSSREF_API, params=params, headers=_build_headers()) as resp:
         check_rate_limit(resp)
         if resp.status != 200:

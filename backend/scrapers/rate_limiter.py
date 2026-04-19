@@ -24,22 +24,43 @@ class RateLimiter:
             # the documented cap.
             "export.arxiv.org": 3.0,
             # Semantic Scholar anonymous pool is a *globally shared* bucket
-            # (not per-IP), so pacing alone can't fully prevent 429s — the
-            # only real fix is an API key. 2.0 s reduces the frequency.
-            "api.semanticscholar.org": 2.0,
+            # across all unauthenticated users, so per-IP pacing mostly
+            # shapes burst spikes rather than avoiding 429s. 1.0 s matches
+            # the keyed per-user cap and lifts effective throughput ~2×
+            # over the previous blanket 2.0 s default, which was tuned
+            # against three-way concurrent bursts that the rotation
+            # upgrade has since cut to at most two.
+            "api.semanticscholar.org": 1.0,
             # NCBI E-utilities: 3 req/s unauthenticated. 0.4 s ≈ 2.5/s.
             "eutils.ncbi.nlm.nih.gov": 0.4,
-            # Crossref public pool: 5 req/s (the x-rate-limit-limit header).
-            # Variant fallbacks inside one source can fire multiple calls,
-            # so 0.25 s (4/s) keeps the whole fleet under the ceiling.
-            "api.crossref.org": 0.25,
+            # Crossref (Dec 2025 rate-limit regime): list/query endpoints
+            # are capped at 1 req/s anonymous or 3 req/s polite. Our
+            # Crossref verifier uses list/query for every search, so this
+            # host-level default targets the anonymous ceiling (1.0 s).
+            # Verifiers that know the user is in the polite pool pass a
+            # faster `rate=` override to `acquire()`.
+            "api.crossref.org": 1.0,
             # OpenAlex polite pool: 10 req/s advertised. 0.15 s ≈ 6.6/s
             # gives headroom for Cloudflare's burst shaping.
             "api.openalex.org": 0.15,
-            # CORE free tier: 10 req/minute — one of the strictest limits
-            # of any DB we hit. 6 s is the only rate that actually respects
-            # their published cap.
-            "api.core.ac.uk": 6.0,
+            # OpenAIRE Graph API: no published per-IP cap. The anonymous
+            # ceiling is 60 req/hour (sliding), which simple inter-request
+            # pacing can't enforce; we keep a 1.0 s default as the fastest
+            # safe cadence for short bursts and rely on 429-park cycles to
+            # keep us under the hour cap. Authenticated users pass a
+            # faster 0.5 s override (7,200 req/hr → 2 req/s) from the
+            # verifier via `acquire(rate=...)`.
+            "api.openaire.eu": 1.0,
+            # Europe PMC publishes no hard per-IP limit and asks only that
+            # clients identify themselves and avoid "abusive" patterns.
+            # 0.5 s ≈ 2 req/s from a single polite client is well inside
+            # that envelope, and the new two-way rotation burst (down from
+            # three) means this no longer needs the conservative 2.0 s
+            # blanket default.
+            "www.ebi.ac.uk": 0.5,
+            # Open Library documents ~100 req/min. 0.6 s ≈ 1.6 req/s keeps
+            # us under that with headroom for bursts.
+            "openlibrary.org": 0.6,
         }
         self._default_rate = 2.0
 
@@ -70,8 +91,14 @@ class RateLimiter:
             return 0.0
         return remaining
 
-    async def acquire(self, domain: str):
+    async def acquire(self, domain: str, *, rate: float | None = None):
         """Wait for the inter-request pacing window for this domain.
+
+        ``rate`` overrides the default per-domain pacing when the caller
+        has context the limiter doesn't — e.g. Crossref's polite pool
+        allows a 3× faster cadence than the anonymous pool, so the
+        Crossref verifier passes ``rate=0.35`` only when it has detected
+        a configured contact email.
 
         Note: parks (from 429 / Retry-After) are *not* waited out here.
         Sleeping through a multi-second park would push the verifier past
@@ -80,7 +107,8 @@ class RateLimiter:
         at each request site, which fails fast so the source is marked
         ``rate_limited`` immediately and the next DB can proceed.
         """
-        rate = self._rates.get(domain, self._default_rate)
+        if rate is None:
+            rate = self._rates.get(domain, self._default_rate)
 
         async with self._lock:
             bucket = self._buckets.get(domain)

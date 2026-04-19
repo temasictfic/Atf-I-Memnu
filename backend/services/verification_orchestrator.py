@@ -15,10 +15,37 @@ from services.search_settings import (
     get_max_concurrent_sources_per_pdf,
     get_search_timeout_seconds,
 )
+from scrapers.rate_limiter import rate_limiter
 from services.source_extractor import extract_source_fields
 from services.url_checker import check_urls, is_doi_or_arxiv_url
 from utils.text_cleaning import strip_reference_noise
 from verifiers._http import RateLimitedError
+
+
+# Short-timeout retry pass: DBs that timed out on the main pass get one more
+# shot with a tight ceiling. 5 s is long enough for a healthy API to respond
+# (most DBs return in well under a second normally) but short enough that a
+# source with several timed-out DBs still finishes within a couple of seconds
+# of extra latency in the worst case.
+_RETRY_SEARCH_TIMEOUT_SECONDS = 5
+
+
+# Map DB id → rate-limiter host, used to check park state when deciding
+# whether to retry a rate-limited DB. Must stay in sync with the URL each
+# verifier hits (derived from each verifier's module-level ``_HOST`` /
+# ``*_API`` constant — see ``check_parked_url`` in verifiers/_http.py for
+# the hostname extraction the limiter actually sees).
+_DB_ID_TO_HOST = {
+    "crossref": "api.crossref.org",
+    "openalex": "api.openalex.org",
+    "openaire": "api.openaire.eu",
+    "arxiv": "export.arxiv.org",
+    "semantic_scholar": "api.semanticscholar.org",
+    "europe_pmc": "www.ebi.ac.uk",
+    "trdizin": "search.trdizin.gov.tr",
+    "pubmed": "eutils.ncbi.nlm.nih.gov",
+    "open_library": "openlibrary.org",
+}
 
 
 # --- Cancellation registry ---
@@ -59,8 +86,7 @@ def _build_search_url(db_name: str, parsed: ParsedSource) -> str:
         "Europe PMC": f"https://europepmc.org/search?query={quote(query)}",
         "TRDizin": f"https://search.trdizin.gov.tr/tr/yayin/ara?q={quote(query, safe=',')}&order=publicationYear-DESC&page=1&limit=20",
         "PubMed": f"https://pubmed.ncbi.nlm.nih.gov/?term={quote(query)}",
-        "CORE": f"https://core.ac.uk/search?q={quote(query)}",
-        "PLOS": f"https://journals.plos.org/plosone/search?q={quote(query)}",
+        "OpenAIRE": f"https://explore.openaire.eu/search/find?fv0={quote(query)}&f0=q",
         "Open Library": f"https://openlibrary.org/search?q={quote(query)}",
     }
     return urls.get(db_name, "")
@@ -80,6 +106,22 @@ def _supports_api_key_argument(search_fn: Any) -> bool:
         return "api_key" in inspect.signature(search_fn).parameters
     except (TypeError, ValueError):
         return False
+
+
+def _db_park_cleared(db_id: str) -> bool:
+    """Return True if this DB's rate-limiter park window has fully elapsed.
+
+    Used by the retry pass to decide whether a rate-limited DB is safe to
+    re-try right now. If the host is still parked, a retry would just
+    fail-fast via ``check_parked_url`` and waste a task slot. Unknown
+    db_ids (missing from :data:`_DB_ID_TO_HOST`) are treated as cleared:
+    we have no way to check, so we let the retry try and the call will
+    either succeed or fall back to its own error path.
+    """
+    host = _DB_ID_TO_HOST.get(db_id)
+    if host is None:
+        return True
+    return rate_limiter.parked_remaining(host) <= 0.0
 
 
 def _is_strong_match(result: MatchResult | None) -> bool:
@@ -286,6 +328,60 @@ async def _verify_source(
         all_matches.extend(tier1_results["matches"])
         databases_searched.extend(tier1_results["searched"])
 
+        # Short-timeout retry pass for DBs that timed out on the main pass,
+        # plus rate-limited DBs whose park has already cleared by the time
+        # we get here. Most timeouts in the wild are transient contention
+        # rather than the API actually being down, and the new stride
+        # rotation has cut peak per-DB concurrency from 3 to 2 — a second
+        # attempt lands in a quieter network window more often than not.
+        # For rate-limited DBs the retry is opportunistic: if the 429 came
+        # from *this* source's request the park almost certainly has not
+        # cleared yet, but if it came from an *earlier* source bleeding
+        # into ours via ``check_parked_url``, the park is usually 3-6 s
+        # old by now and often cleared (new 10 s default). Park-still-
+        # active entries stay in the skip set — a retry would just re-
+        # trigger the fail-fast and waste a task slot.
+        #
+        # Short 5 s ceiling (vs the main-pass ~20 s) keeps worst-case
+        # retry latency bounded even if everything fails again.
+        retriable_timeouts = set(tier1_results["timeouts"])
+        retriable_rate_limited = {
+            db_id
+            for db_id in tier1_results["rate_limited"]
+            if _db_park_cleared(db_id)
+        }
+        retry_set = retriable_timeouts | retriable_rate_limited
+
+        if retry_set and not _is_strong_match(
+            max(all_matches, key=lambda m: m.score, default=None)
+        ):
+            await manager.send_log(
+                "info",
+                (
+                    f"Retrying {len(retry_set)} DB(s) with short timeout"
+                    f" (timeout={len(retriable_timeouts)},"
+                    f" rate-limited-cleared={len(retriable_rate_limited)})"
+                ),
+                pdf_id=pdf_id,
+                source_id=source_id,
+            )
+            retry_results = await _run_tier1_apis(
+                pdf_id,
+                source_id,
+                parsed,
+                api_keys,
+                enabled_db_configs,
+                api_semaphore,
+                _RETRY_SEARCH_TIMEOUT_SECONDS,
+                source_index,
+                restricted_db_ids=retry_set,
+            )
+            all_matches.extend(retry_results["matches"])
+            # Don't re-extend `databases_searched` — the DB names are
+            # already present from the main pass, and adding them again
+            # would double-count in any downstream consumer that treats
+            # the list as a set.
+
         # Wait for URL check to complete (with bounded timeout)
         if url_check_task is not None:
             try:
@@ -327,48 +423,73 @@ async def _run_tier1_apis(
     api_semaphore: asyncio.Semaphore,
     search_timeout: int,
     source_index: int = 0,
+    restricted_db_ids: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Run all Tier 1 API verifiers in parallel."""
+    """Run Tier 1 API verifiers in parallel.
+
+    ``restricted_db_ids`` filters the verifier list to just those ids
+    (used by the short-timeout retry pass to re-run only the DBs that
+    timed out in the main phase). When ``None`` every enabled DB runs.
+    Return dict also carries ``timeouts`` — the list of db_ids whose
+    main-pass search raised ``TimeoutError`` — so callers can drive the
+    retry phase without re-deriving that state from event logs.
+    """
     from verifiers.crossref import search as crossref_search
     from verifiers.openalex import search as openalex_search
+    from verifiers.openaire import search as openaire_search
     from verifiers.arxiv import search as arxiv_search
     from verifiers.semantic_scholar import search as semantic_search
     from verifiers.europe_pmc import search as europe_pmc_search
     from verifiers.trdizin import search as trdizin_search
     from verifiers.pubmed import search as pubmed_search
-    from verifiers.core import search as core_search
-    from verifiers.plos import search as plos_search
     from verifiers.open_library import search as open_library_search
 
     # Map database id → (display name, search function)
     verifier_registry = {
         "crossref": ("Crossref", crossref_search),
         "openalex": ("OpenAlex", openalex_search),
+        "openaire": ("OpenAIRE", openaire_search),
         "arxiv": ("arXiv", arxiv_search),
         "semantic_scholar": ("Semantic Scholar", semantic_search),
         "europe_pmc": ("Europe PMC", europe_pmc_search),
         "trdizin": ("TRDizin", trdizin_search),
         "pubmed": ("PubMed", pubmed_search),
-        "core": ("CORE", core_search),
-        "plos": ("PLOS", plos_search),
         "open_library": ("Open Library", open_library_search),
     }
 
-    # Build verifier list in the order defined by user settings
+    # Build verifier list in the order defined by user settings. The
+    # optional ``restricted_db_ids`` filter is how the retry pass asks
+    # for a subset — rotation still applies so retries inherit the same
+    # burst-spreading behaviour as the main pass.
     verifiers = []
     for db_id in enabled_db_configs:
+        if restricted_db_ids is not None and db_id not in restricted_db_ids:
+            continue
         entry = verifier_registry.get(db_id)
         if entry:
             verifiers.append((db_id, entry[0], entry[1]))
 
     # Rotate by source index so concurrent sources start on different DBs,
     # avoiding per-DB rate-limit bursts from lockstep traversal.
+    #
+    # Stride matters: with the default 3 concurrent sources and a 5-slot
+    # per-source API semaphore, a stride of 1 leaves the *middle* third of
+    # the database list inside every source's first window, so those DBs
+    # get hit three times simultaneously while the DBs at the ends of the
+    # list sit idle. Using stride = ⌊N / concurrency⌋ spaces the starting
+    # positions evenly across the list, which flattens the initial-burst
+    # distribution to a maximum of 2 concurrent hits per DB (the pigeonhole
+    # lower bound: 3 sources × 5 slots = 15 calls over 9 DBs = 1.67 avg).
     if verifiers:
-        offset = source_index % len(verifiers)
+        concurrency = max(1, get_max_concurrent_sources_per_pdf())
+        stride = max(1, len(verifiers) // concurrency)
+        offset = (source_index * stride) % len(verifiers)
         verifiers = verifiers[offset:] + verifiers[:offset]
 
     matches: list[MatchResult] = []
     searched: list[str] = []
+    timeouts: list[str] = []  # db_ids whose search timed out — fed to retry pass
+    rate_limited: list[str] = []  # db_ids that returned 429 or hit a parked host
 
     async def run_verifier(db_id: str, name: str, search_fn: Any):
         fallback_url = _build_search_url(name, parsed)
@@ -378,7 +499,6 @@ async def _run_tier1_apis(
                     "openalex": "openalex",
                     "semantic_scholar": "semantic_scholar",
                     "pubmed": "pubmed",
-                    "core": "core",
                 }
                 api_key_name = api_key_names.get(db_id)
                 api_key = (api_keys.get(api_key_name, "") or "").strip() if api_key_name else None
@@ -412,6 +532,7 @@ async def _run_tier1_apis(
                         matches.append(result)
                 except asyncio.TimeoutError:
                     searched.append(name)
+                    timeouts.append(db_id)
                     await manager.send_log("warning", f"{name} timed out",
                                           pdf_id=pdf_id, source_id=source_id, database=name)
                     await manager.broadcast("verify_db_checked", {
@@ -424,6 +545,7 @@ async def _run_tier1_apis(
                     })
                 except RateLimitedError as e:
                     searched.append(name)
+                    rate_limited.append(db_id)
                     retry_msg = (
                         f" (retry-after {e.retry_after:.0f}s)"
                         if e.retry_after is not None else ""
@@ -515,7 +637,12 @@ async def _run_tier1_apis(
         # broke out after the last task) to fully settle.
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    return {"matches": matches, "searched": searched}
+    return {
+        "matches": matches,
+        "searched": searched,
+        "timeouts": timeouts,
+        "rate_limited": rate_limited,
+    }
 
 
 async def verify_pdf_sources_filtered(

@@ -104,6 +104,10 @@ export interface AppSettings {
   databases: DatabaseConfig[]
   api_keys?: Record<string, string>
   polite_pool_email?: string
+  // ISO-8601 date the user's OpenAIRE refresh token was last saved. The UI
+  // derives "connected" state from the presence of api_keys.openaire and
+  // uses this date to warn about the 1-month expiry window.
+  openaire_token_saved_at?: string
   search_timeout: number
   max_concurrent_apis: number
   max_concurrent_sources_per_pdf: number
@@ -163,6 +167,7 @@ export interface ScholarCandidate {
   doi?: string
   url: string
   snippet?: string
+  apa_citation?: string
 }
 
 export interface ScoreScholarResponse {
