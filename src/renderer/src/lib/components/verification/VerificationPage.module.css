@@ -103,7 +103,7 @@
 .verify-selected:hover { background: #fef3c7; }
 
 .verify-item-top { display: flex; align-items: center; gap: 8px; }
-.vi-status { font-size: 12px; flex-shrink: 0; }
+.vi-status { font-size: 12px; flex-shrink: 0; width: 16px; text-align: center; display: inline-block; }
 .vi-spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .vi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #44403c; }
@@ -353,10 +353,80 @@
   font-size: 10px;
 }
 
+.scholar-overlay-webview-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
 .scholar-overlay-webview {
   width: 100%;
   height: 100%;
   display: inline-flex;
+}
+
+.find-bar {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: #ffffff;
+  border: 1px solid #d6d3d1;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(68, 64, 60, 0.18);
+  z-index: 5;
+}
+
+.find-input {
+  width: 200px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #e7e5e4;
+  border-radius: 4px;
+  background: #fafaf9;
+  color: #1c1917;
+  outline: none;
+  transition: border-color 0.1s;
+}
+.find-input:focus {
+  border-color: #d97706;
+  background: #ffffff;
+}
+
+.find-count {
+  font-size: 11px;
+  color: #78716c;
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.find-count-empty {
+  color: #ef4444;
+}
+
+.find-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.find-btn .overlay-icon {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.2;
+}
+
+.overlay-icon-btn-active {
+  border-color: #d97706;
+  color: #d97706;
+  background: #fef3c7;
 }
 
 /* Source card */

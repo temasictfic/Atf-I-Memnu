@@ -121,32 +121,47 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     closeOverlayFn: null,
 
     startScanForPdf: async (pdfId) => {
-      const queue = await buildQueue(pdfId)
-      if (queue.length === 0) return
+      // Show the banner immediately while we build the queue. NER field
+      // extraction runs one HTTP call per non-found source, and for PDFs with
+      // many references the wait before status flips to 'scanning' is
+      // user-visible — so flip it now and let the banner render a
+      // "Preparing…" state until the queue is ready.
       set({
-        queue,
-        totalInQueue: queue.length,
+        status: 'scanning',
+        queue: [],
+        totalInQueue: 0,
         currentIndex: 0,
         foundCount: 0,
         captchaUrl: null,
         lastDoneSourceId: null,
         lastDoneUpdated: null,
       })
+      const queue = await buildQueue(pdfId)
+      if (queue.length === 0) {
+        set({ status: 'idle' })
+        return
+      }
+      set({ queue, totalInQueue: queue.length })
       scholarScanner.startScan(queue)
     },
 
     startScanForSource: async (pdfId, sourceId) => {
-      const queue = await buildQueue(pdfId, [sourceId])
-      if (queue.length === 0) return
       set({
-        queue,
-        totalInQueue: queue.length,
+        status: 'scanning',
+        queue: [],
+        totalInQueue: 0,
         currentIndex: 0,
         foundCount: 0,
         captchaUrl: null,
         lastDoneSourceId: null,
         lastDoneUpdated: null,
       })
+      const queue = await buildQueue(pdfId, [sourceId])
+      if (queue.length === 0) {
+        set({ status: 'idle' })
+        return
+      }
+      set({ queue, totalInQueue: queue.length })
       scholarScanner.startScan(queue)
     },
 

@@ -358,11 +358,19 @@ export default function VerificationPage() {
   const filteredSourceCards = useMemo(() => {
     const q = cardSearchQuery.trim().toLowerCase()
     if (!q) return sortedSourceCards
-    return sortedSourceCards.filter(card => {
+    const matched = sortedSourceCards.filter(card => {
       const text = (verifyTexts[card.source.id] ?? card.source.text ?? '').toLowerCase()
       const ref = String(card.source.ref_number ?? '')
       return text.includes(q) || ref.includes(q)
     })
+    const rank = (card: typeof matched[number]) => {
+      const ref = String(card.source.ref_number ?? '')
+      if (ref === q) return 0
+      if (ref.startsWith(q)) return 1
+      if (ref.includes(q)) return 2
+      return 3
+    }
+    return [...matched].sort((a, b) => rank(a) - rank(b))
   }, [sortedSourceCards, cardSearchQuery, verifyTexts])
 
   // Drag and drop state
@@ -632,6 +640,15 @@ export default function VerificationPage() {
   const [browserZoomFactor, setBrowserZoomFactor] = useState(1)
   const browserZoomFactorRef = useRef(1)
   const preOverlaySortRef = useRef<{ key: CardSortMode; asc: boolean } | null>(null)
+
+  // Find-in-page (Ctrl+F) state for the overlay webview
+  const [findBarOpen, setFindBarOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState('')
+  const [findActive, setFindActive] = useState(0)
+  const [findTotal, setFindTotal] = useState(0)
+  const findInputRef = useRef<HTMLInputElement | null>(null)
+  const findBarOpenRef = useRef(false)
+  useEffect(() => { findBarOpenRef.current = findBarOpen }, [findBarOpen])
 
   // Plain-Chrome UA so Cloudflare/WAFs (e.g. IEEE Xplore) don't 418 our
   // scholar-panel webviews for advertising "Electron/..." in the UA.
@@ -953,6 +970,55 @@ export default function VerificationPage() {
     setBrowserOverlayOpen(false)
   }
 
+  const runFindInPage = useCallback((text: string, opts?: { findNext?: boolean; forward?: boolean }) => {
+    const view = browserWebviewRef.current
+    if (!view) return
+    if (!text) {
+      try { view.stopFindInPage?.('clearSelection') } catch { /* ignore */ }
+      setFindActive(0)
+      setFindTotal(0)
+      return
+    }
+    const forward = opts?.forward ?? true
+    try {
+      // findNext: false starts a new search session but does not always
+      // activate/scroll to a match on its own. Follow up with findNext: true
+      // so the first match becomes active and scrolls into view.
+      if (opts?.findNext) {
+        view.findInPage?.(text, { findNext: true, forward })
+      } else {
+        view.findInPage?.(text, { findNext: false, forward })
+        view.findInPage?.(text, { findNext: true, forward })
+      }
+    } catch {
+      // ignore find errors
+    }
+  }, [])
+
+  const openFindBar = useCallback(() => {
+    setFindBarOpen(true)
+    requestAnimationFrame(() => {
+      const input = findInputRef.current
+      if (!input) return
+      input.focus()
+      input.select()
+    })
+  }, [])
+
+  const closeFindBar = useCallback(() => {
+    setFindBarOpen(false)
+    setFindQuery('')
+    setFindActive(0)
+    setFindTotal(0)
+    const view = browserWebviewRef.current
+    try { view?.stopFindInPage?.('clearSelection') } catch { /* ignore */ }
+  }, [])
+
+  const navigateFind = useCallback((forward: boolean) => {
+    if (!findQuery) return
+    runFindInPage(findQuery, { findNext: true, forward })
+  }, [findQuery, runFindInPage])
+
   function syncBrowserNavState() {
     const view = browserWebviewRef.current
     if (!view) {
@@ -1112,7 +1178,8 @@ export default function VerificationPage() {
       syncBrowserZoomState()
     }
 
-    // Inject zoom handler into webview content so Ctrl+Wheel works inside the page
+    // Inject zoom + find handlers into webview content so Ctrl+Wheel and
+    // Ctrl+F work when focus is inside the guest page.
     const injectZoomScript = () => {
       try {
         view.executeJavaScript?.(`
@@ -1125,6 +1192,15 @@ export default function VerificationPage() {
                 console.log(e.deltaY > 0 ? '__ZOOM_OUT__' : '__ZOOM_IN__');
               }
             }, { passive: false });
+            document.addEventListener('keydown', function(e) {
+              if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('__FIND_OPEN__');
+              } else if (e.key === 'Escape') {
+                console.log('__FIND_ESC__');
+              }
+            }, true);
           })();
         `)
       } catch {
@@ -1141,6 +1217,15 @@ export default function VerificationPage() {
       const msg = event?.message
       if (msg === '__ZOOM_IN__') zoomBrowserIn()
       else if (msg === '__ZOOM_OUT__') zoomBrowserOut()
+      else if (msg === '__FIND_OPEN__') openFindBar()
+      else if (msg === '__FIND_ESC__' && findBarOpenRef.current) closeFindBar()
+    }
+
+    const onFoundInPage = (event: any) => {
+      const r = event?.result
+      if (!r) return
+      if (typeof r.matches === 'number') setFindTotal(r.matches)
+      if (typeof r.activeMatchOrdinal === 'number') setFindActive(r.activeMatchOrdinal)
     }
 
     view.addEventListener('did-navigate', onViewStateChange)
@@ -1148,6 +1233,7 @@ export default function VerificationPage() {
     view.addEventListener('did-stop-loading', onDomReady)
     view.addEventListener('dom-ready', onDomReady)
     view.addEventListener('console-message', onConsoleMessage)
+    view.addEventListener('found-in-page', onFoundInPage)
 
     const timer = window.setTimeout(onDomReady, 100)
 
@@ -1158,13 +1244,26 @@ export default function VerificationPage() {
       view.removeEventListener('did-stop-loading', onDomReady)
       view.removeEventListener('dom-ready', onDomReady)
       view.removeEventListener('console-message', onConsoleMessage)
+      view.removeEventListener('found-in-page', onFoundInPage)
     }
-  }, [browserOverlayOpen, browserOverlayUrl, selectedSourceId, syncBrowserZoomState, zoomBrowserIn, zoomBrowserOut])
+  }, [browserOverlayOpen, browserOverlayUrl, selectedSourceId, syncBrowserZoomState, zoomBrowserIn, zoomBrowserOut, openFindBar, closeFindBar])
 
   useEffect(() => {
     if (!browserOverlayOpen) return
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        openFindBar()
+        return
+      }
+
+      if (findBarOpen && e.key === 'Escape') {
+        e.preventDefault()
+        closeFindBar()
+        return
+      }
+
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return
 
       if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
@@ -1187,7 +1286,22 @@ export default function VerificationPage() {
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [browserOverlayOpen, zoomBrowserIn, zoomBrowserOut, resetBrowserZoom])
+  }, [browserOverlayOpen, zoomBrowserIn, zoomBrowserOut, resetBrowserZoom, findBarOpen, openFindBar, closeFindBar])
+
+  // Clear find state when overlay closes or navigates to a new URL.
+  useEffect(() => {
+    if (!browserOverlayOpen) {
+      setFindBarOpen(false)
+      setFindQuery('')
+      setFindActive(0)
+      setFindTotal(0)
+    }
+  }, [browserOverlayOpen])
+
+  useEffect(() => {
+    setFindActive(0)
+    setFindTotal(0)
+  }, [browserOverlayUrl])
 
   useEffect(() => {
     if (!browserOverlayOpen) return
@@ -1570,13 +1684,19 @@ export default function VerificationPage() {
               <div className={styles['scholar-scan-bar']}>
                 <span className={styles['scholar-scan-info']}>
                   Scholar
-                  {scholarBannerInfo.pdfName && <> | {scholarBannerInfo.pdfName}</>}
-                  {scholarBannerInfo.lastRefNumber != null && scholarBannerInfo.lastUpdated != null ? (
-                    <> : #{scholarBannerInfo.lastRefNumber} {scholarBannerInfo.lastUpdated ? 'Found' : 'Not Found'}</>
-                  ) : scholarBannerInfo.refNumber != null ? (
-                    <> : #{scholarBannerInfo.refNumber}</>
-                  ) : null}
-                  {' '}&middot; {scholarCurrentIndex}/{scholarTotal} checked
+                  {scholarTotal === 0 ? (
+                    <> &middot; {t('verification.scholarPreparing')}</>
+                  ) : (
+                    <>
+                      {scholarBannerInfo.pdfName && <> | {scholarBannerInfo.pdfName}</>}
+                      {scholarBannerInfo.lastRefNumber != null && scholarBannerInfo.lastUpdated != null ? (
+                        <> : #{scholarBannerInfo.lastRefNumber} {scholarBannerInfo.lastUpdated ? 'Found' : 'Not Found'}</>
+                      ) : scholarBannerInfo.refNumber != null ? (
+                        <> : #{scholarBannerInfo.refNumber}</>
+                      ) : null}
+                      {' '}&middot; {scholarCurrentIndex}/{scholarTotal} checked
+                    </>
+                  )}
                 </span>
                 {scholarStatus === 'captcha' && (
                   <button className={styles['action-btn']} onClick={() => useScholarScanStore.getState().resumeAfterCaptcha()}>
@@ -1634,6 +1754,18 @@ export default function VerificationPage() {
                         <path d="M12.4 7.5A5 5 0 103.8 11" />
                       </svg>
                     </button>
+                    <button
+                      className={`${styles['action-btn']} ${styles['overlay-icon-btn']} ${findBarOpen ? styles['overlay-icon-btn-active'] : ''}`}
+                      onClick={() => findBarOpen ? closeFindBar() : openFindBar()}
+                      title={t('verification.browser.find')}
+                      aria-label={t('verification.browser.find')}
+                      aria-pressed={findBarOpen}
+                    >
+                      <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <circle cx="7" cy="7" r="3.5" />
+                        <path d="M9.6 9.6L13 13" />
+                      </svg>
+                    </button>
                   </div>
                   <div className={styles['scholar-overlay-zoom-actions']}>
                     <button
@@ -1681,14 +1813,83 @@ export default function VerificationPage() {
                     </button>
                   </div>
                 </div>
-                <webview
-                  ref={browserWebviewRef}
-                  className={styles['scholar-overlay-webview']}
-                  src={browserOverlayUrl}
-                  partition="persist:scholar-panel"
-                  useragent={scholarPanelUserAgent}
-                  allowpopups={true}
-                />
+                <div className={styles['scholar-overlay-webview-wrap']}>
+                  <webview
+                    ref={browserWebviewRef}
+                    className={styles['scholar-overlay-webview']}
+                    src={browserOverlayUrl}
+                    partition="persist:scholar-panel"
+                    useragent={scholarPanelUserAgent}
+                    allowpopups={true}
+                  />
+                  {findBarOpen && (
+                    <div className={styles['find-bar']} role="search">
+                      <input
+                        ref={findInputRef}
+                        className={styles['find-input']}
+                        type="text"
+                        value={findQuery}
+                        onChange={(e) => {
+                          const next = e.target.value
+                          setFindQuery(next)
+                          runFindInPage(next, { findNext: false })
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            navigateFind(!e.shiftKey)
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault()
+                            closeFindBar()
+                          }
+                        }}
+                        placeholder={t('verification.browser.findPlaceholder')}
+                        aria-label={t('verification.browser.findPlaceholder')}
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                      <span className={`${styles['find-count']} ${findQuery && findTotal === 0 ? styles['find-count-empty'] : ''}`}>
+                        {findQuery ? `${findActive}/${findTotal}` : '0/0'}
+                      </span>
+                      <button
+                        type="button"
+                        className={`${styles['action-btn']} ${styles['find-btn']}`}
+                        onClick={() => navigateFind(false)}
+                        disabled={!findQuery || findTotal === 0}
+                        title={t('verification.browser.findPrev')}
+                        aria-label={t('verification.browser.findPrev')}
+                      >
+                        <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M2.5 11l5.5-5.5 5.5 5.5" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles['action-btn']} ${styles['find-btn']}`}
+                        onClick={() => navigateFind(true)}
+                        disabled={!findQuery || findTotal === 0}
+                        title={t('verification.browser.findNext')}
+                        aria-label={t('verification.browser.findNext')}
+                      >
+                        <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M2.5 5l5.5 5.5 5.5-5.5" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className={`${styles['action-btn']} ${styles['find-btn']}`}
+                        onClick={closeFindBar}
+                        title={t('verification.browser.findClose')}
+                        aria-label={t('verification.browser.findClose')}
+                      >
+                        <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M3 3l10 10" />
+                          <path d="M13 3l-10 10" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
