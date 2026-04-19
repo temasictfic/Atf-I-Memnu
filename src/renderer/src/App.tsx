@@ -25,9 +25,13 @@ const tabs: Tab[] = [
 ]
 
 export default function App() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [activeTab, setActiveTab] = useState<TabId>('parsing')
   const tabNavRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    document.title = t('app.windowTitle')
+  }, [t, i18n.language])
 
   useEffect(() => {
     const el = tabNavRef.current

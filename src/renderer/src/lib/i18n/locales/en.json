@@ -13,6 +13,7 @@
     "delete": "Delete"
   },
   "app": {
+    "windowTitle": "Atf-ı Memnu - A citation app that searches for citations...",
     "tabs": {
       "parsing": "Parsing",
       "verification": "Verification",
@@ -132,6 +133,8 @@
       "removeSource": "Remove source",
       "space": "Space",
       "mergeClosest": "Merge with closest",
+      "ctrlSpace": "Ctrl + Space",
+      "mergePrevious": "Merge as continuation of previous",
       "ctrlZ": "Ctrl + Z",
       "undo": "Undo",
       "ctrlScroll": "Ctrl + Scroll",
@@ -211,6 +214,7 @@
     "markAsNotFound": "Mark as not found",
     "verifyNonFound": "Verify only non-Found sources",
     "scholarScanNonFound": "Google Scholar scan for non-Found sources",
+    "scholarPreparing": "Preparing…",
     "nfShort": "!X",
     "gsShort": "GS",
     "dragToReorder": "Drag to reorder",
@@ -251,7 +255,12 @@
       "zoomIn": "Zoom in (Ctrl + +)",
       "openExternal": "Open in external browser",
       "close": "Close browser panel",
-      "dragToResize": "Drag to resize"
+      "dragToResize": "Drag to resize",
+      "find": "Find on page (Ctrl + F)",
+      "findPlaceholder": "Find on page",
+      "findNext": "Next match (Enter)",
+      "findPrev": "Previous match (Shift + Enter)",
+      "findClose": "Close find (Esc)"
     },
     "status": {
       "found": "Found",

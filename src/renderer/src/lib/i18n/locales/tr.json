@@ -13,6 +13,7 @@
     "delete": "Sil"
   },
   "app": {
+    "windowTitle": "Atf-ı Memnu - Atfı arayan bir atıf uygulaması...",
     "tabs": {
       "parsing": "Ayrıştırma",
       "verification": "Doğrulama",
@@ -132,6 +133,8 @@
       "removeSource": "Referansı kaldır",
       "space": "Boşluk",
       "mergeClosest": "En yakınla birleştir",
+      "ctrlSpace": "Ctrl + Boşluk",
+      "mergePrevious": "Önceki referansın devamı olarak birleştir",
       "ctrlZ": "Ctrl + Z",
       "undo": "Geri al",
       "ctrlScroll": "Ctrl + Kaydırma",
@@ -209,8 +212,9 @@
     "markAsFound": "Bulundu olarak işaretle",
     "markAsProblematic": "Sorunlu olarak işaretle",
     "markAsNotFound": "Bulunamadı olarak işaretle",
-    "verifyNonFound": "Yalnızca bulunamayanları doğrula",
+    "verifyNonFound": "Bulundu harici doğrula",
     "scholarScanNonFound": "Bulunamayanlar için Google Scholar taraması",
+    "scholarPreparing": "Hazırlanıyor…",
     "nfShort": "!X",
     "gsShort": "GS",
     "dragToReorder": "Sıralamak için sürükle",
@@ -251,7 +255,12 @@
       "zoomIn": "Yakınlaştır (Ctrl + +)",
       "openExternal": "Harici tarayıcıda aç",
       "close": "Tarayıcı panelini kapat",
-      "dragToResize": "Yeniden boyutlandırmak için sürükle"
+      "dragToResize": "Yeniden boyutlandırmak için sürükle",
+      "find": "Sayfada bul (Ctrl + F)",
+      "findPlaceholder": "Sayfada bul",
+      "findNext": "Sonraki eşleşme (Enter)",
+      "findPrev": "Önceki eşleşme (Shift + Enter)",
+      "findClose": "Bulmayı kapat (Esc)"
     },
     "status": {
       "found": "Bulundu",
