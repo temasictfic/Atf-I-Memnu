@@ -13,7 +13,7 @@
 //   │ └──────────────────────────────────┘ │
 //   └──────────────────────────────────────┘
 
-import { PDFDocument, PDFName, PDFString, PDFArray, PDFNumber, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFString, PDFArray, PDFNumber, PDFDict, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 // @ts-expect-error Vite ?url import returns a string
 import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
@@ -205,7 +205,7 @@ class PW {
     const ctx = this.doc.context
 
     // Build the /A (action) dictionary manually with proper PDF types
-    const actionDict = ctx.obj(new Map<PDFName, any>())
+    const actionDict = PDFDict.withContext(ctx)
     actionDict.set(PDFName.of('Type'), PDFName.of('Action'))
     actionDict.set(PDFName.of('S'), PDFName.of('URI'))
     actionDict.set(PDFName.of('URI'), PDFString.of(url))
@@ -221,7 +221,7 @@ class PW {
     border.push(PDFNumber.of(0))
     border.push(PDFNumber.of(0))
 
-    const annotDict = ctx.obj(new Map<PDFName, any>())
+    const annotDict = PDFDict.withContext(ctx)
     annotDict.set(PDFName.of('Type'), PDFName.of('Annot'))
     annotDict.set(PDFName.of('Subtype'), PDFName.of('Link'))
     annotDict.set(PDFName.of('Rect'), rect)
