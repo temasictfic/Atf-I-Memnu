@@ -303,6 +303,7 @@ class ScholarCandidate(BaseModel):
     year: int | None = None
     doi: str | None = None
     url: str = ""
+    apa_citation: str = ""
 
 
 class ScoreScholarRequest(BaseModel):
@@ -318,19 +319,55 @@ async def score_scholar(request: ScoreScholarRequest):
     from services.source_extractor import extract_source_fields
     from services.match_scorer import score_match, determine_verification_status
     from services.author_matcher import clean_scholar_authors
+    from services.ner_extractor import extract_fields_ner
 
-    parsed = await extract_source_fields(request.source_text)
+    # request.source_text is the title-only search query used to hit Scholar.
+    # SIRIS NER was trained on full citations and mislabels bare titles — it
+    # thinks the leading capitalized words are authors. Use the stored full
+    # PDF reference text (same as Crossref/OpenAlex paths do) to keep both
+    # sides of the comparison symmetric.
+    sources = load_sources_for_pdf(request.pdf_id) or []
+    source_rect = next((s for s in sources if s.id == request.source_id), None)
+    full_source_text = source_rect.text if source_rect else request.source_text
+
+    parsed = await extract_source_fields(full_source_text)
 
     scholar_matches: list[MatchResult] = []
     search_url = f"https://scholar.google.com/scholar?q={request.source_text[:200]}"
 
     for cand in request.candidates:
+        # If we have an APA citation from Scholar's "Cite" dialog, run it
+        # through the same NER extractor used on source references. Scraped
+        # Scholar fields truncate title/authors ("J Smith, A Jones…"); the
+        # APA string contains the full metadata. Falling through to scraped
+        # values preserves behaviour when enrichment fails (CAPTCHA on the
+        # cite dialog, low-confidence NER output, etc.).
+        title = cand.title
+        authors = cand.authors
+        year = cand.year
+        doi = cand.doi
+        journal = ""
+        if cand.apa_citation:
+            ner = await extract_fields_ner(cand.apa_citation)
+            if ner is not None and ner.parse_confidence >= 0.3:
+                if ner.title:
+                    title = ner.title
+                if ner.authors:
+                    authors = ner.authors
+                if ner.year:
+                    year = ner.year
+                if ner.doi:
+                    doi = ner.doi
+                if ner.source:
+                    journal = ner.source
+
         match = score_match(parsed, {
-            "title": cand.title,
-            "authors": clean_scholar_authors(cand.authors),
-            "year": cand.year,
-            "doi": cand.doi,
+            "title": title,
+            "authors": clean_scholar_authors(authors),
+            "year": year,
+            "doi": doi,
             "url": cand.url,
+            "journal": journal,
             "database": "Google Scholar",
             "search_url": search_url,
         })

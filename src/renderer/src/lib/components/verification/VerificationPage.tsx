@@ -13,8 +13,8 @@ import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../../uti
 import styles from './VerificationPage.module.css'
 
 const ALL_DATABASES = [
-  'Crossref', 'OpenAlex', 'arXiv', 'Semantic Scholar', 'Europe PMC',
-  'TRDizin', 'PubMed', 'CORE', 'PLOS', 'Open Library',
+  'Crossref', 'OpenAlex', 'OpenAIRE', 'Europe PMC', 'arXiv',
+  'PubMed', 'TRDizin', 'Open Library', 'Semantic Scholar',
 ]
 
 function statusColor(result: VerificationResult | undefined): string {
@@ -86,8 +86,7 @@ function buildDbSearchUrl(db: string, text: string): string {
     'Europe PMC': `https://europepmc.org/search?query=${q}`,
     'TRDizin': `https://search.trdizin.gov.tr/tr/yayin/ara?q=${q.replace(/%2C/gi, ',')}&order=relevance-DESC&page=1&limit=5`,
     'PubMed': `https://pubmed.ncbi.nlm.nih.gov/?term=${q}`,
-    'CORE': `https://core.ac.uk/search?q=${q}`,
-    'PLOS': `https://journals.plos.org/plosone/search?q=${q}`,
+    'OpenAIRE': `https://explore.openaire.eu/search/find?fv0=${q}&f0=q`,
     'Open Library': `https://openlibrary.org/search?q=${q}`,
     'Google Scholar': `https://scholar.google.com/scholar?q=${q}`,
   }
@@ -1700,11 +1699,11 @@ export default function VerificationPage() {
                 </span>
                 {scholarStatus === 'captcha' && (
                   <button className={styles['action-btn']} onClick={() => useScholarScanStore.getState().resumeAfterCaptcha()}>
-                    Resume
+                    {t('verification.scholarResume')}
                   </button>
                 )}
                 <button className={styles['action-btn']} onClick={() => useScholarScanStore.getState().cancelScan()}>
-                  Cancel
+                  {t('verification.scholarCancel')}
                 </button>
               </div>
             )}
@@ -1713,7 +1712,7 @@ export default function VerificationPage() {
               <div className={styles['scholar-overlay']} style={{ height: `${browserOverlayHeight}px` }} ref={browserOverlayRef}>
                 {scholarStatus === 'captcha' && (
                   <div className={styles['scholar-captcha-banner']}>
-                    CAPTCHA detected — please solve it below. Scan will resume automatically, or close Webview and click Resume.
+                    {t('verification.scholarCaptchaBanner')}
                   </div>
                 )}
                 <div className={styles['scholar-overlay-resizer']} onMouseDown={startOverlayResize} title={t('verification.browser.dragToResize')}>

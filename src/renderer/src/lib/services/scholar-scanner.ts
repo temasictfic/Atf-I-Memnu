@@ -45,8 +45,11 @@ const POLL_AND_EXTRACT_SCRIPT = `
     if (window.location.hostname.indexOf('sorry.google.com') !== -1) return true;
     var title = (document.title || '').toLowerCase();
     if (title.indexOf('sorry') !== -1 || title.indexOf('unusual traffic') !== -1) return true;
+    if (title.indexOf('\\u00fczg\\u00fcn\\u00fcz') !== -1) return true; // "Üzgünüz"
     var bodyText = (document.body && document.body.innerText) || '';
     if (bodyText.indexOf('unusual traffic') !== -1 || bodyText.indexOf('not a robot') !== -1) return true;
+    if (bodyText.indexOf('al\\u0131\\u015f\\u0131lmad\\u0131k trafik') !== -1) return true; // "alışılmadık trafik"
+    if (bodyText.indexOf('robot olmad\\u0131\\u011f\\u0131n\\u0131z') !== -1) return true; // "robot olmadığınız"
     return false;
   }
 
@@ -58,16 +61,86 @@ const POLL_AND_EXTRACT_SCRIPT = `
     return [];
   }
 
-  function extract(items) {
+  // Cap how many of the top candidates we enrich with a full APA citation
+  // from Scholar's "Cite" dialog. Scholar ranks by relevance so the correct
+  // match is almost always in the first few. Each enrichment costs one
+  // same-origin request; bumping this number linearly increases CAPTCHA risk.
+  var MAX_ENRICH = 5;
+  var ENRICH_DELAY_MIN = 400;
+  var ENRICH_DELAY_JITTER = 200;
+
+  async function fetchAPA(cid) {
+    try {
+      var citeUrl = '/scholar?q=info:' + encodeURIComponent(cid) + ':scholar.google.com/&output=cite&hl=en';
+      var resp = await fetch(citeUrl, { credentials: 'same-origin' });
+      if (!resp.ok) return '';
+      var html = await resp.text();
+      // Scholar sometimes serves an interstitial instead of the dialog.
+      var lower = html.toLowerCase();
+      if (lower.indexOf('unusual traffic') !== -1 || lower.indexOf('captcha') !== -1) return '';
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      // Dialog shape varies. Two known forms:
+      //   <tr><th>APA</th><td>citation text</td></tr>
+      //   <div class="gs_cith">APA</div><div class="gs_citr">citation text</div>
+      var labels = doc.querySelectorAll('th, .gs_cith, dt');
+      for (var i = 0; i < labels.length; i++) {
+        var txt = (labels[i].textContent || '').trim();
+        if (txt !== 'APA') continue;
+        var tr = labels[i].closest && labels[i].closest('tr');
+        if (tr) {
+          var td = tr.querySelector('td');
+          var cell = td ? (td.textContent || '').trim() : '';
+          if (cell.length > 20) return cell;
+        }
+        var sib = labels[i].nextElementSibling;
+        if (sib) {
+          var sibText = (sib.textContent || '').trim();
+          if (sibText.length > 20) return sibText;
+        }
+      }
+      // Fallback: all citation rows live under .gs_citr; APA is typically
+      // the second row (MLA, APA, Chicago, Harvard, Vancouver).
+      var rows = doc.querySelectorAll('.gs_citr');
+      if (rows.length >= 2) {
+        var apa = (rows[1].textContent || '').trim();
+        if (apa.length > 20) return apa;
+      }
+      return '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  async function extract(items) {
     var results = [];
     for (var i = 0; i < items.length; i++) {
       var el = items[i];
+      // Prefer the anchor (has href for URL extraction). Fall back to the
+      // .gs_rt heading itself for [ALINTI]/[CITATION]-only entries that
+      // Scholar lists without a clickable link (no DOI, no PDF, just a
+      // cluster record). Skipping these lost correct matches for papers
+      // indexed only via Scholar's citation graph.
       var titleEl = el.querySelector('.gs_rt a')
         || el.querySelector('h3 a')
-        || el.querySelector('a[data-clk]');
+        || el.querySelector('a[data-clk]')
+        || el.querySelector('.gs_rt')
+        || el.querySelector('h3');
       if (!titleEl) continue;
-      var rawTitle = titleEl.textContent || '';
-      var title = rawTitle.replace(/^\\s*\\[.*?\\]\\s*/, '').trim();
+      // Drop the .gs_ctu type markers ("[ALINTI]", "[C]", "[PDF]", "[BOOK]",
+      // etc.) before reading text — they live in a child span inside .gs_rt.
+      var titleText = '';
+      if (titleEl.cloneNode) {
+        var clone = titleEl.cloneNode(true);
+        var markers = clone.querySelectorAll('.gs_ctu, .gs_ct1, .gs_ct2');
+        for (var mk = 0; mk < markers.length; mk++) {
+          markers[mk].parentNode && markers[mk].parentNode.removeChild(markers[mk]);
+        }
+        titleText = clone.textContent || '';
+      } else {
+        titleText = titleEl.textContent || '';
+      }
+      // Also strip any leading "[...]" prefixes left over (multiple possible).
+      var title = titleText.replace(/^\\s*(?:\\[[^\\]]*\\]\\s*)+/, '').trim();
       if (!title) continue;
       var url = titleEl.href || '';
       var metaEl = el.querySelector('.gs_a');
@@ -88,7 +161,25 @@ const POLL_AND_EXTRACT_SCRIPT = `
       }
       var snippetEl = el.querySelector('.gs_rs');
       var snippet = snippetEl ? (snippetEl.textContent || '').trim() : '';
-      results.push({ title: title, authors: authors, year: year, doi: doi, url: url, snippet: snippet });
+      var result = {
+        title: title, authors: authors, year: year, doi: doi,
+        url: url, snippet: snippet, apa_citation: ''
+      };
+
+      if (i < MAX_ENRICH) {
+        var cidEl = el.closest ? (el.closest('[data-cid]') || el) : el;
+        var cid = cidEl && cidEl.getAttribute ? cidEl.getAttribute('data-cid') : null;
+        if (cid) {
+          var apa = await fetchAPA(cid);
+          if (apa) result.apa_citation = apa;
+          if (i < MAX_ENRICH - 1 && i < items.length - 1) {
+            await new Promise(function(r) {
+              setTimeout(r, ENRICH_DELAY_MIN + Math.random() * ENRICH_DELAY_JITTER);
+            });
+          }
+        }
+      }
+      results.push(result);
     }
     return results;
   }
@@ -100,7 +191,7 @@ const POLL_AND_EXTRACT_SCRIPT = `
   while (Date.now() < DEADLINE) {
     if (detectCaptcha()) return { captcha: true, results: [] };
     var items = findItems();
-    if (items.length > 0) return { captcha: false, results: extract(items) };
+    if (items.length > 0) return { captcha: false, results: await extract(items) };
     await new Promise(function(r) { setTimeout(r, 100); });
   }
   // Timed out. Re-check CAPTCHA once more (some Scholar variants render
@@ -313,7 +404,12 @@ export class ScholarScanner {
         continue
       }
 
-      console.log(`[Scholar] Got ${candidates === 'captcha' ? 'CAPTCHA' : candidates.length + ' candidates'}`)
+      if (candidates !== 'captcha') {
+        const withApa = candidates.filter((c) => c.apa_citation && c.apa_citation.length > 0)
+        console.log(`[Scholar] Got ${candidates.length} candidates (${withApa.length} with APA)`)
+      } else {
+        console.log('[Scholar] Got CAPTCHA')
+      }
 
       if (candidates === 'captcha') {
         this.rateLimiter.onCaptcha()
