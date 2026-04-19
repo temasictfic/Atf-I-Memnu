@@ -24,6 +24,7 @@ import {
   unapproveSources,
   clearSourcesForPdf,
   mergeWithClosest,
+  mergeWithPrevious,
 } from "../../stores/sources-store";
 import {
   clearVerificationForPdf,
@@ -1172,7 +1173,9 @@ export default function ParsingPage() {
     if (e.key === " " && selectedSourceId && selectedPdfId) {
       e.preventDefault();
       const pdfId = selectedPdfId;
-      const newId = mergeWithClosest(pdfId, selectedSourceId);
+      const newId = (e.ctrlKey || e.metaKey)
+        ? mergeWithPrevious(pdfId, selectedSourceId)
+        : mergeWithClosest(pdfId, selectedSourceId);
       if (newId) {
         setSelectedSourceId(newId);
         void saveSources(pdfId).catch((err) => {
@@ -1480,6 +1483,10 @@ export default function ParsingPage() {
                       <span className={styles["hint-desc"]}>{t("parsing.hints.mergeClosest")}</span>
                     </div>
                     <div className={styles["hint-row"]}>
+                      <span className={styles["hint-keys"]}>{t("parsing.hints.ctrlSpace")}</span>
+                      <span className={styles["hint-desc"]}>{t("parsing.hints.mergePrevious")}</span>
+                    </div>
+                    <div className={styles["hint-row"]}>
                       <span className={styles["hint-keys"]}>{t("parsing.hints.ctrlZ")}</span>
                       <span className={styles["hint-desc"]}>{t("parsing.hints.undo")}</span>
                     </div>
@@ -1649,16 +1656,7 @@ export default function ParsingPage() {
                             }}
                             title={source.text || t("parsing.noText")}
                             onMouseDown={(e) => onRectMouseDown(e, source)}
-                          >
-                            <span
-                              className={`${styles["ref-label"]} ${styles["ref-label-cont"]}`}
-                            >
-                              {source.ref_number != null
-                                ? `[${source.ref_number}]`
-                                : "[+]"}{" "}
-                              &#x21B5;
-                            </span>
-                          </div>
+                          />
                         ),
                       )}
                   </div>
