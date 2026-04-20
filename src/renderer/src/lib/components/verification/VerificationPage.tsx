@@ -1819,7 +1819,7 @@ export default function VerificationPage() {
                     src={browserOverlayUrl}
                     partition="persist:scholar-panel"
                     useragent={scholarPanelUserAgent}
-                    allowpopups={true}
+                    {...({ allowpopups: 'true' } as Record<string, string>)}
                   />
                   {findBarOpen && (
                     <div className={styles['find-bar']} role="search">
