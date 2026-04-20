@@ -279,6 +279,15 @@ ipcMain.handle('shell:openExternal', async (_event, url: string) => {
   await shell.openExternal(url)
 })
 
+ipcMain.handle('scholar:clearSession', async () => {
+  const sess = session.fromPartition(SCHOLAR_PARTITION)
+  await sess.clearStorageData()
+  await sess.clearCache()
+  await sess.clearHostResolverCache()
+  await sess.clearAuthCache()
+  return { ok: true }
+})
+
 ipcMain.handle('pdf:read', async (_event, filePath: string): Promise<Uint8Array> => {
   if (typeof filePath !== 'string' || extname(filePath).toLowerCase() !== '.pdf') {
     throw new Error('pdf:read requires a .pdf file path')

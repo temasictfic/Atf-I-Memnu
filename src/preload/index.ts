@@ -19,6 +19,9 @@ const electronAPI = {
   openExternal: (url: string): Promise<void> => {
     return ipcRenderer.invoke('shell:openExternal', url)
   },
+  clearScholarSession: (): Promise<{ ok: boolean }> => {
+    return ipcRenderer.invoke('scholar:clearSession')
+  },
   readPdfFile: (filePath: string): Promise<Uint8Array> => {
     return ipcRenderer.invoke('pdf:read', filePath)
   },

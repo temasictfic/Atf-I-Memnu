@@ -108,7 +108,12 @@
       "folderLabel": "Cache Folder",
       "folderDesc": "Folder where cache files are stored",
       "openedAt": "Opened: {{path}}",
-      "openFailed": "Failed to open cache folder"
+      "openFailed": "Failed to open cache folder",
+      "scholarSessionLabel": "Google Scholar Session",
+      "scholarSessionDesc": "Clear cookies and cache for the Scholar webview. Use this if Google shows \"Sorry...\"",
+      "scholarSessionCleared": "Scholar session cleared",
+      "scholarSessionFailed": "Failed to clear Scholar session",
+      "clear": "Clear"
     }
   },
   "parsing": {

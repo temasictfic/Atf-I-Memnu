@@ -49,6 +49,8 @@ export default function SettingsPage() {
     disconnectOpenaire,
   } = useSettingsStore.getState()
   const [cacheOpenMessage, setCacheOpenMessage] = useState<string | null>(null)
+  const [scholarSessionMessage, setScholarSessionMessage] = useState<string | null>(null)
+  const [scholarSessionBusy, setScholarSessionBusy] = useState(false)
   const [openaireTokenInput, setOpenaireTokenInput] = useState('')
   const [openaireError, setOpenaireError] = useState<string | null>(null)
   const [openaireBusy, setOpenaireBusy] = useState(false)
@@ -92,6 +94,20 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Failed to open cache folder:', error)
       setCacheOpenMessage(t('settings.cache.openFailed'))
+    }
+  }
+
+  const handleClearScholarSession = async () => {
+    setScholarSessionBusy(true)
+    setScholarSessionMessage(null)
+    try {
+      await window.electronAPI.clearScholarSession()
+      setScholarSessionMessage(t('settings.cache.scholarSessionCleared'))
+    } catch (error) {
+      console.error('Failed to clear Scholar session:', error)
+      setScholarSessionMessage(t('settings.cache.scholarSessionFailed'))
+    } finally {
+      setScholarSessionBusy(false)
     }
   }
 
@@ -462,6 +478,24 @@ export default function SettingsPage() {
               {cacheOpenMessage && <span className={styles['action-message']}>{cacheOpenMessage}</span>}
               <button type="button" className={styles['action-button']} onClick={handleOpenCacheFolder}>
                 {t('common.open')}
+              </button>
+            </div>
+          </div>
+
+          <div className={styles['setting-row']}>
+            <div className={styles['setting-info']}>
+              <span className={styles['setting-label']}>{t('settings.cache.scholarSessionLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.cache.scholarSessionDesc')}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {scholarSessionMessage && <span className={styles['action-message']}>{scholarSessionMessage}</span>}
+              <button
+                type="button"
+                className={styles['action-button']}
+                onClick={handleClearScholarSession}
+                disabled={scholarSessionBusy}
+              >
+                {t('settings.cache.clear')}
               </button>
             </div>
           </div>

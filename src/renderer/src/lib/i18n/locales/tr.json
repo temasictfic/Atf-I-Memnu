@@ -108,7 +108,12 @@
       "folderLabel": "Önbellek Klasörü",
       "folderDesc": "Önbellek dosyalarının saklandığı klasör",
       "openedAt": "Açıldı: {{path}}",
-      "openFailed": "Önbellek konumu açılamadı"
+      "openFailed": "Önbellek konumu açılamadı",
+      "scholarSessionLabel": "Google Scholar Oturumu",
+      "scholarSessionDesc": "Scholar webview'ının çerezlerini ve önbelleğini temizler. Google \"Sorry...\" uyarısı gösterdiğinde kullanın",
+      "scholarSessionCleared": "Scholar oturumu temizlendi",
+      "scholarSessionFailed": "Scholar oturumu temizlenemedi",
+      "clear": "Temizle"
     }
   },
   "parsing": {

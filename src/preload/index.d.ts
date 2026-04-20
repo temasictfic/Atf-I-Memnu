@@ -9,6 +9,7 @@ export interface ElectronAPI {
   selectDirectory: () => Promise<string | null>
   selectPdfs: () => Promise<string[]>
   openExternal: (url: string) => Promise<void>
+  clearScholarSession: () => Promise<{ ok: boolean }>
   openCacheFolder: () => Promise<{ ok: boolean; path: string; error: string | null }>
   getBackendPort: () => Promise<number>
   readPdfFile: (filePath: string) => Promise<Uint8Array>
