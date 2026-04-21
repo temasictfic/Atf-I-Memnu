@@ -14,9 +14,6 @@
   },
   "app": {
     "windowTitle": "ARDEB · Reference Control System",
-    "brandLine1": "REFERENCE",
-    "brandLine2": "CONTROL",
-    "brandLine3": "SYSTEM",
     "tabs": {
       "parsing": "Parsing",
       "verification": "Verification",

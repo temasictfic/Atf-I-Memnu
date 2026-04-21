@@ -6,8 +6,8 @@
 // run can be diffed and reverted.
 //
 // Targets:
-//   - ardeb-logo.png: rendered at height ~46 px in the header brand area.
-//     Resize to 256 px on the long side so it still looks crisp on HiDPI.
+//   - tubitak-yatay.png: rendered ~228×40 px in the header brand area.
+//     Resize to 512 px wide so it still looks crisp on HiDPI.
 //   - icon.png: rendered as a small status badge. Resize to 128x128.
 
 import sharp from 'sharp'
@@ -20,7 +20,7 @@ const assetsDir = resolve(__dirname, '..', 'src', 'renderer', 'src', 'assets')
 
 /** @type {{ file: string, width: number, height?: number }[]} */
 const jobs = [
-  { file: 'ardeb-logo.png', width: 256 },
+  { file: 'tubitak-yatay.png', width: 512 },
   { file: 'icon.png', width: 128, height: 128 },
 ]
 

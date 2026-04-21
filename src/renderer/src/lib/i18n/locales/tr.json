@@ -14,9 +14,6 @@
   },
   "app": {
     "windowTitle": "ARDEB · Kaynakça Kontrol Sistemi",
-    "brandLine1": "KAYNAKÇA",
-    "brandLine2": "KONTROL",
-    "brandLine3": "SİSTEMİ",
     "tabs": {
       "parsing": "Ayrıştırma",
       "verification": "Doğrulama",
