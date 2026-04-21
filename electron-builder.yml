@@ -1,5 +1,5 @@
 appId: com.atfimemnu.app
-productName: Atf-I Memnu
+productName: Kaynakça Kontrol Sistemi
 directories:
   output: dist
   buildResources: resources
@@ -17,7 +17,7 @@ electronLanguages:
   - tr
 win:
   icon: icon.ico
-  artifactName: "Atf-I-Memnu-${version}.${ext}"
+  artifactName: "Kaynakca-Kontrol-Sistemi-${version}.${ext}"
   target:
     - target: nsis
       arch:
@@ -26,7 +26,7 @@ win:
       arch:
         - x64
 nsis:
-  artifactName: "Atf-I-Memnu-Setup-${version}.${ext}"
+  artifactName: "Kaynakca-Kontrol-Sistemi-Setup-${version}.${ext}"
   installerIcon: icon.ico
   uninstallerIcon: icon.ico
   installerHeaderIcon: icon.ico
