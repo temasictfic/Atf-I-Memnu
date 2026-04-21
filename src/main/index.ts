@@ -165,7 +165,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1000,
     minHeight: 700,
-    title: 'Atf-ı Memnu - Atfı arayan bir atıf uygulaması...',
+    title: 'ARDEB · Kaynakça Kontrol Sistemi',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

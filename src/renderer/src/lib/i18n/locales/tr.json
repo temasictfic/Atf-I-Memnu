@@ -13,7 +13,10 @@
     "delete": "Sil"
   },
   "app": {
-    "windowTitle": "Atf-ı Memnu - Atfı arayan bir atıf uygulaması...",
+    "windowTitle": "ARDEB · Kaynakça Kontrol Sistemi",
+    "brandLine1": "KAYNAKÇA",
+    "brandLine2": "KONTROL",
+    "brandLine3": "SİSTEMİ",
     "tabs": {
       "parsing": "Ayrıştırma",
       "verification": "Doğrulama",

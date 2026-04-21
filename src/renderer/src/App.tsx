@@ -9,7 +9,7 @@ import VerificationPage from './lib/components/verification/VerificationPage'
 import SettingsPage from './lib/components/settings/SettingsPage'
 import UpdateNotification from './lib/components/shared/UpdateNotification'
 import iconUrl from './assets/icon.png'
-import headerLogoUrl from './assets/atfımemnu-header.png'
+import ardebLogoUrl from './assets/ardeb-logo.png'
 import styles from './App.module.css'
 
 type TabId = 'parsing' | 'verification' | 'settings'
@@ -73,7 +73,12 @@ export default function App() {
         <div className={styles['header-inner']}>
           {/* Brand */}
           <div className={styles['brand']}>
-            <img src={headerLogoUrl} alt="Atf-ı Memnu" className={styles['brand-image']} />
+            <img src={ardebLogoUrl} alt="ARDEB" className={styles['brand-logo']} />
+            <div className={styles['brand-text']}>
+              <span className={styles['brand-subtitle']}>{t('app.brandLine1')}</span>
+              <span className={styles['brand-subtitle']}>{t('app.brandLine2')}</span>
+              <span className={styles['brand-subtitle']}>{t('app.brandLine3')}</span>
+            </div>
           </div>
 
           {/* Tabs */}

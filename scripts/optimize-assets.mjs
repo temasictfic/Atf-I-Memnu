@@ -6,8 +6,8 @@
 // run can be diffed and reverted.
 //
 // Targets:
-//   - atfımemnu-header.png: rendered at height 54 px (~200 px on 4x DPI).
-//     Resize to 1200 px wide so it still looks crisp on any monitor.
+//   - ardeb-logo.png: rendered at height ~46 px in the header brand area.
+//     Resize to 256 px on the long side so it still looks crisp on HiDPI.
 //   - icon.png: rendered as a small status badge. Resize to 128x128.
 
 import sharp from 'sharp'
@@ -20,7 +20,7 @@ const assetsDir = resolve(__dirname, '..', 'src', 'renderer', 'src', 'assets')
 
 /** @type {{ file: string, width: number, height?: number }[]} */
 const jobs = [
-  { file: 'atfımemnu-header.png', width: 1200 },
+  { file: 'ardeb-logo.png', width: 256 },
   { file: 'icon.png', width: 128, height: 128 },
 ]
 
