@@ -168,6 +168,8 @@ export interface ScholarCandidate {
   url: string
   snippet?: string
   apa_citation?: string
+  scraped_truncated?: boolean
+  cid?: string
 }
 
 export interface ScoreScholarResponse {

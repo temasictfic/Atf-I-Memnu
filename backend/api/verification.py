@@ -304,6 +304,8 @@ class ScholarCandidate(BaseModel):
     doi: str | None = None
     url: str = ""
     apa_citation: str = ""
+    scraped_truncated: bool = False
+    cid: str = ""
 
 
 class ScoreScholarRequest(BaseModel):

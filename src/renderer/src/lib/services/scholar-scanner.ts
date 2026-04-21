@@ -61,57 +61,7 @@ const POLL_AND_EXTRACT_SCRIPT = `
     return [];
   }
 
-  // Cap how many of the top candidates we enrich with a full APA citation
-  // from Scholar's "Cite" dialog. Scholar ranks by relevance so the correct
-  // match is almost always in the first few. Each enrichment costs one
-  // same-origin request; bumping this number linearly increases CAPTCHA risk.
-  var MAX_ENRICH = 5;
-  var ENRICH_DELAY_MIN = 400;
-  var ENRICH_DELAY_JITTER = 200;
-
-  async function fetchAPA(cid) {
-    try {
-      var citeUrl = '/scholar?q=info:' + encodeURIComponent(cid) + ':scholar.google.com/&output=cite&hl=en';
-      var resp = await fetch(citeUrl, { credentials: 'same-origin' });
-      if (!resp.ok) return '';
-      var html = await resp.text();
-      // Scholar sometimes serves an interstitial instead of the dialog.
-      var lower = html.toLowerCase();
-      if (lower.indexOf('unusual traffic') !== -1 || lower.indexOf('captcha') !== -1) return '';
-      var doc = new DOMParser().parseFromString(html, 'text/html');
-      // Dialog shape varies. Two known forms:
-      //   <tr><th>APA</th><td>citation text</td></tr>
-      //   <div class="gs_cith">APA</div><div class="gs_citr">citation text</div>
-      var labels = doc.querySelectorAll('th, .gs_cith, dt');
-      for (var i = 0; i < labels.length; i++) {
-        var txt = (labels[i].textContent || '').trim();
-        if (txt !== 'APA') continue;
-        var tr = labels[i].closest && labels[i].closest('tr');
-        if (tr) {
-          var td = tr.querySelector('td');
-          var cell = td ? (td.textContent || '').trim() : '';
-          if (cell.length > 20) return cell;
-        }
-        var sib = labels[i].nextElementSibling;
-        if (sib) {
-          var sibText = (sib.textContent || '').trim();
-          if (sibText.length > 20) return sibText;
-        }
-      }
-      // Fallback: all citation rows live under .gs_citr; APA is typically
-      // the second row (MLA, APA, Chicago, Harvard, Vancouver).
-      var rows = doc.querySelectorAll('.gs_citr');
-      if (rows.length >= 2) {
-        var apa = (rows[1].textContent || '').trim();
-        if (apa.length > 20) return apa;
-      }
-      return '';
-    } catch (e) {
-      return '';
-    }
-  }
-
-  async function extract(items) {
+  function extract(items) {
     var results = [];
     for (var i = 0; i < items.length; i++) {
       var el = items[i];
@@ -161,25 +111,19 @@ const POLL_AND_EXTRACT_SCRIPT = `
       }
       var snippetEl = el.querySelector('.gs_rs');
       var snippet = snippetEl ? (snippetEl.textContent || '').trim() : '';
-      var result = {
+      // "…" (U+2026) in any scraped field signals Scholar truncation —
+      // title can be cut, .gs_a authors/journal line often is. TS-side
+      // uses this to decide whether to fetch APA for this one candidate.
+      var scrapedTruncated =
+        title.indexOf('\\u2026') !== -1 ||
+        metaText.indexOf('\\u2026') !== -1;
+      var cidEl = el.closest ? (el.closest('[data-cid]') || el) : el;
+      var cid = (cidEl && cidEl.getAttribute) ? (cidEl.getAttribute('data-cid') || '') : '';
+      results.push({
         title: title, authors: authors, year: year, doi: doi,
-        url: url, snippet: snippet, apa_citation: ''
-      };
-
-      if (i < MAX_ENRICH) {
-        var cidEl = el.closest ? (el.closest('[data-cid]') || el) : el;
-        var cid = cidEl && cidEl.getAttribute ? cidEl.getAttribute('data-cid') : null;
-        if (cid) {
-          var apa = await fetchAPA(cid);
-          if (apa) result.apa_citation = apa;
-          if (i < MAX_ENRICH - 1 && i < items.length - 1) {
-            await new Promise(function(r) {
-              setTimeout(r, ENRICH_DELAY_MIN + Math.random() * ENRICH_DELAY_JITTER);
-            });
-          }
-        }
-      }
-      results.push(result);
+        url: url, snippet: snippet, apa_citation: '',
+        scraped_truncated: scrapedTruncated, cid: cid
+      });
     }
     return results;
   }
@@ -191,7 +135,7 @@ const POLL_AND_EXTRACT_SCRIPT = `
   while (Date.now() < DEADLINE) {
     if (detectCaptcha()) return { captcha: true, results: [] };
     var items = findItems();
-    if (items.length > 0) return { captcha: false, results: await extract(items) };
+    if (items.length > 0) return { captcha: false, results: extract(items) };
     await new Promise(function(r) { setTimeout(r, 100); });
   }
   // Timed out. Re-check CAPTCHA once more (some Scholar variants render
@@ -241,6 +185,70 @@ class ScholarRateLimiter {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// Cheap token-overlap similarity used to pick the single best candidate
+// to enrich with APA. This is not the authoritative score — the backend
+// does proper scoring — but it's a good-enough ranker to decide which
+// cid (if any) is worth paying the extra Scholar request for.
+function quickTitleScore(candTitle: string, refText: string): number {
+  const norm = (s: string): string[] =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+  const a = norm(candTitle)
+  const b = norm(refText)
+  if (!a.length || !b.length) return 0
+  const refSet = new Set(b)
+  let overlap = 0
+  for (const tok of a) if (refSet.has(tok)) overlap++
+  return overlap / Math.max(a.length, b.length)
+}
+
+// Standalone script that fetches the APA citation for a single cid via
+// Scholar's "Cite" dialog. Runs as a same-origin fetch inside the webview
+// so cookies attach automatically. Returns '' on CAPTCHA / parse failure;
+// callers always fall back to the scraped fields in that case.
+function buildFetchApaScript(cid: string): string {
+  const safeCid = cid.replace(/[^A-Za-z0-9_-]/g, '')
+  return `
+(async function() {
+  try {
+    var citeUrl = '/scholar?q=info:' + ${JSON.stringify(safeCid)} + ':scholar.google.com/&output=cite&hl=en';
+    var resp = await fetch(citeUrl, { credentials: 'same-origin' });
+    if (!resp.ok) return '';
+    var html = await resp.text();
+    var lower = html.toLowerCase();
+    if (lower.indexOf('unusual traffic') !== -1 || lower.indexOf('captcha') !== -1) return '';
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var labels = doc.querySelectorAll('th, .gs_cith, dt');
+    for (var i = 0; i < labels.length; i++) {
+      var txt = (labels[i].textContent || '').trim();
+      if (txt !== 'APA') continue;
+      var tr = labels[i].closest && labels[i].closest('tr');
+      if (tr) {
+        var td = tr.querySelector('td');
+        var cell = td ? (td.textContent || '').trim() : '';
+        if (cell.length > 20) return cell;
+      }
+      var sib = labels[i].nextElementSibling;
+      if (sib) {
+        var sibText = (sib.textContent || '').trim();
+        if (sibText.length > 20) return sibText;
+      }
+    }
+    var rows = doc.querySelectorAll('.gs_citr');
+    if (rows.length >= 2) {
+      var apa = (rows[1].textContent || '').trim();
+      if (apa.length > 20) return apa;
+    }
+    return '';
+  } catch (e) {
+    return '';
+  }
+})()`
 }
 
 // --- Scanner ---
@@ -404,19 +412,41 @@ export class ScholarScanner {
         continue
       }
 
-      if (candidates !== 'captcha') {
-        const withApa = candidates.filter((c) => c.apa_citation && c.apa_citation.length > 0)
-        console.log(`[Scholar] Got ${candidates.length} candidates (${withApa.length} with APA)`)
-      } else {
-        console.log('[Scholar] Got CAPTCHA')
-      }
-
       if (candidates === 'captcha') {
+        console.log('[Scholar] Got CAPTCHA')
         this.rateLimiter.onCaptcha()
         this.setStatus('captcha')
         this.callbacks?.onCaptcha(url)
         return // Will resume from resumeAfterCaptcha()
       }
+
+      // Pick the single best candidate via cheap token-overlap similarity
+      // and, only if its scraped data is truncated ("…" in title/authors/
+      // journal), pay one extra Scholar request to fetch its APA citation.
+      // Previous behaviour enriched top 5 — that multiplied Scholar traffic
+      // by ~6x and drove CAPTCHA frequency up; this targets the 0-1 fetches
+      // that actually matter for scoring accuracy.
+      let enrichedCount = 0
+      if (candidates.length > 0) {
+        let topIdx = 0
+        let topScore = -1
+        for (let i = 0; i < candidates.length; i++) {
+          const s = quickTitleScore(candidates[i].title, item.searchText)
+          if (s > topScore) {
+            topScore = s
+            topIdx = i
+          }
+        }
+        const top = candidates[topIdx]
+        if (top.scraped_truncated && top.cid) {
+          const apa = await this.fetchApaForCid(top.cid)
+          if (apa) {
+            top.apa_citation = apa
+            enrichedCount = 1
+          }
+        }
+      }
+      console.log(`[Scholar] Got ${candidates.length} candidates (${enrichedCount} with APA)`)
 
       // Kick off scoring in the background. Crucially, we also pre-reserve
       // the next iteration's rate-limit slot right now so that its 4–7 s
@@ -448,6 +478,24 @@ export class ScholarScanner {
     }
 
     if (!this.cancelRequested) this.setStatus('done')
+  }
+
+  // Fetch APA citation for one cid via a short same-origin request inside
+  // the active webview. Returns '' on timeout / CAPTCHA / parse failure —
+  // caller falls back to scraped fields. Budgeted to 10 s so a stalled
+  // fetch doesn't block the next page load.
+  private async fetchApaForCid(cid: string): Promise<string> {
+    const view = this.webview
+    if (!view || typeof view.executeJavaScript !== 'function') return ''
+    try {
+      const script = buildFetchApaScript(cid)
+      const run = view.executeJavaScript(script) as Promise<string>
+      const timeout = new Promise<string>((resolve) => setTimeout(() => resolve(''), 10000))
+      const result = await Promise.race([run, timeout])
+      return typeof result === 'string' ? result : ''
+    } catch {
+      return ''
+    }
   }
 
   private loadAndExtract(url: string): Promise<ScholarCandidate[] | 'captcha'> {
