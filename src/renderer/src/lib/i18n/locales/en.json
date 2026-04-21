@@ -156,8 +156,6 @@
       "del": "Del",
       "removeSource": "Remove source",
       "space": "Space",
-      "mergeClosest": "Merge with closest",
-      "ctrlSpace": "Ctrl + Space",
       "mergePrevious": "Merge as continuation of previous",
       "ctrlZ": "Ctrl + Z",
       "undo": "Undo",

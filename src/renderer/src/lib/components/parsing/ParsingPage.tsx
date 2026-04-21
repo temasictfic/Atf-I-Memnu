@@ -23,7 +23,6 @@ import {
   approveSources,
   unapproveSources,
   clearSourcesForPdf,
-  mergeWithClosest,
   mergeWithPrevious,
 } from "../../stores/sources-store";
 import {
@@ -1173,9 +1172,7 @@ export default function ParsingPage() {
     if (e.key === " " && selectedSourceId && selectedPdfId) {
       e.preventDefault();
       const pdfId = selectedPdfId;
-      const newId = (e.ctrlKey || e.metaKey)
-        ? mergeWithPrevious(pdfId, selectedSourceId)
-        : mergeWithClosest(pdfId, selectedSourceId);
+      const newId = mergeWithPrevious(pdfId, selectedSourceId);
       if (newId) {
         setSelectedSourceId(newId);
         void saveSources(pdfId).catch((err) => {
@@ -1480,10 +1477,6 @@ export default function ParsingPage() {
                     </div>
                     <div className={styles["hint-row"]}>
                       <span className={styles["hint-keys"]}>{t("parsing.hints.space")}</span>
-                      <span className={styles["hint-desc"]}>{t("parsing.hints.mergeClosest")}</span>
-                    </div>
-                    <div className={styles["hint-row"]}>
-                      <span className={styles["hint-keys"]}>{t("parsing.hints.ctrlSpace")}</span>
                       <span className={styles["hint-desc"]}>{t("parsing.hints.mergePrevious")}</span>
                     </div>
                     <div className={styles["hint-row"]}>
@@ -1521,9 +1514,7 @@ export default function ParsingPage() {
                   e.preventDefault();
                   onPageClick();
                 }
-                // Space is handled by the parent onKeyDown:
-                // - if a source is selected: merge with closest
-                // - otherwise: do nothing (let parent handle clearing if needed)
+                // Space is handled by the parent onKeyDown
               }}
             >
               <div

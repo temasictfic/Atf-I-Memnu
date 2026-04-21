@@ -156,8 +156,6 @@
       "del": "Sil",
       "removeSource": "Referansı kaldır",
       "space": "Boşluk",
-      "mergeClosest": "En yakınla birleştir",
-      "ctrlSpace": "Ctrl + Boşluk",
       "mergePrevious": "Önceki referansın devamı olarak birleştir",
       "ctrlZ": "Ctrl + Z",
       "undo": "Geri al",
