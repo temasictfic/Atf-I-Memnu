@@ -141,7 +141,7 @@ def determine_verification_status(
 
     # Year check (only if both have years)
     if source.year and best_match.year:
-        if abs(source.year - best_match.year) > 1:
+        if abs(source.year - best_match.year) >= 1:
             tags.append("!year")
 
     # Source venue check (journal / conference / book / etc.) — informational
