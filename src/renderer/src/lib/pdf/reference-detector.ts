@@ -7,6 +7,7 @@
 
 import type { BoundingBox, SourceRectangle } from '../api/types'
 import type { ParsedPdf, TextBlock } from './types'
+import { makeSourceId } from '../utils/source-id'
 
 // -------------------------------------------------------------------------
 // Patterns (transliterated from reference_detector.py)
@@ -585,12 +586,13 @@ function createSourceRectangle(
     bboxes.push({ x0, y0, x1, y1, page: pageNum })
   }
 
+  const trimmed = text.trim()
   return {
-    id: `${pdfId}_ref_${refNum}`,
+    id: makeSourceId(pdfId, trimmed),
     pdf_id: pdfId,
     bbox: bboxes[0],
     bboxes: bboxes.length > 1 ? bboxes : [],
-    text: text.trim(),
+    text: trimmed,
     ref_number: refNum ?? undefined,
     status: 'detected',
   }

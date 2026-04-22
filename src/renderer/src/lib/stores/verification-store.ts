@@ -379,31 +379,19 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         }
       }
 
-      // Detect if source IDs changed (add/delete causes renumbering)
-      const prevOrderSet = new Set(prevOrder)
-      const idsChanged = currentSourceIds.size !== prevOrderSet.size
-        || [...currentSourceIds].some(id => !prevOrderSet.has(id))
-
-      // If IDs shifted, clear verify results — they'd map to wrong sources
-      // If IDs are the same, check for text changes and clear affected entries
+      // IDs are content-addressed: any text edit or merge produces a new
+      // ID that isn't in the results map, so filtering by ID presence is
+      // enough to drop stale entries. Unrelated references keep their
+      // cached best_match across parse fixes instead of being wiped.
       let updatedResults = state.resultsByPdf
       const pdfResults = state.resultsByPdf[pdfId]
       if (pdfResults) {
-        if (idsChanged) {
-          updatedResults = { ...state.resultsByPdf, [pdfId]: {} }
-        } else {
-          // Keep results only for sources whose text hasn't changed
-          const cleaned: Record<string, VerificationResult> = {}
-          for (const source of sources) {
-            const prevOrig = state.sourceOriginalTexts[source.id]
-            const cleanedSourceText = sanitizeReferenceText(source.text)
-            if (pdfResults[source.id] && prevOrig === cleanedSourceText) {
-              cleaned[source.id] = pdfResults[source.id]
-            }
-          }
-          if (Object.keys(cleaned).length !== Object.keys(pdfResults).length) {
-            updatedResults = { ...state.resultsByPdf, [pdfId]: cleaned }
-          }
+        const cleaned: Record<string, VerificationResult> = {}
+        for (const id of currentSourceIds) {
+          if (pdfResults[id]) cleaned[id] = pdfResults[id]
+        }
+        if (Object.keys(cleaned).length !== Object.keys(pdfResults).length) {
+          updatedResults = { ...state.resultsByPdf, [pdfId]: cleaned }
         }
       }
 

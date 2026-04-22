@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { SourceRectangle } from '../api/types'
 import { api } from '../api/rest-client'
+import { makeSourceId } from '../utils/source-id'
 import { usePdfStore } from './pdf-store'
 
 interface SourcesState {
@@ -55,11 +56,18 @@ function renumberSources(pdfId: string): void {
       if (a.bbox.page !== b.bbox.page) return a.bbox.page - b.bbox.page
       return a.bbox.y0 - b.bbox.y0
     })
-    const renumbered = sorted.map((s, i) => ({
-      ...s,
-      ref_number: i + 1,
-      id: `${pdfId}_ref_${i + 1}`,
-    }))
+    // IDs are content-addressed: hash(text) keeps entries stable across
+    // merge/delete/reorder unless the text itself changes, so verification
+    // cache entries stay attached to the right reference. Duplicates in one
+    // PDF get `_2`, `_3` appended in reading order — deterministic.
+    const seen = new Map<string, number>()
+    const renumbered = sorted.map((s, i) => {
+      const base = makeSourceId(pdfId, s.text)
+      const n = (seen.get(base) ?? 0) + 1
+      seen.set(base, n)
+      const id = n > 1 ? `${base}_${n}` : base
+      return { ...s, ref_number: i + 1, id }
+    })
     return { sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: renumbered } }
   })
 }
@@ -235,6 +243,11 @@ export function updateRectangle(pdfId: string, sourceId: string, updates: Partia
       ),
     },
   }))
+  // Text edits produce a new content-hash ID; let renumberSources rehash
+  // and dedup. Bbox/status-only updates stay stable.
+  if (updates.text !== undefined) {
+    renumberSources(pdfId)
+  }
   autoUnapproveOnEdit(pdfId)
 }
 
