@@ -278,6 +278,7 @@ export function revert(pdfId: string): void {
     }
   })
   updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  autoUnapproveOnEdit(pdfId)
 }
 
 export function canRevert(pdfId: string): boolean {
@@ -304,6 +305,7 @@ export async function revertToOriginal(pdfId: string): Promise<void> {
   } catch (e) {
     console.error('Failed to persist revert:', e)
   }
+  autoUnapproveOnEdit(pdfId)
 }
 
 export async function saveSources(pdfId: string): Promise<void> {
