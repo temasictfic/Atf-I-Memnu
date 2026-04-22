@@ -392,20 +392,34 @@ ipcMain.on('update:install', () => {
   autoUpdater.quitAndInstall()
 })
 
-// App lifecycle
-app.whenReady().then(async () => {
-  Menu.setApplicationMenu(null)
-  configureScholarPanelSession()
-  createWindow()
-  ensureBackendStarted()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
-    }
-    ensureBackendStarted()
+// Enforce a single running instance. A second launch (double-clicking the exe
+// again) would otherwise spawn a duplicate backend that fights for the same
+// port and confuses auto-update. Instead, surface the existing window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
   })
-})
+
+  // App lifecycle
+  app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null)
+    configureScholarPanelSession()
+    createWindow()
+    ensureBackendStarted()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow()
+      }
+      ensureBackendStarted()
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
   stopPythonBackend()
