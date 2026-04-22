@@ -163,6 +163,19 @@ function wrapTextFirstIndent(text: string, font: PDFFont, sz: number,
   return lines
 }
 
+/** Truncate a single-line string with an ellipsis so it fits within maxW. */
+function truncateToWidth(text: string, font: PDFFont, sz: number, maxW: number): string {
+  if (font.widthOfTextAtSize(text, sz) <= maxW) return text
+  const ellipsis = '…'
+  let lo = 0, hi = text.length
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2)
+    if (font.widthOfTextAtSize(text.slice(0, mid) + ellipsis, sz) <= maxW) lo = mid
+    else hi = mid - 1
+  }
+  return text.slice(0, lo) + ellipsis
+}
+
 function san(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
@@ -328,7 +341,7 @@ function measureCard(m: ReportBestMatch, src: ReportSource, rf: PDFFont, bf: PDF
   if (journalLines.length) h += 2 + journalLines.length * lh
   if (metaLine) h += 2 + lh
   h += 3 + lh // db + score
-  if (urlLine) h += 2 + wrapText(san(urlLine), rf, TINY_SIZE, CARD_INNER_W).length * tlh
+  if (urlLine) h += 2 + tlh
   // Google Scholar + Google Search links (side by side, one row)
   if (src.scholarUrl || src.googleUrl) h += tlh
   h += CARD_PAD
@@ -554,18 +567,16 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
       })
       w.skip(SMALL_SIZE * LH)
 
-      // URL (underlined, clickable)
+      // URL (underlined, clickable) — truncated to a single line
       if (m.url) {
         w.skip(2)
-        const urlLines = wrapText(san(m.url), rf, TINY_SIZE, CARD_INNER_W)
-        for (const uline of urlLines) {
-          const uy = w.y - TINY_SIZE
-          w.pg.drawText(san(uline), { x: ccx, y: uy, size: TINY_SIZE, font: rf, color: COLOR_LINK })
-          const uw = rf.widthOfTextAtSize(san(uline), TINY_SIZE)
-          w.pg.drawLine({ start: { x: ccx, y: uy - 1 }, end: { x: ccx + uw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
-          w.skip(TINY_SIZE * LH)
-        }
-        w.addLink(m.url, ccx, w.y, rf.widthOfTextAtSize(san(urlLines[0]), TINY_SIZE), urlLines.length * TINY_SIZE * LH)
+        const displayUrl = truncateToWidth(san(m.url), rf, TINY_SIZE, CARD_INNER_W)
+        const uy = w.y - TINY_SIZE
+        w.pg.drawText(displayUrl, { x: ccx, y: uy, size: TINY_SIZE, font: rf, color: COLOR_LINK })
+        const uw = rf.widthOfTextAtSize(displayUrl, TINY_SIZE)
+        w.pg.drawLine({ start: { x: ccx, y: uy - 1 }, end: { x: ccx + uw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
+        w.skip(TINY_SIZE * LH)
+        w.addLink(m.url, ccx, w.y, uw, TINY_SIZE * LH)
       }
 
       // Google Scholar + Google Search links side by side (clickable)
