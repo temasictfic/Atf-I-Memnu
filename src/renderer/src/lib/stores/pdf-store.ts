@@ -153,7 +153,7 @@ export const usePdfStore = create<PdfState>()((set, _get) => ({
   toggleParsingSort: (key) =>
     set(state => {
       if (state.parsingSortKey === key) return { parsingSortAsc: !state.parsingSortAsc }
-      return { parsingSortKey: key, parsingSortAsc: true }
+      return { parsingSortKey: key, parsingSortAsc: false }
     }),
 
   addPdf: (pdf) =>
