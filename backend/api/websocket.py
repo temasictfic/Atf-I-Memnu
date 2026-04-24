@@ -15,24 +15,24 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.connections.append(websocket)
-        print(f"[WS] Client connected. Total: {len(self.connections)}", flush=True)
+        # print(f"[WS] Client connected. Total: {len(self.connections)}", flush=True)
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.connections:
             self.connections.remove(websocket)
-        print(f"[WS] Client disconnected. Total: {len(self.connections)}", flush=True)
+        # print(f"[WS] Client disconnected. Total: {len(self.connections)}", flush=True)
 
     async def broadcast(self, event_type: str, data: dict[str, Any]):
         message = json.dumps({"type": event_type, "data": data})
-        if event_type.startswith("verify_"):
-            print(f"[WS Broadcast] {event_type} to {len(self.connections)} client(s)", flush=True)
+        # if event_type.startswith("verify_"):
+        #     print(f"[WS Broadcast] {event_type} to {len(self.connections)} client(s)", flush=True)
         disconnected = []
         async with self._send_lock:
             for ws in self.connections:
                 try:
                     await ws.send_text(message)
                 except Exception as e:
-                    print(f"[WS Broadcast] Send failed: {type(e).__name__}: {e}", flush=True)
+                    # print(f"[WS Broadcast] Send failed: {type(e).__name__}: {e}", flush=True)
                     disconnected.append(ws)
         for ws in disconnected:
             self.disconnect(ws)

@@ -170,7 +170,7 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     },
 
     resumeAfterCaptcha: () => {
-      console.log('[Scholar] Store: resumeAfterCaptcha triggered')
+      // console.log('[Scholar] Store: resumeAfterCaptcha triggered')
       set({ captchaUrl: null })
       scholarScanner.resumeAfterCaptcha()
     },

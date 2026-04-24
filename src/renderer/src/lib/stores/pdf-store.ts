@@ -58,23 +58,23 @@ function flushParseLog(): void {
     : `[Parsed] ${totalSources}`
   const labelColor = allCached ? 'color: #60a5fa; font-weight: bold' : 'color: #a78bfa; font-weight: bold'
 
-  console.group(`%c${label}`, labelColor)
-
-  for (const entry of parseBuffer) {
-    if (entry.error) {
-      console.groupCollapsed(`%c${entry.pdfName}`, 'color: #ef4444')
-      console.log(`%c\u2715 Parse error: ${entry.error}`, 'color: #ef4444')
-      console.groupEnd()
-    } else if (entry.fromCache) {
-      console.log(`%c${entry.pdfName}`, 'color: #a8a29e')
-    } else {
-      console.groupCollapsed(`%c${entry.pdfName}`, 'color: #22c55e')
-      console.log(`%c\u2713 ${entry.sourceCount} sources detected`, 'color: #22c55e')
-      console.groupEnd()
-    }
-  }
-
-  console.groupEnd()
+  // console.group(`%c${label}`, labelColor)
+  //
+  // for (const entry of parseBuffer) {
+  //   if (entry.error) {
+  //     console.groupCollapsed(`%c${entry.pdfName}`, 'color: #ef4444')
+  //     console.log(`%c\u2715 Parse error: ${entry.error}`, 'color: #ef4444')
+  //     console.groupEnd()
+  //   } else if (entry.fromCache) {
+  //     console.log(`%c${entry.pdfName}`, 'color: #a8a29e')
+  //   } else {
+  //     console.groupCollapsed(`%c${entry.pdfName}`, 'color: #22c55e')
+  //     console.log(`%c\u2713 ${entry.sourceCount} sources detected`, 'color: #22c55e')
+  //     console.groupEnd()
+  //   }
+  // }
+  //
+  // console.groupEnd()
   parseBuffer.length = 0
 }
 
