@@ -45,13 +45,29 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
     # 4. URL match (covers doi, arXiv, and other URLs)
     details.url_match = _urls_match(source, candidate)
 
-    # Composite score — adjust weights based on parse confidence.
-    # NOTE: per Phase 4, DOI/arXiv match alone no longer guarantees a "found"
-    # status — title+author still must verify. Composite reflects that here.
+    # Base composite — title+author weighted mix, falling back to title-only
+    # when the reference was parsed with low confidence or has no authors.
     if source.parse_confidence < 0.3 or source.authors == []:
-        composite = title_score
+        base = title_score
     else:
-        composite = title_score * 0.75 + author_score * 0.25
+        base = title_score * 0.75 + author_score * 0.25
+
+    # Field-match bonuses: +0.10 each when source HAS the field AND it matches
+    # the candidate. Gated on "source has field" so missing metadata can't
+    # silently inflate a score. Final composite clamped to [0, 1].
+    bonus = 0.0
+    if source.year and candidate.get("year") and abs(source.year - candidate["year"]) <= 1:
+        bonus += 0.10
+
+    src_venue = (source.source or "").strip()
+    cand_venue = (candidate.get("journal") or "").strip()
+    if src_venue and cand_venue and _venues_match(src_venue, cand_venue):
+        bonus += 0.10
+
+    if (source.doi or source.arxiv_id) and details.url_match:
+        bonus += 0.10
+
+    composite = max(0.0, min(1.0, base + bonus))
 
     return MatchResult(
         database=candidate.get("database", ""),
@@ -92,9 +108,16 @@ def determine_status(score: float) -> str:
         return "black"
 
 
-# Thresholds for the 3-category determination
-TITLE_FOUND_THRESHOLD = 0.85
-TITLE_PROBLEMATIC_THRESHOLD = 0.75
+# Title threshold used for the !title tag and the trust-rule "title_matches"
+# definition.
+TITLE_MATCH_THRESHOLD = 0.85
+
+# Composite-score bands for the three-way status.
+#   score >= 0.75  → "found"       (UI: Well / İyi)
+#   0.50–0.75      → "problematic" (UI: Mediocre / Vasat)
+#   score <  0.50  → "not_found"   (UI: Bad / Fena)
+STATUS_FOUND_THRESHOLD = 0.75
+STATUS_PROBLEMATIC_THRESHOLD = 0.50
 
 
 def determine_verification_status(
@@ -102,90 +125,151 @@ def determine_verification_status(
     best_match: MatchResult | None,
     url_liveness: dict[str, bool] | None = None,
 ) -> tuple[str, list[str]]:
-    """Determine 3-category verification status with problem tags.
+    """Score-banded status + per-signal problem tags.
 
-    Categories:
-      - "found": title >= 0.85 AND authors verified AND
-                 (no source DOI/arXiv OR matching DOI/arXiv in candidate)
-      - "problematic": title >= 0.75 but some signal disagrees (tagged)
-      - "not_found": no candidate with title >= 0.75
+    Status is derived purely from the composite score (no title-only gate):
+      >= STATUS_FOUND_THRESHOLD (0.75)       → "found"
+      >= STATUS_PROBLEMATIC_THRESHOLD (0.50) → "problematic"
+      otherwise                              → "not_found"
 
-    Problem tags:
-      "!authors", "!doi/arXiv", "!url", "!year", "!source"
-    "!doi/arXiv", "!url", and "!source" are informational soft tags — they
-    do not prevent a "found" status.
+    Problem tags are emitted independently of the status band so the five
+    card chips stay in sync with per-signal reality:
+      !authors    — source has authors AND authors_match() is False
+      !year       — source.year AND bm.year AND |diff| > 1
+      !source     — source.source AND bm.journal AND !_venues_match
+      !doi/arXiv  — (source.doi OR source.arxiv_id) AND NOT bm.url_match
+      !title      — bm present AND title_similarity < TITLE_MATCH_THRESHOLD
+
+    A missing source-side field emits no tag (nothing to disagree with).
     """
     url_liveness = url_liveness or {}
 
     if best_match is None:
-        return "not_found", _not_found_url_tags(source, url_liveness)
+        return "not_found", []
 
-    title = best_match.match_details.title_similarity
-    if title < TITLE_PROBLEMATIC_THRESHOLD:
-        return "not_found", _not_found_url_tags(source, url_liveness)
-
-    # Title is at least problematic-level — collect signals
     tags: list[str] = []
 
-    # Authors check: at least 50% of source author last names found in candidate
-    authors_ok = _authors_satisfied(source, best_match)
-    if not authors_ok:
+    # Chip rules for {authors, year, source, doi/arXiv} — per-field presence
+    # is evaluated on BOTH sides:
+    #   both sides have the field, they match       → OFF
+    #   both sides have the field, they disagree    → ON
+    #   only one side has the field                  → ON
+    #   neither side has the field                   → OFF (nothing to compare)
+    # Title uses its own similarity threshold (below) — a missing title
+    # collapses similarity to 0, so `!title` fires naturally.
+
+    src_has_authors = bool(source.authors)
+    bm_has_authors = bool(best_match.authors)
+    if src_has_authors and bm_has_authors:
+        if not authors_match(source.authors, best_match.authors):
+            tags.append("!authors")
+    elif src_has_authors != bm_has_authors:
         tags.append("!authors")
 
-    # DOI/arXiv check: only if source has one — must match candidate's
-    src_doi = source.doi
-    src_arxiv = source.arxiv_id
-    if src_doi or src_arxiv:
-        if not best_match.match_details.url_match:
-            tags.append("!doi/arXiv")
-
-    # Year check (only if both have years)
-    if source.year and best_match.year:
-        if abs(source.year - best_match.year) >= 1:
+    src_has_year = source.year is not None
+    bm_has_year = best_match.year is not None
+    if src_has_year and bm_has_year:
+        if abs(source.year - best_match.year) > 1:
             tags.append("!year")
+    elif src_has_year != bm_has_year:
+        tags.append("!year")
 
-    # Source venue check (journal / conference / book / etc.) — informational
-    if source.source and best_match.journal:
+    src_has_venue = bool((source.source or "").strip())
+    bm_has_venue = bool((best_match.journal or "").strip())
+    if src_has_venue and bm_has_venue:
         if not _venues_match(source.source, best_match.journal):
             tags.append("!source")
+    elif src_has_venue != bm_has_venue:
+        tags.append("!source")
 
-    # Non-DOI/arXiv URL liveness — flag dead links
-    for url, alive in url_liveness.items():
-        if not alive:
-            tags.append("!url")
-            break
+    src_has_ident = bool(source.doi or source.arxiv_id)
+    bm_has_ident = bool(best_match.doi) or "arxiv.org" in (best_match.url or "")
+    if src_has_ident and bm_has_ident:
+        if not best_match.match_details.url_match:
+            tags.append("!doi/arXiv")
+    elif src_has_ident != bm_has_ident:
+        tags.append("!doi/arXiv")
 
-    # Decision: found requires title >= FOUND threshold and authors ok.
-    # !doi/arXiv and !url are tolerated (the reference is still considered
-    # found when title+authors+year all agree) but the tags remain visible.
-    soft_tags = {"!doi/arXiv", "!url", "!source"}
-    if (
-        title >= TITLE_FOUND_THRESHOLD
-        and authors_ok
-        and all(t in soft_tags for t in tags)
-    ):
-        return "found", tags
+    if best_match.match_details.title_similarity < TITLE_MATCH_THRESHOLD:
+        tags.append("!title")
 
-    return "problematic", tags
+    score = best_match.score
+    if score >= STATUS_FOUND_THRESHOLD:
+        status = "found"
+    elif score >= STATUS_PROBLEMATIC_THRESHOLD:
+        status = "problematic"
+    else:
+        status = "not_found"
+    return status, tags
 
 
-def _authors_satisfied(source: ParsedSource, best_match: MatchResult) -> bool:
-    """Verify source authors are present in candidate authors.
+# ----- Trust tag (Künye / Uydurma) decision tree --------------------------
 
-    Delegates to services.author_matcher.authors_match, which handles
-    diacritics, IEEE/Vancouver/display-name formats, multi-part surnames,
-    and initial-based disambiguation.
+def classify_trust(
+    source: ParsedSource,
+    best_match: MatchResult | None,
+) -> str:
+    """Classify a reference as "clean" | "künye" | "uydurma".
+
+    Per-signal "matches" predicates mirror the chip display rule for
+    authors / year / source / doi/arXiv:
+      - both sides have the field and they agree   → matches
+      - both sides are missing the field           → matches (no disagreement)
+      - exactly one side has the field             → does NOT match
+      - both have the field and they disagree      → does NOT match
+
+    Title uses a similarity threshold instead:
+      title_matches = title_similarity >= TITLE_MATCH_THRESHOLD (0.85)
+
+    Rule:
+      all four of {author, year, title, source} match     → "clean"
+      title matches
+        OR (author matches AND any of {year, source, doi} matches) → "künye"
+      otherwise                                           → "uydurma"
     """
-    if not source.authors:
-        return True
-    return authors_match(source.authors, best_match.authors or [])
+    if best_match is None:
+        return "uydurma"
 
+    title_matches = (
+        best_match.match_details.title_similarity >= TITLE_MATCH_THRESHOLD
+    )
 
-def _not_found_url_tags(source: ParsedSource, url_liveness: dict[str, bool]) -> list[str]:
-    """For not_found status: only the !url tag is meaningful (dead link)."""
-    if any(not alive for alive in url_liveness.values()):
-        return ["!url"]
-    return []
+    src_has_authors = bool(source.authors)
+    bm_has_authors = bool(best_match.authors)
+    if src_has_authors and bm_has_authors:
+        author_matches = authors_match(source.authors, best_match.authors)
+    else:
+        author_matches = not src_has_authors and not bm_has_authors
+
+    src_has_year = source.year is not None
+    bm_has_year = best_match.year is not None
+    if src_has_year and bm_has_year:
+        year_matches = abs(source.year - best_match.year) <= 1
+    else:
+        year_matches = not src_has_year and not bm_has_year
+
+    src_has_venue = bool((source.source or "").strip())
+    bm_has_venue = bool((best_match.journal or "").strip())
+    if src_has_venue and bm_has_venue:
+        source_matches = _venues_match(source.source, best_match.journal)
+    else:
+        source_matches = not src_has_venue and not bm_has_venue
+
+    src_has_ident = bool(source.doi or source.arxiv_id)
+    bm_has_ident = bool(best_match.doi) or "arxiv.org" in (best_match.url or "")
+    if src_has_ident and bm_has_ident:
+        doi_matches = best_match.match_details.url_match
+    else:
+        doi_matches = not src_has_ident and not bm_has_ident
+
+    if author_matches and year_matches and title_matches and source_matches:
+        return "clean"
+    elif title_matches or (
+        author_matches and (year_matches or source_matches or doi_matches)
+    ):
+        return "künye"
+    else:
+        return "uydurma"
 
 
 def _url_match_score(source: ParsedSource, candidate: dict[str, Any]) -> float:

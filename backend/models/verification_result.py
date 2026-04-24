@@ -26,8 +26,17 @@ class VerificationResult(BaseModel):
     # Status values: pending, in_progress, found, problematic, not_found
     status: str = "pending"
     # Problem tags — values:
-    # "!authors", "!doi/arXiv", "!url", "!year", "!source"
+    # "!authors", "!doi/arXiv", "!year", "!source", "!title"
     problem_tags: list[str] = []
+    # Trust-tag outcome from classify_trust(): "clean", "künye", or "uydurma"
+    trust_tag: str = "clean"
+    # Three-state trust-tag user override. None = use classify_trust() result.
+    # Cycled from the UI via POST /api/verify/trust-override.
+    trust_tag_override: str | None = None
+    # Per-tag user overrides for the card's clickable chips.
+    # Keys: "authors", "year", "title", "source", "doi/arXiv".
+    # true = force ON, false = force OFF, missing key = use default logic.
+    tag_overrides: dict[str, bool] = {}
     # URL -> liveness map (for non-doi/arXiv URLs that were checked)
     url_liveness: dict[str, bool] = {}
     best_match: MatchResult | None = None

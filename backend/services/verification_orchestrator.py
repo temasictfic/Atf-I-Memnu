@@ -9,7 +9,7 @@ from api.websocket import manager
 from models.settings import DatabaseConfig
 from models.source import SourceRectangle, ParsedSource
 from models.verification_result import VerificationResult, MatchResult
-from services.match_scorer import determine_verification_status
+from services.match_scorer import classify_trust, determine_verification_status
 from services.search_settings import (
     get_max_concurrent_apis,
     get_max_concurrent_sources_per_pdf,
@@ -689,9 +689,11 @@ async def _finalize_result(
         status, problem_tags = determine_verification_status(
             parsed, best_match, url_liveness
         )
+        trust_tag = classify_trust(parsed, best_match)
     else:
-        # Failure to parse → fall back to not_found
+        # Failure to parse → fall back to not_found / uydurma
         status, problem_tags = "not_found", []
+        trust_tag = "uydurma"
 
     # Build Google Scholar / Google Search URLs from NER-extracted title
     scholar_url, google_url = _build_google_urls(parsed) if parsed else ("", "")
@@ -700,6 +702,7 @@ async def _finalize_result(
         source_id=source_id,
         status=status,
         problem_tags=problem_tags,
+        trust_tag=trust_tag,
         url_liveness=url_liveness,
         best_match=best_match,
         all_results=sorted(all_matches, key=lambda m: m.score, reverse=True),
@@ -714,6 +717,9 @@ async def _finalize_result(
         "source_id": source_id,
         "status": status,
         "problem_tags": problem_tags,
+        "trust_tag": trust_tag,
+        "trust_tag_override": result.trust_tag_override,
+        "tag_overrides": result.tag_overrides,
         "url_liveness": url_liveness,
         "best_match": best_match.model_dump() if best_match else None,
         "all_results": [m.model_dump() for m in result.all_results],

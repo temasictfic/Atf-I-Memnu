@@ -57,10 +57,15 @@ def _load_verify_cache(pdf_id: str) -> dict[str, VerificationResult] | None:
             for m in (entry.get("all_results") or []):
                 md = m.get("match_details") or {}
                 md.pop("journal_match", None)
+                # Clamp legacy scores that may predate the [0, 1] cap
+                if isinstance(m.get("score"), (int, float)) and m["score"] > 1.0:
+                    m["score"] = 1.0
             best = entry.get("best_match")
             if isinstance(best, dict):
                 md = best.get("match_details") or {}
                 md.pop("journal_match", None)
+                if isinstance(best.get("score"), (int, float)) and best["score"] > 1.0:
+                    best["score"] = 1.0
             normalized[source_id] = VerificationResult(**entry)
 
         if migrated:
@@ -81,6 +86,15 @@ class VerifySourceRequest(BaseModel):
 
 class OverrideRequest(BaseModel):
     status: str  # found, problematic, not_found
+
+
+class TagOverrideRequest(BaseModel):
+    tag: str            # "authors" | "year" | "title" | "source" | "doi/arXiv"
+    state: bool | None  # None clears the override
+
+
+class TrustOverrideRequest(BaseModel):
+    trust: str | None   # "clean" | "künye" | "uydurma" | None (clear)
 
 
 class VerifyBatchRequest(BaseModel):
@@ -297,6 +311,87 @@ async def override_status(pdf_id: str, source_id: str, request: OverrideRequest)
     return {"success": True}
 
 
+_ALLOWED_TAG_KEYS = {"authors", "year", "title", "source", "doi/arXiv"}
+
+
+@router.post("/verify/tag-override/{pdf_id}/{source_id}")
+async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequest):
+    """Store per-tag ON/OFF overrides for a reference card.
+
+    state=True  → force ON
+    state=False → force OFF
+    state=None  → clear override (revert to default-derived state)
+    """
+    if request.tag not in _ALLOWED_TAG_KEYS:
+        raise HTTPException(status_code=400, detail=f"Unknown tag: {request.tag}")
+    if pdf_id not in verify_results or source_id not in verify_results[pdf_id]:
+        raise HTTPException(status_code=404, detail="Result not found")
+
+    existing = verify_results[pdf_id][source_id]
+    if request.state is None:
+        existing.tag_overrides.pop(request.tag, None)
+    else:
+        existing.tag_overrides[request.tag] = request.state
+
+    _save_verify_cache(pdf_id, verify_results[pdf_id])
+
+    await manager.broadcast("verify_source_done", {
+        "pdf_id": pdf_id,
+        "source_id": source_id,
+        "status": existing.status,
+        "problem_tags": existing.problem_tags,
+        "trust_tag": existing.trust_tag,
+        "trust_tag_override": existing.trust_tag_override,
+        "tag_overrides": existing.tag_overrides,
+        "url_liveness": existing.url_liveness,
+        "best_match": existing.best_match.model_dump() if existing.best_match else None,
+        "all_results": [m.model_dump() for m in existing.all_results],
+        "databases_searched": list(existing.databases_searched),
+        "scholar_url": existing.scholar_url,
+        "google_url": existing.google_url,
+    })
+
+    return {"success": True}
+
+
+_ALLOWED_TRUST_VALUES = {"clean", "künye", "uydurma", None}
+
+
+@router.post("/verify/trust-override/{pdf_id}/{source_id}")
+async def set_trust_override(pdf_id: str, source_id: str, request: TrustOverrideRequest):
+    """Store the user's three-state trust-tag override for a reference.
+
+    trust="clean" | "künye" | "uydurma" → force that trust state
+    trust=None                          → clear override (use classify_trust)
+    """
+    if request.trust not in _ALLOWED_TRUST_VALUES:
+        raise HTTPException(status_code=400, detail=f"Invalid trust: {request.trust}")
+    if pdf_id not in verify_results or source_id not in verify_results[pdf_id]:
+        raise HTTPException(status_code=404, detail="Result not found")
+
+    existing = verify_results[pdf_id][source_id]
+    existing.trust_tag_override = request.trust
+    _save_verify_cache(pdf_id, verify_results[pdf_id])
+
+    await manager.broadcast("verify_source_done", {
+        "pdf_id": pdf_id,
+        "source_id": source_id,
+        "status": existing.status,
+        "problem_tags": existing.problem_tags,
+        "trust_tag": existing.trust_tag,
+        "trust_tag_override": existing.trust_tag_override,
+        "tag_overrides": existing.tag_overrides,
+        "url_liveness": existing.url_liveness,
+        "best_match": existing.best_match.model_dump() if existing.best_match else None,
+        "all_results": [m.model_dump() for m in existing.all_results],
+        "databases_searched": list(existing.databases_searched),
+        "scholar_url": existing.scholar_url,
+        "google_url": existing.google_url,
+    })
+
+    return {"success": True}
+
+
 class ScholarCandidate(BaseModel):
     title: str
     authors: list[str] = []
@@ -319,7 +414,7 @@ class ScoreScholarRequest(BaseModel):
 async def score_scholar(request: ScoreScholarRequest):
     """Score Google Scholar candidates against a source and merge into results."""
     from services.source_extractor import extract_source_fields
-    from services.match_scorer import score_match, determine_verification_status
+    from services.match_scorer import score_match, determine_verification_status, classify_trust
     from services.author_matcher import clean_scholar_authors
     from services.ner_extractor import extract_fields_ner
 
@@ -396,8 +491,10 @@ async def score_scholar(request: ScoreScholarRequest):
     status, problem_tags = determine_verification_status(
         parsed, existing.best_match, existing.url_liveness
     )
+    trust_tag = classify_trust(parsed, existing.best_match)
     existing.status = status
     existing.problem_tags = problem_tags
+    existing.trust_tag = trust_tag
 
     # Persist and broadcast
     _save_verify_cache(request.pdf_id, verify_results[request.pdf_id])
@@ -407,6 +504,9 @@ async def score_scholar(request: ScoreScholarRequest):
         "source_id": request.source_id,
         "status": status,
         "problem_tags": problem_tags,
+        "trust_tag": trust_tag,
+        "trust_tag_override": existing.trust_tag_override,
+        "tag_overrides": existing.tag_overrides,
         "url_liveness": existing.url_liveness,
         "best_match": existing.best_match.model_dump() if existing.best_match else None,
         "all_results": [m.model_dump() for m in existing.all_results],
