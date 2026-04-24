@@ -1,6 +1,6 @@
 .parsing-page {
   display: grid;
-  grid-template-columns: 260px 1fr 280px;
+  grid-template-columns: 280px 1fr 280px;
   height: 100%;
   overflow: hidden;
   user-select: none;
@@ -372,7 +372,7 @@
   gap: 4px;
   position: absolute;
   top: 50%;
-  left: calc(var(--tab-center-vp, 50%) - 260px);
+  left: calc(var(--tab-center-vp, 50%) - 280px);
   transform: translate(-50%, -50%);
 }
 .hints-trigger {
