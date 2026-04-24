@@ -187,6 +187,20 @@ export default function VerificationPage() {
     return () => document.removeEventListener('mousedown', onDocClick)
   }, [sortOpen])
 
+  // Verify-All split-button dropdown + click-outside wiring
+  const [verifyAllMenuOpen, setVerifyAllMenuOpen] = useState(false)
+  const verifyAllMenuRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!verifyAllMenuOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (verifyAllMenuRef.current && !verifyAllMenuRef.current.contains(e.target as Node)) {
+        setVerifyAllMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [verifyAllMenuOpen])
+
   // Toast for verification completion – only for actual runs, not cached loads
   const [verifyToast, setVerifyToast] = useState<string | null>(null)
   const verifyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -196,7 +210,7 @@ export default function VerificationPage() {
   // PDFs started via single-PDF verify (not Verify All) — auto-run GS when done
   const autoGsPdfIdsRef = useRef<Set<string>>(new Set())
   // PDFs for which GS scan must run unconditionally after verification (ignoring setting).
-  // Used by the "!X" (verify non-found) button.
+  // Used by the "~X" (verify non-found) button.
   const forceGsPdfIdsRef = useRef<Set<string>>(new Set())
   // Single-source reverify runs awaiting completion to trigger a per-source GS scan.
   // Maps sourceId -> pdfId.
@@ -208,7 +222,9 @@ export default function VerificationPage() {
   const verifyAllQueueRef = useRef<string[]>([])
   const verifyAllCurrentRef = useRef<string | null>(null)
   const verifyAllActiveRef = useRef(false)
+  const verifyAllModeRef = useRef<'all' | 'nonFound'>('all')
   const [verifyAllActive, setVerifyAllActive] = useState(false)
+  const [lastVerifyAllMode, setLastVerifyAllMode] = useState<'all' | 'nonFound'>('all')
   const [exportingReport, setExportingReport] = useState(false)
 
   // Fire completion-time side effects (toast + auto Scholar scan) when a
@@ -293,6 +309,30 @@ export default function VerificationPage() {
       await loadSourcesFn(next)
       const src = useSourcesStore.getState().sourcesByPdf[next] ?? []
       if (src.length === 0) continue
+
+      if (verifyAllModeRef.current === 'nonFound') {
+        const store = useVerificationStore.getState()
+        // Ensure cached results are in memory before filtering — a PDF the user
+        // hasn't opened this session may have empty resultsByPdf, racing the
+        // passive auto-load effect.
+        await store.loadResults(next)
+        const { resultsByPdf, enabledSources } = useVerificationStore.getState()
+        const pdfResults = resultsByPdf[next] ?? {}
+        const hasNonFound = src.some(s => {
+          if (enabledSources[s.id] === false) return false
+          return pdfResults[s.id]?.status !== 'found'
+        })
+        if (!hasNonFound) continue
+
+        store.initSourceVerifyState(next, src)
+        verifyAllCurrentRef.current = next
+        selectPdf(next)
+        pendingVerifyPdfIdsRef.current.add(next)
+        forceGsPdfIdsRef.current.add(next)
+        await useVerificationStore.getState().startVerificationNonFoundForPdf(next)
+        return
+      }
+
       verifyAllCurrentRef.current = next
       selectPdf(next)
       pendingVerifyPdfIdsRef.current.add(next)
@@ -591,7 +631,7 @@ export default function VerificationPage() {
   }, [pdfs, summaries, trustCountsByPdf, isPdfVerifying])
 
   // Actions
-  async function handleStartOrCancel() {
+  async function handleStartOrCancel(mode: 'all' | 'nonFound' = 'all') {
     if (verifyAllActiveRef.current || isAnyVerifying) {
       // Stop the queue and cancel the in-flight PDF (if any).
       verifyAllActiveRef.current = false
@@ -617,6 +657,7 @@ export default function VerificationPage() {
       const cutoff = Math.min(verifyCutoffIndex, sortedPdfs.length)
       const ids = sortedPdfs.slice(0, cutoff).map(p => p.id)
       if (ids.length > 0) {
+        verifyAllModeRef.current = mode
         verifyAllQueueRef.current = [...ids]
         verifyAllActiveRef.current = true
         setVerifyAllActive(true)
@@ -1746,13 +1787,49 @@ export default function VerificationPage() {
       <aside className={styles['verify-left']} onMouseDownCapture={() => browserOverlayOpen && closeBrowserOverlay()}>
         <div className={styles['panel-header']}>
           <h2 className={styles['panel-title']}>{t('verification.title')}</h2>
-          <button
-            className={styles['start-btn']}
-            onClick={handleStartOrCancel}
-            disabled={pdfs.length === 0 || (!isAnyVerifying && !verifyAllActive && Math.min(verifyCutoffIndex, sortedPdfs.length) === 0)}
-          >
-            {(isAnyVerifying || verifyAllActive) ? <><span>&#x25A0;</span> {t('verification.stop')}</> : <><span>&#x25B6;</span> {t('verification.verifyAll')}</>}
-          </button>
+          <div className={styles['start-split']} ref={verifyAllMenuRef}>
+            <button
+              className={`${styles['start-btn']} ${styles['start-btn-main']}`}
+              onClick={() => handleStartOrCancel(lastVerifyAllMode)}
+              disabled={pdfs.length === 0 || (!isAnyVerifying && !verifyAllActive && Math.min(verifyCutoffIndex, sortedPdfs.length) === 0)}
+            >
+              {(isAnyVerifying || verifyAllActive) ? <><span>&#x25A0;</span> {t('verification.stop')}</> : <><span>&#x25B6;</span> {t('verification.verifyAll')}</>}
+            </button>
+            {!(isAnyVerifying || verifyAllActive) && (
+              <button
+                type="button"
+                className={`${styles['start-btn']} ${styles['start-btn-caret']}`}
+                onClick={() => setVerifyAllMenuOpen(o => !o)}
+                disabled={pdfs.length === 0 || Math.min(verifyCutoffIndex, sortedPdfs.length) === 0}
+                aria-haspopup="menu"
+                aria-expanded={verifyAllMenuOpen}
+                aria-label={t('verification.verifyAllMenu')}
+                title={t('verification.verifyAllMenu')}
+              >
+                {'▾'}
+              </button>
+            )}
+            {verifyAllMenuOpen && (
+              <ul className={styles['start-menu']} role="menu">
+                {(['all', 'nonFound'] as const).map(mode => (
+                  <li key={mode} role="none">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={lastVerifyAllMode === mode ? styles['sort-active'] : ''}
+                      onClick={() => {
+                        setLastVerifyAllMode(mode)
+                        setVerifyAllMenuOpen(false)
+                        void handleStartOrCancel(mode)
+                      }}
+                    >
+                      {t(`verification.verifyAllModes.${mode}`)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         {pdfs.length > 0 && (
@@ -1974,7 +2051,7 @@ export default function VerificationPage() {
                   onClick={() => effectivePdfId && handleVerifyNonFoundPdf(effectivePdfId)}
                   disabled={!effectivePdfId || (effectivePdfId ? isPdfVerifying(effectivePdfId) : true)}
                   title={t('verification.verifyNonFound')}
-                >{t('verification.nfShort')}</button>
+                ><span aria-hidden="true">&#x25B6;</span>{t('verification.nfShort')}</button>
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-export']}`}
                   onClick={handleExportVerificationReport}

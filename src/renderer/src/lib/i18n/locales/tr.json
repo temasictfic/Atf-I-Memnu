@@ -245,7 +245,7 @@
     "scholarCaptchaBanner": "CAPTCHA algılandı — lütfen aşağıda çözün. Tarama otomatik olarak devam edecek; ya da Web görünümünü kapatıp Devam et'e tıklayın.",
     "scholarResume": "Devam et",
     "scholarCancel": "İptal",
-    "nfShort": "!X",
+    "nfShort": "~X",
     "gsShort": "GS",
     "dragToReorder": "Sıralamak için sürükle",
     "copyText": "Metni kopyala",
@@ -268,6 +268,11 @@
     },
     "verify": "Doğrula",
     "verifyAll": "Tümünü Doğrula",
+    "verifyAllMenu": "Tümünü Doğrula seçenekleri",
+    "verifyAllModes": {
+      "all": "Tümünü doğrula",
+      "nonFound": "Tümünü İyi harici doğrula (~X)"
+    },
     "cutoff": {
       "labelAll": "Tümü çalışacak",
       "labelPartial": "İlk {{count}} doğrula",
