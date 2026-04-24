@@ -58,13 +58,13 @@ function problemTagLabel(tag: string): string {
 }
 
 function dbScoreIcon(score: number): string {
-  if (score >= 0.65) return '\u2713'
+  if (score >= 0.75) return '\u2713'
   if (score >= 0.5) return '~'
   return '\u2715'
 }
 
 function dbScoreColor(score: number): string {
-  if (score >= 0.65) return '#22c55e'
+  if (score >= 0.75) return '#22c55e'
   if (score >= 0.5) return '#eab308'
   return '#ef4444'
 }
@@ -103,7 +103,7 @@ function buildDefaultSavePath(dir: string | undefined, filename: string): string
 }
 
 const statusOrder: Record<string, number> = { found: 0, problematic: 1, not_found: 2, in_progress: 3, pending: 4 }
-type CardSortMode = 'default' | 'status' | 'ref' | 'enabled'
+type CardSortMode = 'status' | 'ref' | 'enabled' | 'trust'
 const MIN_BROWSER_ZOOM = 0.5
 const MAX_BROWSER_ZOOM = 3
 const BROWSER_ZOOM_STEP = 1.1
@@ -130,6 +130,8 @@ export default function VerificationPage() {
   const cardSortAsc = useVerificationStore(s => s.cardSortAsc)
   const pdfSortKey = useVerificationStore(s => s.pdfSortKey)
   const pdfSortAsc = useVerificationStore(s => s.pdfSortAsc)
+  const verifyCutoffIndex = useVerificationStore(s => s.verifyCutoffIndex)
+  const setVerifyCutoffIndex = useVerificationStore(s => s.setVerifyCutoffIndex)
 
   const configuredDatabases = useSettingsStore(s => s.settings.databases)
   const enabledDatabases = useMemo(() => {
@@ -149,6 +151,25 @@ export default function VerificationPage() {
   const currentResult = useMemo(() => (selectedSourceId ? results[selectedSourceId] : undefined), [results, selectedSourceId])
   const currentSource = useMemo(() => (selectedSourceId ? sources.find(s => s.id === selectedSourceId) : undefined), [sources, selectedSourceId])
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  // When a status-changing action reorders the sorted list, this ref names the
+  // card to keep visible so the user doesn't lose their place.
+  const pendingScrollCardIdRef = useRef<string | null>(null)
+  // Cross-PDF right-click jump: remembers the target source to select+scroll
+  // after selectPdf swaps the card list.
+  const pendingJumpRef = useRef<{ pdfId: string; sourceId: string } | null>(null)
+  // Snapshot of the left-panel count pills captured whenever a PDF finishes a
+  // complete verification run. While a re-verify is in flight on a PDF that
+  // already has a complete snapshot, we render this snapshot instead of the
+  // live (in-progress, decrementing) counts so the user's reference point
+  // doesn't jitter until the new run finishes or is stopped.
+  const frozenPdfCountsRef = useRef<Record<string, {
+    found: number
+    problematic: number
+    not_found: number
+    trustValid: number
+    trustKunye: number
+    trustUydurma: number
+  }>>({})
   const currentSummary = useMemo(() => (effectivePdfId ? summaries[effectivePdfId] : undefined), [summaries, effectivePdfId])
   const orderedSourceIds = useMemo(() => (effectivePdfId ? (sourceOrder[effectivePdfId] ?? []) : []), [sourceOrder, effectivePdfId])
 
@@ -200,6 +221,18 @@ export default function VerificationPage() {
       const summary = summaries[pdfId]
       if (!summary || !summary.completed || summary.in_progress > 0) continue
       pendingVerifyPdfIdsRef.current.delete(pdfId)
+
+      // Under status sort, slide the cutoff bar up by one as each PDF
+      // finishes — the PDF has just moved from the in-progress tier at the
+      // top of the list to the completed tier at the bottom, so a matching
+      // bar shift keeps the "remaining queue" framing intact.
+      {
+        const store = useVerificationStore.getState()
+        if (store.pdfSortKey === 'status') {
+          const current = Math.min(store.verifyCutoffIndex, pdfs.length)
+          store.setVerifyCutoffIndex(Math.max(0, current - 1))
+        }
+      }
 
       const pdf = allPdfs.find(p => p.id === pdfId)
       const name = pdf?.name ?? 'PDF'
@@ -307,6 +340,16 @@ export default function VerificationPage() {
         // Skip sources still mid-verification — they'd otherwise get
         // classified as Uydurma before the best match lands.
         if (r.status === 'in_progress' || r.status === 'pending') continue
+        // Cancelling a Verify All run flips every in-flight source to
+        // not_found optimistically. Sources the backend never got to touch
+        // arrive with an empty databases_searched and no best_match, which
+        // would otherwise inflate the Uydurma pill to the full ref count
+        // until the PDF is reopened and loadResults re-syncs.
+        if (
+          r.status === 'not_found'
+          && !r.best_match
+          && (r.databases_searched?.length ?? 0) === 0
+        ) continue
         const tt = effectiveTrustTag(r)
         if (tt === 'clean') v++
         else if (tt === 'künye') k++
@@ -320,33 +363,63 @@ export default function VerificationPage() {
   const sortedPdfs = useMemo(() => {
     const list = [...pdfs]
     const dir = pdfSortAsc ? 1 : -1
+    // Mirror of the render-time freeze: if a PDF is currently re-verifying
+    // and we have a snapshot from its last complete run, sort by that
+    // snapshot so the row doesn't drop to the bottom and climb back up as
+    // the live counts decrement and recover.
+    const getSortValues = (pdfId: string) => {
+      const pdfResults = resultsByPdf[pdfId]
+      const verifying = pdfResults ? Object.values(pdfResults).some(r => r.status === 'in_progress') : false
+      const frozen = verifying ? frozenPdfCountsRef.current[pdfId] : undefined
+      const s = summaries[pdfId]
+      const t = trustCountsByPdf[pdfId] ?? { valid: 0, kunye: 0, uydurma: 0 }
+      return {
+        found: frozen ? frozen.found : (s?.found ?? 0),
+        problematic: frozen ? frozen.problematic : (s?.problematic ?? 0),
+        not_found: frozen ? frozen.not_found : (s?.not_found ?? 0),
+        valid: frozen ? frozen.trustValid : t.valid,
+        kunye: frozen ? frozen.trustKunye : t.kunye,
+        uydurma: frozen ? frozen.trustUydurma : t.uydurma,
+      }
+    }
     list.sort((a, b) => {
       const sa = summaries[a.id]
       const sb = summaries[b.id]
       if (pdfSortKey === 'name') return dir * a.name.localeCompare(b.name)
       if (pdfSortKey === 'status') {
-        const ao = sa?.completed ? 0 : sa ? 1 : 2
-        const bo = sb?.completed ? 0 : sb ? 1 : 2
-        return dir * (ao - bo)
+        // Tiers ordered so the default first-click direction (desc) puts
+        // the list top→bottom as: in-progress → untouched → partial → completed.
+        // When there are no in-progress PDFs (the typical state when the user
+        // first clicks the sort button) untouched lands at the top.
+        const tier = (pdfId: string, s: typeof sa) => {
+          const pdfRes = resultsByPdf[pdfId]
+          const running = pdfRes
+            ? Object.values(pdfRes).some(r => r.status === 'in_progress')
+            : (s?.in_progress ?? 0) > 0
+          if (running) return 3
+          if (!s) return 2
+          if (!s.completed) return 1
+          return 0
+        }
+        return dir * (tier(a.id, sa) - tier(b.id, sb))
       }
-      if (pdfSortKey === 'found') return dir * ((sa?.found ?? 0) - (sb?.found ?? 0))
-      if (pdfSortKey === 'problematic') return dir * ((sa?.problematic ?? 0) - (sb?.problematic ?? 0))
-      if (pdfSortKey === 'not_found') return dir * ((sa?.not_found ?? 0) - (sb?.not_found ?? 0))
-      const ta = trustCountsByPdf[a.id] ?? { valid: 0, kunye: 0, uydurma: 0 }
-      const tb = trustCountsByPdf[b.id] ?? { valid: 0, kunye: 0, uydurma: 0 }
-      if (pdfSortKey === 'valid') return dir * (ta.valid - tb.valid)
-      if (pdfSortKey === 'kunye') return dir * (ta.kunye - tb.kunye)
-      if (pdfSortKey === 'uydurma') return dir * (ta.uydurma - tb.uydurma)
+      const va = getSortValues(a.id)
+      const vb = getSortValues(b.id)
+      if (pdfSortKey === 'found') return dir * (va.found - vb.found)
+      if (pdfSortKey === 'problematic') return dir * (va.problematic - vb.problematic)
+      if (pdfSortKey === 'not_found') return dir * (va.not_found - vb.not_found)
+      if (pdfSortKey === 'valid') return dir * (va.valid - vb.valid)
+      if (pdfSortKey === 'kunye') return dir * (va.kunye - vb.kunye)
+      if (pdfSortKey === 'uydurma') return dir * (va.uydurma - vb.uydurma)
       return 0
     })
     return list
-  }, [pdfs, pdfSortKey, pdfSortAsc, summaries, trustCountsByPdf])
+  }, [pdfs, pdfSortKey, pdfSortAsc, summaries, trustCountsByPdf, resultsByPdf])
 
   // --- Center panel sorting (persisted in store) ---
   const { toggleCardSort } = useVerificationStore.getState()
 
   const sortedSourceCards = useMemo(() => {
-    if (cardSortKey === 'default') return sourceCards
     const list = [...sourceCards]
     const dir = cardSortAsc ? 1 : -1
     list.sort((a, b) => {
@@ -390,14 +463,18 @@ export default function VerificationPage() {
     }
   }, [effectivePdfId])
 
-  // Auto-load cached results for all approved PDFs on mount
-  const hasAutoLoaded = useRef(false)
+  // Auto-load cached results for all approved PDFs — including any newly
+  // imported after initial mount, so left-panel count pills appear without
+  // the user having to click each PDF first.
+  const autoLoadedPdfIdsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    if (hasAutoLoaded.current || pdfs.length === 0) return
-    hasAutoLoaded.current = true
+    if (pdfs.length === 0) return
+    const pending = pdfs.filter(p => !autoLoadedPdfIdsRef.current.has(p.id))
+    if (pending.length === 0) return
+    for (const p of pending) autoLoadedPdfIdsRef.current.add(p.id)
     const { loadResults } = useVerificationStore.getState()
     ;(async () => {
-      for (const pdf of pdfs) {
+      for (const pdf of pending) {
         await loadResults(pdf.id)
       }
     })()
@@ -455,6 +532,20 @@ export default function VerificationPage() {
     setDropTargetIdx(null)
   }
 
+  // Verify-All cutoff divider: refs to each PDF item so we can compute which
+  // slot the cursor is over during a drag.
+  const pdfItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const setPdfItemRef = useCallback((id: string) => (el: HTMLDivElement | null) => {
+    if (el) pdfItemRefs.current.set(id, el)
+    else pdfItemRefs.current.delete(id)
+  }, [])
+  const [cutoffDragging, setCutoffDragging] = useState(false)
+
+  function startCutoffDrag(e: React.MouseEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setCutoffDragging(true)
+  }
+
   // Auto-resize textarea
   const autoResize = useCallback((el: HTMLTextAreaElement) => {
     el.style.height = 'auto'
@@ -476,6 +567,28 @@ export default function VerificationPage() {
     if (!pdfResults) return false
     return Object.values(pdfResults).some(r => r.status === 'in_progress')
   }, [resultsByPdf])
+
+  // Refresh the frozen snapshot whenever a PDF is idle AND its counts cover
+  // the full reference total — that's the moment the pills show a complete
+  // run. The snapshot is then rendered in place of the live counts while a
+  // re-verify is running (see the left-panel render below).
+  useEffect(() => {
+    for (const pdf of pdfs) {
+      if (isPdfVerifying(pdf.id)) continue
+      const summary = summaries[pdf.id]
+      if (!summary || summary.total <= 0) continue
+      if (summary.found + summary.problematic + summary.not_found < summary.total) continue
+      const trust = trustCountsByPdf[pdf.id] ?? { valid: 0, kunye: 0, uydurma: 0 }
+      frozenPdfCountsRef.current[pdf.id] = {
+        found: summary.found,
+        problematic: summary.problematic,
+        not_found: summary.not_found,
+        trustValid: trust.valid,
+        trustKunye: trust.kunye,
+        trustUydurma: trust.uydurma,
+      }
+    }
+  }, [pdfs, summaries, trustCountsByPdf, isPdfVerifying])
 
   // Actions
   async function handleStartOrCancel() {
@@ -501,7 +614,8 @@ export default function VerificationPage() {
         await useVerificationStore.getState().cancelAll()
       }
     } else {
-      const ids = pdfs.map(p => p.id)
+      const cutoff = Math.min(verifyCutoffIndex, sortedPdfs.length)
+      const ids = sortedPdfs.slice(0, cutoff).map(p => p.id)
       if (ids.length > 0) {
         verifyAllQueueRef.current = [...ids]
         verifyAllActiveRef.current = true
@@ -513,6 +627,15 @@ export default function VerificationPage() {
 
   async function handleVerifyOrCancelPdf(pdfId: string) {
     if (isPdfVerifying(pdfId)) {
+      // If the user stops the PDF that Verify All is currently working on,
+      // tear down the whole queue so the main button flips back to Verify All
+      // and the completion effect doesn't advance to the next PDF.
+      if (verifyAllActiveRef.current && verifyAllCurrentRef.current === pdfId) {
+        verifyAllActiveRef.current = false
+        verifyAllQueueRef.current = []
+        verifyAllCurrentRef.current = null
+        setVerifyAllActive(false)
+      }
       autoGsPdfIdsRef.current.delete(pdfId)
       pendingVerifyPdfIdsRef.current.delete(pdfId)
       await useVerificationStore.getState().cancelPdf(pdfId)
@@ -563,6 +686,7 @@ export default function VerificationPage() {
 
   async function handleOverride(status: 'found' | 'problematic' | 'not_found') {
     if (!effectivePdfId || !selectedSourceId || !currentResult) return
+    pendingScrollCardIdRef.current = selectedSourceId
     await useVerificationStore.getState().overrideStatus(effectivePdfId, selectedSourceId, status)
   }
 
@@ -702,6 +826,7 @@ export default function VerificationPage() {
   const browserWebviewRef = useRef<any>(null)
   const [browserCanGoBack, setBrowserCanGoBack] = useState(false)
   const [browserCanGoForward, setBrowserCanGoForward] = useState(false)
+  const [browserCurrentUrl, setBrowserCurrentUrl] = useState('')
   const [browserZoomFactor, setBrowserZoomFactor] = useState(1)
   const browserZoomFactorRef = useRef(1)
   const preOverlaySortRef = useRef<{ key: CardSortMode; asc: boolean } | null>(null)
@@ -785,15 +910,12 @@ export default function VerificationPage() {
     return () => useScholarScanStore.getState().setCloseOverlayFn(null)
   }, [])
 
-  // When CAPTCHA is detected, open the overlay with the CAPTCHA URL and
-  // expand it. Default height (360px) is too short for reCAPTCHA image
-  // grids (~550px tall) and forces users to drag-resize before they can
-  // see the full challenge. Bump to 640px on CAPTCHA, clamped to the
-  // current viewport so it doesn't exceed the usable area on small screens.
+  // When CAPTCHA is detected, open the overlay with the CAPTCHA URL.
+  // Height is handled by getOverlayPreferredHeight, which returns the full
+  // max during CAPTCHA so the reCAPTCHA grid is fully visible.
   useEffect(() => {
     if (scholarStatus === 'captcha' && scholarCaptchaUrl) {
       openOverlayWithUrl(scholarCaptchaUrl)
-      setBrowserOverlayHeight((h) => Math.max(h, clampOverlayHeight(640)))
     }
   }, [scholarStatus, scholarCaptchaUrl])
 
@@ -902,25 +1024,52 @@ export default function VerificationPage() {
     return selectedSearchText
   }, [selectedParsedTitle, selectedSearchText])
 
+  // The true max is driven purely by the panel's usable height so the overlay
+  // never collapses to its min when the selected card sits near the bottom of
+  // the list (scroll-to-top can't always lift it to the top when the list has
+  // insufficient scrollable room below the card).
   function getOverlayMaxHeight(): number {
     const minHeight = 220
-    const defaultTopGap = 120
-    const centerEl = verifyCenterRef.current
-    const panelHeight = centerEl?.clientHeight ?? window.innerHeight
+    const topMargin = 80
+    const panelHeight = verifyCenterRef.current?.clientHeight ?? window.innerHeight
+    return Math.max(minHeight, panelHeight - topMargin)
+  }
 
-    if (!centerEl || !selectedSourceId) {
-      return Math.max(minHeight, panelHeight - defaultTopGap)
-    }
+  // Preferred opening height: try to leave the selected card visible above the
+  // overlay. In the happy path, scrollSelectedCardToTop lifts the card to near
+  // the top of the panel, so `preferred` is large (close to maxHeight). The
+  // edge cases — filtered-list mismatch in the re-sort heuristic, or a list
+  // too short to scroll the card to the top — would otherwise produce a tiny
+  // preferred value; in those cases we give up on card-visibility and fall
+  // back to maxHeight so the overlay is still usable.
+  function getOverlayPreferredHeight(): number {
+    const maxHeight = getOverlayMaxHeight()
+    // During a Scholar CAPTCHA the reCAPTCHA grid is taller than the card-aware
+    // preferred size, and the user isn't focused on any specific card —
+    // always open at the full max so the whole challenge is visible.
+    if (scholarStatus === 'captcha') return maxHeight
+    const centerEl = verifyCenterRef.current
+    if (!centerEl || !selectedSourceId) return maxHeight
 
     const cardEl = cardRefs.current[selectedSourceId]
-    if (!cardEl) {
-      return Math.max(minHeight, panelHeight - defaultTopGap)
-    }
+    if (!cardEl) return maxHeight
 
     const panelRect = centerEl.getBoundingClientRect()
     const cardRect = cardEl.getBoundingClientRect()
-    const topGap = Math.max(defaultTopGap, cardRect.bottom - panelRect.top + 8)
-    return Math.max(minHeight, panelHeight - topGap)
+    const cardBottomFromPanelTop = cardRect.bottom - panelRect.top + 8
+    const panelHeight = centerEl.clientHeight
+
+    // Card out of view — card-aware sizing is meaningless.
+    if (cardBottomFromPanelTop <= 0 || cardBottomFromPanelTop >= panelHeight) {
+      return maxHeight
+    }
+
+    const preferred = panelHeight - cardBottomFromPanelTop
+    // If the card ends up in the bottom half of the panel, the scroll-to-top
+    // mitigation didn't land — falling back to maxHeight covers the card but
+    // keeps the overlay usable instead of opening it at e.g. 40px.
+    if (preferred < maxHeight / 2) return maxHeight
+    return Math.min(maxHeight, preferred)
   }
 
   const selectedCardIndex = useMemo(
@@ -943,6 +1092,46 @@ export default function VerificationPage() {
     listEl.scrollTo({ top: nextTop, behavior })
   }, [selectedSourceId])
 
+  const scrollCardIntoView = useCallback((id: string, behavior: ScrollBehavior = 'smooth') => {
+    const listEl = cardListRef.current
+    const cardEl = cardRefs.current[id]
+    if (!cardEl) return
+    if (!listEl || !listEl.contains(cardEl)) {
+      cardEl.scrollIntoView({ behavior, block: 'nearest', inline: 'nearest' })
+      return
+    }
+    const listRect = listEl.getBoundingClientRect()
+    const cardRect = cardEl.getBoundingClientRect()
+    if (cardRect.top >= listRect.top && cardRect.bottom <= listRect.bottom) return
+    const nextTop = cardEl.offsetTop - listEl.offsetTop - (listEl.clientHeight - cardEl.offsetHeight) / 2
+    listEl.scrollTo({ top: Math.max(0, nextTop), behavior })
+  }, [])
+
+  // After a status-changing action reorders the sorted list, scroll the
+  // modified card back into view so the user doesn't lose track of it.
+  useEffect(() => {
+    const id = pendingScrollCardIdRef.current
+    if (!id) return
+    pendingScrollCardIdRef.current = null
+    const raf = requestAnimationFrame(() => scrollCardIntoView(id, 'smooth'))
+    return () => cancelAnimationFrame(raf)
+  }, [filteredSourceCards, scrollCardIntoView])
+
+  // Right-click-on-PDF jump: after selectPdf swaps the source list, select the
+  // target source and scroll its card into view once it's mounted.
+  useEffect(() => {
+    const pending = pendingJumpRef.current
+    if (!pending) return
+    if (pending.pdfId !== effectivePdfId) return
+    const raf = requestAnimationFrame(() => {
+      if (!cardRefs.current[pending.sourceId]) return
+      useVerificationStore.getState().selectSource(pending.sourceId)
+      scrollCardIntoView(pending.sourceId, 'smooth')
+      pendingJumpRef.current = null
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [effectivePdfId, sortedSourceCards, scrollCardIntoView])
+
   function alignOverlayToSelectedCard() {
     if (!selectedSourceId) {
       // Still size the overlay to its max even when no card is selected
@@ -955,7 +1144,7 @@ export default function VerificationPage() {
     scrollSelectedCardToTop('auto')
 
     window.requestAnimationFrame(() => {
-      setBrowserOverlayHeight(getOverlayMaxHeight())
+      setBrowserOverlayHeight(getOverlayPreferredHeight())
     })
   }
 
@@ -998,6 +1187,7 @@ export default function VerificationPage() {
     const finishOpen = () => {
       alignOverlayToSelectedCard()
       setBrowserOverlayUrl(url)
+      setBrowserCurrentUrl(url)
       setBrowserOverlayOpen(true)
     }
 
@@ -1089,11 +1279,14 @@ export default function VerificationPage() {
     if (!view) {
       setBrowserCanGoBack(false)
       setBrowserCanGoForward(false)
+      setBrowserCurrentUrl(browserOverlayUrl)
       return
     }
     try {
       setBrowserCanGoBack(Boolean(view.canGoBack?.()))
       setBrowserCanGoForward(Boolean(view.canGoForward?.()))
+      const url = view.getURL?.()
+      if (typeof url === 'string' && url) setBrowserCurrentUrl(url)
     } catch {
       setBrowserCanGoBack(false)
       setBrowserCanGoForward(false)
@@ -1190,7 +1383,12 @@ export default function VerificationPage() {
   }
 
   function clampOverlayHeight(nextHeight: number): number {
-    const minHeight = 220
+    // Floor = actual chrome above the webview (resizer + header + optional
+    // CAPTCHA banner). Measured from the DOM so it stays correct when the
+    // banner appears/disappears, with a 40px fallback for the first render.
+    const overlayEl = browserOverlayRef.current
+    const webviewWrap = overlayEl?.querySelector<HTMLElement>(`.${styles['scholar-overlay-webview-wrap']}`)
+    const minHeight = webviewWrap?.offsetTop ?? 40
     const maxHeight = getOverlayMaxHeight()
     return Math.min(maxHeight, Math.max(minHeight, nextHeight))
   }
@@ -1200,6 +1398,27 @@ export default function VerificationPage() {
     overlayResizeStartRef.current = { y: e.clientY, height: browserOverlayHeight }
     setOverlayResizing(true)
   }
+
+  function maximizeOverlay() {
+    // Use the same card-aware sizing as the initial open: normally leaves the
+    // selected card visible above the overlay, and short-circuits to full max
+    // during CAPTCHA or when no card is focused.
+    scrollSelectedCardToTop('auto')
+    window.requestAnimationFrame(() => {
+      setBrowserOverlayHeight(getOverlayPreferredHeight())
+    })
+  }
+
+  // "Collapsed" = user has dragged the overlay down to just the chrome strip,
+  // so the webview area is effectively gone. Chrome height is resizer + header
+  // (+ optional captcha banner); below ~40px of webview visible, we swap the
+  // zoom controls out for a maximize button.
+  const isOverlayCollapsed = (() => {
+    const overlayEl = browserOverlayRef.current
+    const webviewWrap = overlayEl?.querySelector<HTMLElement>(`.${styles['scholar-overlay-webview-wrap']}`)
+    const chromeHeight = webviewWrap?.offsetTop ?? (scholarStatus === 'captcha' ? 96 : 66)
+    return browserOverlayHeight - chromeHeight < 40
+  })()
 
   useEffect(() => {
     if (!browserOverlayOpen) return
@@ -1223,6 +1442,13 @@ export default function VerificationPage() {
 
   useEffect(() => {
     if (browserOverlayOpen) return
+    // Bottom-of-list cards get a temporary ref-desc sort on overlay open so
+    // they can be scrolled to the top behind the webview. On close, restoring
+    // the original sort drops the card back near the bottom of an unscrolled
+    // list — queue a scroll-into-view so the user doesn't lose it.
+    if (preOverlaySortRef.current && selectedSourceId) {
+      pendingScrollCardIdRef.current = selectedSourceId
+    }
     restorePreOverlaySortIfNeeded()
   }, [browserOverlayOpen])
 
@@ -1243,8 +1469,9 @@ export default function VerificationPage() {
       syncBrowserZoomState()
     }
 
-    // Inject zoom + find handlers into webview content so Ctrl+Wheel and
-    // Ctrl+F work when focus is inside the guest page.
+    // Inject zoom + find + nav handlers into webview content so keyboard and
+    // mouse shortcuts work when focus is inside the guest page. Events are
+    // relayed back via console.log sentinels.
     const injectZoomScript = () => {
       try {
         view.executeJavaScript?.(`
@@ -1263,8 +1490,26 @@ export default function VerificationPage() {
                 e.stopPropagation();
                 console.log('__FIND_OPEN__');
               } else if (e.key === 'Escape') {
-                console.log('__FIND_ESC__');
+                console.log('__OVERLAY_ESC__');
+              } else if (e.key === 'F5') {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('__OVERLAY_RELOAD__');
               }
+            }, true);
+            document.addEventListener('mousedown', function(e) {
+              if (e.button === 3) {
+                e.preventDefault();
+                console.log('__OVERLAY_BACK__');
+              } else if (e.button === 4) {
+                e.preventDefault();
+                console.log('__OVERLAY_FORWARD__');
+              }
+            }, true);
+            document.addEventListener('auxclick', function(e) {
+              // Some browsers fire auxclick for thumb buttons even after
+              // mousedown preventDefault — still block default navigation.
+              if (e.button === 3 || e.button === 4) e.preventDefault();
             }, true);
           })();
         `)
@@ -1283,7 +1528,13 @@ export default function VerificationPage() {
       if (msg === '__ZOOM_IN__') zoomBrowserIn()
       else if (msg === '__ZOOM_OUT__') zoomBrowserOut()
       else if (msg === '__FIND_OPEN__') openFindBar()
-      else if (msg === '__FIND_ESC__' && findBarOpenRef.current) closeFindBar()
+      else if (msg === '__OVERLAY_ESC__') {
+        if (findBarOpenRef.current) closeFindBar()
+        else closeBrowserOverlay()
+      }
+      else if (msg === '__OVERLAY_RELOAD__') reloadBrowserView()
+      else if (msg === '__OVERLAY_BACK__') goBrowserBack()
+      else if (msg === '__OVERLAY_FORWARD__') goBrowserForward()
     }
 
     const onFoundInPage = (event: any) => {
@@ -1323,9 +1574,16 @@ export default function VerificationPage() {
         return
       }
 
-      if (findBarOpen && e.key === 'Escape') {
+      if (e.key === 'Escape') {
         e.preventDefault()
-        closeFindBar()
+        if (findBarOpen) closeFindBar()
+        else closeBrowserOverlay()
+        return
+      }
+
+      if (e.key === 'F5') {
+        e.preventDefault()
+        reloadBrowserView()
         return
       }
 
@@ -1349,8 +1607,26 @@ export default function VerificationPage() {
       }
     }
 
+    // Mouse thumb buttons: button 3 = back, button 4 = forward.
+    // Events over the webview itself are captured by the guest process
+    // (which natively navigates its own history — same outcome), so this
+    // listener handles clicks over the header, banner, and surrounding chrome.
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button === 3) {
+        e.preventDefault()
+        goBrowserBack()
+      } else if (e.button === 4) {
+        e.preventDefault()
+        goBrowserForward()
+      }
+    }
+
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('mousedown', onMouseDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('mousedown', onMouseDown)
+    }
   }, [browserOverlayOpen, zoomBrowserIn, zoomBrowserOut, resetBrowserZoom, findBarOpen, openFindBar, closeFindBar])
 
   // Clear find state when overlay closes or navigates to a new URL.
@@ -1395,23 +1671,67 @@ export default function VerificationPage() {
     const onMouseMove = (e: MouseEvent) => {
       const start = overlayResizeStartRef.current
       if (!start) return
+      // A stray mousemove with no button pressed means we missed the mouseup
+      // (e.g. release happened over the webview's guest process or outside
+      // the window). Cancel the drag instead of letting it follow the cursor.
+      if (e.buttons === 0) {
+        setOverlayResizing(false)
+        overlayResizeStartRef.current = null
+        return
+      }
       const delta = start.y - e.clientY
       setBrowserOverlayHeight(clampOverlayHeight(start.height + delta))
     }
 
-    const onMouseUp = () => {
+    const stopResize = () => {
       setOverlayResizing(false)
       overlayResizeStartRef.current = null
     }
 
     window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+    window.addEventListener('mouseup', stopResize)
+    window.addEventListener('blur', stopResize)
 
     return () => {
       window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
+      window.removeEventListener('mouseup', stopResize)
+      window.removeEventListener('blur', stopResize)
     }
   }, [overlayResizing])
+
+  useEffect(() => {
+    if (!cutoffDragging) return
+
+    const computeSlotFromY = (clientY: number): number => {
+      const n = sortedPdfs.length
+      if (n === 0) return 0
+      for (let i = 0; i < n; i++) {
+        const el = pdfItemRefs.current.get(sortedPdfs[i].id)
+        if (!el) continue
+        const r = el.getBoundingClientRect()
+        if (clientY < r.top + r.height / 2) return i
+      }
+      return n
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (e.buttons === 0) {
+        setCutoffDragging(false)
+        return
+      }
+      setVerifyCutoffIndex(computeSlotFromY(e.clientY))
+    }
+    const stop = () => setCutoffDragging(false)
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', stop)
+    window.addEventListener('blur', stop)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', stop)
+      window.removeEventListener('blur', stop)
+    }
+  }, [cutoffDragging, sortedPdfs, setVerifyCutoffIndex])
 
   return (
     <div className={styles['verify-page']}>
@@ -1426,7 +1746,11 @@ export default function VerificationPage() {
       <aside className={styles['verify-left']} onMouseDownCapture={() => browserOverlayOpen && closeBrowserOverlay()}>
         <div className={styles['panel-header']}>
           <h2 className={styles['panel-title']}>{t('verification.title')}</h2>
-          <button className={styles['start-btn']} onClick={handleStartOrCancel} disabled={pdfs.length === 0}>
+          <button
+            className={styles['start-btn']}
+            onClick={handleStartOrCancel}
+            disabled={pdfs.length === 0 || (!isAnyVerifying && !verifyAllActive && Math.min(verifyCutoffIndex, sortedPdfs.length) === 0)}
+          >
             {(isAnyVerifying || verifyAllActive) ? <><span>&#x25A0;</span> {t('verification.stop')}</> : <><span>&#x25B6;</span> {t('verification.verifyAll')}</>}
           </button>
         </div>
@@ -1466,8 +1790,28 @@ export default function VerificationPage() {
               <p>{t('verification.noApprovedPdfs')}</p>
               <p className={styles['empty-sub']}>{t('verification.approveFirst')}</p>
             </div>
-          ) : (
-            sortedPdfs.map(pdf => {
+          ) : (() => {
+            const effectiveCutoff = Math.min(verifyCutoffIndex, sortedPdfs.length)
+            const renderDivider = () => (
+              <div
+                key="__verify-cutoff__"
+                className={`${styles['verify-divider']} ${cutoffDragging ? styles['verify-divider-dragging'] : ''}`}
+                onMouseDown={startCutoffDrag}
+                title={t('verification.cutoff.dragHint')}
+                role="separator"
+                aria-orientation="horizontal"
+              >
+                <span className={styles['verify-divider-line']} />
+                <span className={styles['verify-divider-label']}>
+                  {effectiveCutoff >= sortedPdfs.length
+                    ? t('verification.cutoff.labelAll')
+                    : t('verification.cutoff.labelPartial', { count: effectiveCutoff })}
+                </span>
+              </div>
+            )
+            const nodes: React.ReactNode[] = []
+            sortedPdfs.forEach((pdf, i) => {
+              if (i === effectiveCutoff) nodes.push(renderDivider())
               const summary = summaries[pdf.id]
               const pdfVerifying = isPdfVerifying(pdf.id)
               const pdfResults = resultsByPdf[pdf.id] ?? {}
@@ -1480,11 +1824,39 @@ export default function VerificationPage() {
                 else if (tt === 'künye') trustKunye++
                 else if (tt === 'uydurma') trustUydurma++
               }
-              return (
+              // While re-verifying a PDF that already had a complete run,
+              // hold the pills at the prior snapshot so they don't drop to
+              // zero and climb back up during the new run.
+              const frozen = pdfVerifying ? frozenPdfCountsRef.current[pdf.id] : undefined
+              const dispFound = frozen ? frozen.found : summary?.found ?? 0
+              const dispProblematic = frozen ? frozen.problematic : summary?.problematic ?? 0
+              const dispNotFound = frozen ? frozen.not_found : summary?.not_found ?? 0
+              const dispTrustValid = frozen ? frozen.trustValid : trustValid
+              const dispTrustKunye = frozen ? frozen.trustKunye : trustKunye
+              const dispTrustUydurma = frozen ? frozen.trustUydurma : trustUydurma
+              nodes.push(
                 <div
                   key={pdf.id}
+                  ref={setPdfItemRef(pdf.id)}
                   className={`${styles['verify-item']} ${effectivePdfId === pdf.id ? styles['verify-selected'] : ''}`}
                   onClick={() => selectPdf(pdf.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    if (!pdfVerifying) return
+                    const order =
+                      useVerificationStore.getState().sourceOrder[pdf.id]
+                      ?? useSourcesStore.getState().sourcesByPdf[pdf.id]?.map(s => s.id)
+                      ?? Object.keys(pdfResults)
+                    const firstInProgress = order.find(id => pdfResults[id]?.status === 'in_progress')
+                    if (!firstInProgress) return
+                    if (effectivePdfId === pdf.id) {
+                      selectSource(firstInProgress)
+                      scrollCardIntoView(firstInProgress, 'smooth')
+                    } else {
+                      pendingJumpRef.current = { pdfId: pdf.id, sourceId: firstInProgress }
+                      selectPdf(pdf.id)
+                    }
+                  }}
                 >
                   <div className={styles['verify-item-top']}>
                     {pdfVerifying ? (
@@ -1501,17 +1873,17 @@ export default function VerificationPage() {
                       title={isPdfVerifying(pdf.id) ? t('verification.stopVerification') : t('verification.verifyThisPdf')}
                     >{isPdfVerifying(pdf.id) ? '\u25A0' : '\u25B6'}</button>
                   </div>
-                  {summary && (
+                  {(summary || frozen) && (
                     <div className={styles['verify-counts']}>
-                      <span className={`${styles['vc']} ${styles['vc-found']}`}>{summary.found}</span>
-                      <span className={`${styles['vc']} ${styles['vc-problematic']}`}>{summary.problematic}</span>
-                      <span className={`${styles['vc']} ${styles['vc-not-found']}`}>{summary.not_found}</span>
-                      {hasPdfResults && (
+                      <span className={`${styles['vc']} ${styles['vc-found']}`}>{dispFound}</span>
+                      <span className={`${styles['vc']} ${styles['vc-problematic']}`}>{dispProblematic}</span>
+                      <span className={`${styles['vc']} ${styles['vc-not-found']}`}>{dispNotFound}</span>
+                      {(hasPdfResults || frozen) && (
                         <>
                           <span className={styles['vc-divider']} aria-hidden="true" />
-                          <span className={`${styles['vc']} ${styles['vc-valid']}`}>{trustValid}</span>
-                          <span className={`${styles['vc']} ${styles['vc-kunye']}`}>{trustKunye}</span>
-                          <span className={`${styles['vc']} ${styles['vc-uydurma']}`}>{trustUydurma}</span>
+                          <span className={`${styles['vc']} ${styles['vc-valid']}`}>{dispTrustValid}</span>
+                          <span className={`${styles['vc']} ${styles['vc-kunye']}`}>{dispTrustKunye}</span>
+                          <span className={`${styles['vc']} ${styles['vc-uydurma']}`}>{dispTrustUydurma}</span>
                         </>
                       )}
                     </div>
@@ -1519,7 +1891,9 @@ export default function VerificationPage() {
                 </div>
               )
             })
-          )}
+            if (effectiveCutoff >= sortedPdfs.length) nodes.push(renderDivider())
+            return nodes
+          })()}
         </div>
       </aside>
 
@@ -1553,21 +1927,19 @@ export default function VerificationPage() {
                 >
                   <button
                     type="button"
-                    className={`${styles['toolbar-btn']} ${cardSortKey !== 'default' ? styles['sort-active'] : ''}`}
+                    className={`${styles['toolbar-btn']} ${styles['sort-active']}`}
                     title={t('verification.sort.label')}
                     aria-haspopup="menu"
                     aria-expanded={sortOpen}
                     onClick={() => setSortOpen(o => !o)}
                   >
                     {t(`verification.sort.${cardSortKey}`)}
-                    {cardSortKey !== 'default' && (
-                      <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>
-                    )}
+                    <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>
                     <span className={styles['sort-caret']} aria-hidden="true">{'\u25be'}</span>
                   </button>
                   {sortOpen && (
                     <ul className={styles['sort-menu']} role="menu">
-                      {(['default', 'ref', 'enabled', 'status', 'trust'] as const).map(key => (
+                      {(['ref', 'enabled', 'status', 'trust'] as const).map(key => (
                         <li key={key} role="none">
                           <button
                             type="button"
@@ -1576,7 +1948,7 @@ export default function VerificationPage() {
                             onClick={() => { toggleCardSort(key); setSortOpen(false) }}
                           >
                             <span>{t(`verification.sort.${key}`)}</span>
-                            {cardSortKey === key && key !== 'default' && (
+                            {cardSortKey === key && (
                               <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>
                             )}
                           </button>
@@ -1676,7 +2048,7 @@ export default function VerificationPage() {
                           className={`${styles['ref-badge']} ${card.enabled ? '' : styles['ref-badge-disabled']}`}
                           aria-pressed={card.enabled}
                           title={card.enabled ? t('verification.disableRef') : t('verification.enableRef')}
-                          onClick={(e) => { e.stopPropagation(); toggleSourceEnabled(card.source.id) }}
+                          onClick={(e) => { e.stopPropagation(); selectSource(card.source.id); toggleSourceEnabled(card.source.id) }}
                         >
                           [{card.source.ref_number ?? '?'}]
                         </button>
@@ -1690,6 +2062,7 @@ export default function VerificationPage() {
                             className={styles['copy-btn']}
                             onClick={(e) => {
                               e.stopPropagation()
+                              selectSource(card.source.id)
                               const text = verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)
                               navigator.clipboard.writeText(text)
                             }}
@@ -1705,6 +2078,7 @@ export default function VerificationPage() {
                               className={styles['reset-btn']}
                               onClick={(e) => {
                                 e.stopPropagation()
+                                selectSource(card.source.id)
                                 resetVerifyText(card.source.id)
                               }}
                               title={t('verification.resetToOriginal')}
@@ -1722,7 +2096,9 @@ export default function VerificationPage() {
                                 const className = on ? baseClass : offClass
                                 const onToggle = (e: React.MouseEvent) => {
                                   e.stopPropagation()
+                                  selectSource(card.source.id)
                                   if (!effectivePdfId || !card.result) return
+                                  pendingScrollCardIdRef.current = card.source.id
                                   useVerificationStore.getState().toggleTag(effectivePdfId, card.source.id, tag)
                                 }
                                 if (isTitle) {
@@ -1772,7 +2148,9 @@ export default function VerificationPage() {
                                 title={tip}
                                 onClick={(e) => {
                                   e.stopPropagation()
+                                  selectSource(card.source.id)
                                   if (!effectivePdfId) return
+                                  pendingScrollCardIdRef.current = card.source.id
                                   useVerificationStore.getState().cycleTrustTag(effectivePdfId, card.source.id)
                                 }}
                               >
@@ -1802,8 +2180,8 @@ export default function VerificationPage() {
                             setVerifyText(card.source.id, el.value)
                             autoResize(el)
                           }}
-                          onFocus={(e) => autoResize(e.target as HTMLTextAreaElement)}
-                          onClick={(e) => e.stopPropagation()}
+                          onFocus={(e) => { selectSource(card.source.id); autoResize(e.target as HTMLTextAreaElement) }}
+                          onClick={(e) => { e.stopPropagation(); selectSource(card.source.id) }}
                           rows={2}
                           disabled={!card.enabled}
                         />
@@ -1923,6 +2301,56 @@ export default function VerificationPage() {
                         <path d="M12.4 7.5A5 5 0 103.8 11" />
                       </svg>
                     </button>
+                  </div>
+                  <div className={styles['scholar-overlay-zoom-actions']}>
+                    {isOverlayCollapsed ? (
+                      <button
+                        className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
+                        onClick={maximizeOverlay}
+                        title={t('verification.browser.maximize')}
+                        aria-label={t('verification.browser.maximize')}
+                      >
+                        <svg className={styles['overlay-icon']} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <polyline points="4,8.5 8,4.5 12,8.5" />
+                          <polyline points="4,12 8,8 12,12" />
+                        </svg>
+                      </button>
+                    ) : Math.abs(browserZoomFactor - 1) > 0.01 ? (
+                      <>
+                        <button
+                          className={`${styles['action-btn']} ${styles['overlay-zoom-btn']}`}
+                          onClick={zoomBrowserOut}
+                          title={t('verification.browser.zoomOut')}
+                          aria-label={t('verification.browser.zoomOut')}
+                        >-</button>
+                        <button
+                          className={`${styles['action-btn']} ${styles['overlay-zoom-readout']}`}
+                          onClick={resetBrowserZoom}
+                          title={t('verification.browser.resetZoom')}
+                          aria-label={t('verification.browser.resetZoom')}
+                        >{Math.round(browserZoomFactor * 100)}%</button>
+                        <button
+                          className={`${styles['action-btn']} ${styles['overlay-zoom-btn']}`}
+                          onClick={zoomBrowserIn}
+                          title={t('verification.browser.zoomIn')}
+                          aria-label={t('verification.browser.zoomIn')}
+                        >+</button>
+                      </>
+                    ) : (
+                      <input
+                        type="text"
+                        className={styles['scholar-overlay-url-bar']}
+                        value={browserCurrentUrl || browserOverlayUrl}
+                        readOnly
+                        spellCheck={false}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onMouseUp={(e) => e.stopPropagation()}
+                        title={browserCurrentUrl || browserOverlayUrl}
+                        aria-label={t('verification.browser.urlBar')}
+                      />
+                    )}
+                  </div>
+                  <div className={styles['scholar-overlay-actions']}>
                     <button
                       className={`${styles['action-btn']} ${styles['overlay-icon-btn']} ${findBarOpen ? styles['overlay-icon-btn-active'] : ''}`}
                       onClick={() => findBarOpen ? closeFindBar() : openFindBar()}
@@ -1935,28 +2363,6 @@ export default function VerificationPage() {
                         <path d="M9.6 9.6L13 13" />
                       </svg>
                     </button>
-                  </div>
-                  <div className={styles['scholar-overlay-zoom-actions']}>
-                    <button
-                      className={`${styles['action-btn']} ${styles['overlay-zoom-btn']}`}
-                      onClick={zoomBrowserOut}
-                      title={t('verification.browser.zoomOut')}
-                      aria-label={t('verification.browser.zoomOut')}
-                    >-</button>
-                    <button
-                      className={`${styles['action-btn']} ${styles['overlay-zoom-readout']}`}
-                      onClick={resetBrowserZoom}
-                      title={t('verification.browser.resetZoom')}
-                      aria-label={t('verification.browser.resetZoom')}
-                    >{Math.round(browserZoomFactor * 100)}%</button>
-                    <button
-                      className={`${styles['action-btn']} ${styles['overlay-zoom-btn']}`}
-                      onClick={zoomBrowserIn}
-                      title={t('verification.browser.zoomIn')}
-                      aria-label={t('verification.browser.zoomIn')}
-                    >+</button>
-                  </div>
-                  <div className={styles['scholar-overlay-actions']}>
                     <button
                       className={`${styles['action-btn']} ${styles['overlay-icon-btn']}`}
                       onClick={() => openExternal(browserOverlayUrl)}
@@ -1991,6 +2397,18 @@ export default function VerificationPage() {
                     useragent={scholarPanelUserAgent}
                     {...({ allowpopups: 'true' } as Record<string, string>)}
                   />
+                  {/* Transparent shield covers the webview during resize so mouseup reaches
+                      the host window — the webview's guest process otherwise swallows it
+                      and leaves the drag stuck on. */}
+                  {overlayResizing && (
+                    <div
+                      className={styles['webview-drag-shield']}
+                      onMouseUp={() => {
+                        setOverlayResizing(false)
+                        overlayResizeStartRef.current = null
+                      }}
+                    />
+                  )}
                   {findBarOpen && (
                     <div className={styles['find-bar']} role="search">
                       <input
@@ -2160,7 +2578,7 @@ export default function VerificationPage() {
                     className={`${styles['override-btn']} ${styles['override-problematic']} ${currentResult?.status === 'problematic' ? styles['override-problematic-active'] : ''}`}
                     disabled={!currentResult || currentResult.status === 'in_progress'}
                     onClick={() => handleOverride('problematic')} title={t('verification.markAsProblematic')}
-                  >!</button>
+                  >~</button>
                   <button
                     className={`${styles['override-btn']} ${styles['override-not-found']} ${currentResult?.status === 'not_found' ? styles['override-not-found-active'] : ''}`}
                     disabled={!currentResult || currentResult.status === 'in_progress'}
@@ -2210,8 +2628,8 @@ export default function VerificationPage() {
                         const linkUrl = match?.search_url || dbCheck?.searchUrl || buildDbSearchUrl(db, searchText)
                         return (
                           <div key={db} className={styles['db-row']}>
-                            <span className={styles['db-icon']} style={{ color: match ? dbScoreColor(match.score) : searched ? '#a8a29e' : '#d6d3d1' }}>
-                              {match ? dbScoreIcon(match.score) : searched ? '\u2715' : '\u25CB'}
+                            <span className={`${styles['db-icon']} ${match && dbScoreIcon(match.score) === '~' ? styles['db-icon-mediocre'] : ''} ${!match && searched ? styles['db-icon-empty'] : ''}`} style={{ color: match ? dbScoreColor(match.score) : searched ? '#a8a29e' : '#d6d3d1' }}>
+                              {match ? dbScoreIcon(match.score) : searched ? '\u2013' : '\u25CB'}
                             </span>
                             {linkUrl ? (
                               <button className={`${styles['db-name']} ${styles['db-link']} ${!searched && !match ? styles['db-link-unsearched'] : ''}`} onClick={() => openOverlayWithUrl(linkUrl)}>{db}</button>

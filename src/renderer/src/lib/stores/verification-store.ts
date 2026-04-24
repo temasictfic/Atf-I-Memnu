@@ -7,9 +7,10 @@ import type {
 import { api } from '../api/rest-client'
 import { wsClient } from '../api/ws-client'
 import { sanitizeReferenceText } from '../utils/reference-text'
+import { effectiveTagOn, effectiveTrustTag } from '../verification/tagState'
 import { usePdfStore } from './pdf-store'
 
-type CardSortKey = 'default' | 'status' | 'ref' | 'enabled' | 'trust'
+type CardSortKey = 'status' | 'ref' | 'enabled' | 'trust'
 type PdfSortKey = 'name' | 'status' | 'found' | 'problematic' | 'not_found' | 'valid' | 'kunye' | 'uydurma'
 
 interface VerificationState {
@@ -31,8 +32,10 @@ interface VerificationState {
   cardSortAsc: boolean
   pdfSortKey: PdfSortKey
   pdfSortAsc: boolean
+  verifyCutoffIndex: number
 
   selectSource: (id: string | null) => void
+  setVerifyCutoffIndex: (n: number) => void
   setVerifyText: (sourceId: string, text: string) => void
   resetVerifyText: (sourceId: string) => void
   toggleSourceEnabled: (sourceId: string) => void
@@ -291,12 +294,15 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   sourceOriginalTexts: {},
   enabledSources: {},
   sourceOrder: {},
-  cardSortKey: 'default' as CardSortKey,
+  cardSortKey: 'ref' as CardSortKey,
   cardSortAsc: true,
   pdfSortKey: 'name' as PdfSortKey,
   pdfSortAsc: true,
+  verifyCutoffIndex: Number.POSITIVE_INFINITY,
 
   selectSource: (id) => set({ selectedSourceId: id }),
+
+  setVerifyCutoffIndex: (n) => set({ verifyCutoffIndex: n < 0 ? 0 : n }),
 
   setVerifyText: (sourceId, text) =>
     set(state => ({ verifyTexts: { ...state.verifyTexts, [sourceId]: text } })),
@@ -687,7 +693,6 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   },
 
   toggleTag: async (pdfId, sourceId, tag) => {
-    const { effectiveTagOn } = await import('../verification/tagState')
     const current = useVerificationStore.getState().resultsByPdf[pdfId]?.[sourceId]
     if (!current) return
     const wasOn = effectiveTagOn(current, tag)
@@ -735,7 +740,6 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       'künye': 'uydurma',
       uydurma: 'clean',
     }
-    const { effectiveTrustTag } = await import('../verification/tagState')
     const current = useVerificationStore.getState().resultsByPdf[pdfId]?.[sourceId]
     if (!current) return
     const next = CYCLE[effectiveTrustTag(current)]
