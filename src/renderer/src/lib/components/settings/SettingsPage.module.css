@@ -199,6 +199,24 @@
 .setting-label { font-size: 13px; color: #292524; display: block; }
 .setting-desc { font-size: 10px; color: #a8a29e; }
 
+.request-key-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+  padding: 4px 10px;
+  border: 1px solid #d97706;
+  border-radius: 999px;
+  color: #d97706;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.request-key-link:hover { background: #d97706; color: #fff; }
+.request-key-link svg { width: 10px; height: 10px; }
+
 .setting-input {
   width: 80px;
   padding: 6px 10px;

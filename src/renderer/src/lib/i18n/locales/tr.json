@@ -63,6 +63,7 @@
       "semanticScholarLabel": "Semantic Scholar API Anahtarı",
       "semanticScholarDesc": "Şiddetle tavsiye edilir.",
       "requestFreeKey": "Ücretsiz anahtar iste",
+      "requestPubmedKey": "NCBI API anahtarı iste",
       "pubmedLabel": "PubMed (NCBI) API Anahtarı",
       "pubmedDesc": "İsteğe bağlı — istek limitlerini artırır (NCBI'dan alın)",
       "optional": "İsteğe bağlı",

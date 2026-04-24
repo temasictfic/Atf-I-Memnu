@@ -63,6 +63,7 @@
       "semanticScholarLabel": "Semantic Scholar API Key",
       "semanticScholarDesc": "Strongly recommended.",
       "requestFreeKey": "Request a free key",
+      "requestPubmedKey": "Request an NCBI API key",
       "pubmedLabel": "PubMed (NCBI) API Key",
       "pubmedDesc": "Optional - increases rate limits (get from NCBI)",
       "optional": "Optional",

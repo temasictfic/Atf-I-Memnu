@@ -240,16 +240,19 @@ export default function SettingsPage() {
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
               <span className={styles['setting-label']}>{t('settings.apiKeys.semanticScholarLabel')}</span>
-              <span className={styles['setting-desc']}>
-                {t('settings.apiKeys.semanticScholarDesc')}{' '}
-                <a
-                  href="https://www.semanticscholar.org/product/api#api-key-form"
-                  onClick={handleOpenExternalLink('https://www.semanticscholar.org/product/api#api-key-form')}
-                >
-                  {t('settings.apiKeys.requestFreeKey')}
-                </a>.
-              </span>
+              <span className={styles['setting-desc']}>{t('settings.apiKeys.semanticScholarDesc')}</span>
             </div>
+            <a
+              className={styles['request-key-link']}
+              href="https://www.semanticscholar.org/product/api#api-key-form"
+              onClick={handleOpenExternalLink('https://www.semanticscholar.org/product/api#api-key-form')}
+            >
+              {t('settings.apiKeys.requestFreeKey')}
+              <svg viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M2 2h5v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </a>
             <input
               type="password"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
@@ -264,6 +267,17 @@ export default function SettingsPage() {
               <span className={styles['setting-label']}>{t('settings.apiKeys.pubmedLabel')}</span>
               <span className={styles['setting-desc']}>{t('settings.apiKeys.pubmedDesc')}</span>
             </div>
+            <a
+              className={styles['request-key-link']}
+              href="https://www.ncbi.nlm.nih.gov/account/settings/"
+              onClick={handleOpenExternalLink('https://www.ncbi.nlm.nih.gov/account/settings/')}
+            >
+              {t('settings.apiKeys.requestPubmedKey')}
+              <svg viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M2 2h5v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </a>
             <input
               type="password"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
