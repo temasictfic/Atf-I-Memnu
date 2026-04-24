@@ -76,14 +76,41 @@ export function getSources(pdfId: string): SourceRectangle[] {
   return useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
 }
 
+// Content-addressed IDs collide when two references share identical text
+// (e.g. the same URL cited twice). renumberSources dedupes with _2/_3 but
+// only runs on edits — fresh detection and backend loads skip it, so the
+// collision leaks into sourceOrder and React keys. Suffix-dedupe here so
+// every path through setSources produces unique IDs.
+function ensureUniqueSourceIds(sources: SourceRectangle[]): SourceRectangle[] {
+  const used = new Set<string>()
+  let changed = false
+  const out = sources.map(s => {
+    if (!used.has(s.id)) {
+      used.add(s.id)
+      return s
+    }
+    changed = true
+    let n = 2
+    let candidate = `${s.id}_${n}`
+    while (used.has(candidate)) {
+      n++
+      candidate = `${s.id}_${n}`
+    }
+    used.add(candidate)
+    return { ...s, id: candidate }
+  })
+  return changed ? out : sources
+}
+
 export function setSources(pdfId: string, sources: SourceRectangle[]): void {
+  const unique = ensureUniqueSourceIds(sources)
   useSourcesStore.setState(state => ({
-    sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: sources },
+    sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: unique },
     originalSourcesByPdf: state.originalSourcesByPdf[pdfId]
       ? state.originalSourcesByPdf
-      : { ...state.originalSourcesByPdf, [pdfId]: [...sources] },
+      : { ...state.originalSourcesByPdf, [pdfId]: [...unique] },
   }))
-  updateSourceCount(pdfId, sources.length)
+  updateSourceCount(pdfId, unique.length)
 }
 
 export function addRectangle(pdfId: string, rect: SourceRectangle): void {
@@ -317,7 +344,7 @@ export async function saveSources(pdfId: string): Promise<void> {
   }
   try {
     await api.updateSources(pdfId, sources)
-    console.log(`%c[saveSources] ✓ ${pdfId} (${sources.length} sources)`, 'color: #22c55e')
+    // console.log(`%c[saveSources] ✓ ${pdfId} (${sources.length} sources)`, 'color: #22c55e')
   } catch (e) {
     console.error(`[saveSources] ✗ ${pdfId}:`, e)
     throw e
