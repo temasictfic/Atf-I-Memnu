@@ -239,6 +239,10 @@ function drawCalloutOnPage(
   const rect = pixelQuadToPdfRect(note.bbox, pageHeightPt)
   const fillColor = hexToRgb(note.color)
 
+  // Per-callout opacity takes precedence; the options-level default is
+  // used only for legacy callouts that predate the per-note field.
+  const effectiveOpacity = clampOpacity(note.opacity ?? calloutOpacity)
+
   // Translucent background rect. Border stays fully opaque so the callout
   // outline remains visible even when the fill is almost transparent.
   page.drawRectangle({
@@ -247,7 +251,7 @@ function drawCalloutOnPage(
     width: rect.x1 - rect.x0,
     height: rect.y1 - rect.y0,
     color: fillColor,
-    opacity: calloutOpacity,
+    opacity: effectiveOpacity,
     borderColor: fillColor,
     borderOpacity: 1,
     borderWidth: 1,

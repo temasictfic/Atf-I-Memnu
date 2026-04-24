@@ -45,6 +45,11 @@ export interface Note {
   fontSize?: number // defaults to DEFAULT_CALLOUT_FONT_SIZE
   bold?: boolean // defaults to false
   textColor?: string // defaults to DEFAULT_CALLOUT_TEXT_COLOR
+  // Per-callout background alpha (0..1). Seeded from `calloutOpacity` at
+  // creation; editing the slider with a callout selected updates just
+  // that note. Absent on highlights and on legacy callouts created before
+  // this field existed — callers fall back to the store default.
+  opacity?: number
   // Set when the note was produced by the auto-annotate action for a specific
   // SourceRectangle. Used to dedupe on re-run so clicking auto-annotate
   // multiple times doesn't stack duplicate markup.

@@ -96,6 +96,7 @@ export async function generateAutoNotesForPdf({
   const calloutTextColor = storeState.calloutTextColor
   const calloutFontSize = storeState.calloutFontSize
   const calloutBold = storeState.calloutBold
+  const calloutOpacity = storeState.calloutOpacity
 
   // Compact single-line height (matches annotation-writer metrics). The
   // extra CALLOUT_WIDTH_SAFETY on width keeps text on one line.
@@ -168,6 +169,7 @@ export async function generateAutoNotesForPdf({
       textColor: calloutTextColor,
       fontSize: calloutFontSize,
       bold: calloutBold,
+      opacity: calloutOpacity,
       autoForSourceId: source.id,
       autoTrustTag: trustTag,
     })
@@ -224,6 +226,7 @@ export async function generateAutoNotesForPdf({
         textColor: calloutTextColor,
         fontSize: titleFontSize,
         bold: true,
+        opacity: calloutOpacity,
         autoForSourceId: titleMarker,
       })
       calloutsAdded++

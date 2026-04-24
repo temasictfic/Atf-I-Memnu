@@ -168,7 +168,7 @@ export function NotesLayer({
               pageHeight={pageHeight}
               selected={note.id === selectedNoteId}
               interactive={interactiveCallouts}
-              opacity={calloutOpacity}
+              opacity={note.opacity ?? calloutOpacity}
               onSelect={onSelectNote}
               onUpdateBbox={onUpdateNoteBbox}
               onMoveToPage={onMoveNoteToPage}

@@ -49,6 +49,7 @@ import {
   updateNote,
   useNotesStore,
   DEFAULT_CALLOUT_FONT_SIZE,
+  DEFAULT_CALLOUT_TEXT_COLOR,
   CALLOUT_FONT_SIZE_MIN,
   CALLOUT_FONT_SIZE_MAX,
 } from "../../stores/notes-store";
@@ -158,6 +159,18 @@ export default function ParsingPage() {
     if (!note) return;
     if (s.activeKind !== note.kind) {
       setActiveKind(note.kind);
+    }
+    // Sync the store defaults to the selected note's values. The right
+    // panel already DISPLAYS those values (see displayNoteColor etc.),
+    // but the store defaults are what auto-annotate and new-note
+    // creation read. Without this sync the user can see one color in
+    // the panel while auto-annotate applies a previously-chosen one.
+    setActiveColor(note.color);
+    if (note.kind === "callout") {
+      if (note.textColor !== undefined) setCalloutTextColor(note.textColor);
+      if (note.fontSize !== undefined) setCalloutFontSize(note.fontSize);
+      if (note.bold !== undefined) setCalloutBold(note.bold);
+      if (note.opacity !== undefined) setCalloutOpacity(note.opacity);
     }
   }, []);
 
@@ -801,6 +814,7 @@ export default function ParsingPage() {
       textColor: s.calloutTextColor,
       fontSize: s.calloutFontSize,
       bold: s.calloutBold,
+      opacity: s.calloutOpacity,
     });
     setSelectedNoteId(note.id);
   }
@@ -844,6 +858,35 @@ export default function ParsingPage() {
     () => notes.find((n) => n.id === selectedNoteId) ?? null,
     [notes, selectedNoteId],
   );
+
+  // When a note is selected AND the active tool matches its kind, the
+  // right-panel controls display that note's own values instead of the
+  // persisted store defaults. This lets the user see at a glance what
+  // the clicked callout/highlight is currently using, and makes the
+  // color picker / size input / bold toggle / opacity slider act as
+  // "edit this note" controls. When no note is selected (or the kinds
+  // differ), the controls fall back to the store defaults so new notes
+  // inherit them on creation.
+  const displayNoteColor =
+    selectedNote && activeNoteKind === selectedNote.kind
+      ? selectedNote.color
+      : activeNoteColor;
+  const displayCalloutTextColor =
+    selectedNote && selectedNote.kind === "callout" && activeNoteKind === "callout"
+      ? selectedNote.textColor ?? DEFAULT_CALLOUT_TEXT_COLOR
+      : calloutTextColor;
+  const displayCalloutFontSize =
+    selectedNote && selectedNote.kind === "callout" && activeNoteKind === "callout"
+      ? selectedNote.fontSize ?? DEFAULT_CALLOUT_FONT_SIZE
+      : calloutDefaultFontSize;
+  const displayCalloutBold =
+    selectedNote && selectedNote.kind === "callout" && activeNoteKind === "callout"
+      ? selectedNote.bold ?? false
+      : calloutDefaultBold;
+  const displayCalloutOpacity =
+    selectedNote && selectedNote.kind === "callout" && activeNoteKind === "callout"
+      ? selectedNote.opacity ?? calloutOpacity
+      : calloutOpacity;
 
   async function handleExportAnnotatedPdf() {
     if (!selectedPdfId) return;
@@ -1720,7 +1763,7 @@ export default function ParsingPage() {
                   style={{
                     flex: 1,
                     background:
-                      activeNoteKind === "highlight" ? activeNoteColor : undefined,
+                      activeNoteKind === "highlight" ? displayNoteColor : undefined,
                   }}
                   title={t("parsing.highlightTool")}
                 >
@@ -1732,7 +1775,7 @@ export default function ParsingPage() {
                   style={{
                     flex: 1,
                     background:
-                      activeNoteKind === "callout" ? activeNoteColor : undefined,
+                      activeNoteKind === "callout" ? displayNoteColor : undefined,
                   }}
                   title={t("parsing.calloutTool")}
                 >
@@ -1751,7 +1794,7 @@ export default function ParsingPage() {
               >
                 <input
                   type="color"
-                  value={activeNoteColor}
+                  value={displayNoteColor}
                   onChange={(e) => applyColorChoice(e.target.value)}
                   title={t("parsing.noteColor")}
                   style={{
@@ -1782,7 +1825,7 @@ export default function ParsingPage() {
                         height: 20,
                         borderRadius: 3,
                         border:
-                          activeNoteColor.toLowerCase() === swatch
+                          displayNoteColor.toLowerCase() === swatch
                             ? "2px solid #111"
                             : "1px solid #d4d4d8",
                         background: swatch,
@@ -1794,44 +1837,60 @@ export default function ParsingPage() {
                 )}
               </div>
 
-              {/* Callout background opacity — applies to every callout
-                  (manual + auto-generated) in the overlay and in the
-                  exported PDF. */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontSize: 11,
-                  color: "#52525b",
-                }}
-                title={t("parsing.calloutOpacity")}
-              >
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={Math.round(calloutOpacity * 100)}
-                  onChange={(e) =>
-                    setCalloutOpacity(Number(e.target.value) / 100)
-                  }
-                  aria-label={t("parsing.calloutOpacityAria")}
+              {/* Callout background opacity. Opacity is stored per-note
+                  (seeded from the store default on creation), so the
+                  slider sets the default for future callouts AND, if a
+                  callout is currently selected, updates just that note.
+                  Other existing callouts — manual or auto-generated —
+                  are untouched. Hidden on the Highlight tab. */}
+              {activeNoteKind === "callout" && (
+                <div
                   style={{
-                    flex: 1,
-                    accentColor: activeNoteColor,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 11,
+                    color: "#52525b",
                   }}
-                />
-                <span
-                  style={{
-                    minWidth: 32,
-                    textAlign: "left",
-                    fontVariantNumeric: "tabular-nums",
-                    marginRight: "auto",
-                  }}
+                  title={t("parsing.calloutOpacity")}
                 >
-                  {Math.round(calloutOpacity * 100)}%
-                </span>
-              </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(displayCalloutOpacity * 100)}
+                    onChange={(e) => {
+                      const next = Number(e.target.value) / 100;
+                      setCalloutOpacity(next);
+                      if (
+                        selectedPdfId &&
+                        selectedNote &&
+                        selectedNote.kind === "callout"
+                      ) {
+                        beginNoteEdit(selectedPdfId);
+                        updateNote(selectedPdfId, selectedNote.id, {
+                          opacity: next,
+                        });
+                      }
+                    }}
+                    aria-label={t("parsing.calloutOpacityAria")}
+                    style={{
+                      flex: 1,
+                      accentColor: displayNoteColor,
+                    }}
+                  />
+                  <span
+                    style={{
+                      minWidth: 32,
+                      textAlign: "left",
+                      fontVariantNumeric: "tabular-nums",
+                      marginRight: "auto",
+                    }}
+                  >
+                    {Math.round(displayCalloutOpacity * 100)}%
+                  </span>
+                </div>
+              )}
 
               {/* Callout typography defaults: text color, font size,
                   bold. Changes persist in the store AND are applied to
@@ -1854,7 +1913,7 @@ export default function ParsingPage() {
                     <span>{t("parsing.text")}</span>
                     <input
                       type="color"
-                      value={calloutTextColor}
+                      value={displayCalloutTextColor}
                       onChange={(e) => {
                         const next = e.target.value;
                         setCalloutTextColor(next);
@@ -1888,7 +1947,7 @@ export default function ParsingPage() {
                       type="number"
                       min={CALLOUT_FONT_SIZE_MIN}
                       max={CALLOUT_FONT_SIZE_MAX}
-                      value={calloutDefaultFontSize}
+                      value={displayCalloutFontSize}
                       onChange={(e) => {
                         const next = Math.max(
                           CALLOUT_FONT_SIZE_MIN,
@@ -1923,7 +1982,7 @@ export default function ParsingPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      const next = !calloutDefaultBold;
+                      const next = !displayCalloutBold;
                       setCalloutBold(next);
                       if (
                         selectedPdfId &&
@@ -1942,8 +2001,8 @@ export default function ParsingPage() {
                       padding: "0 10px",
                       border: "1px solid #d4d4d8",
                       borderRadius: 4,
-                      background: calloutDefaultBold ? "#1f2937" : "#fff",
-                      color: calloutDefaultBold ? "#fff" : "#111",
+                      background: displayCalloutBold ? "#1f2937" : "#fff",
+                      color: displayCalloutBold ? "#fff" : "#111",
                       fontWeight: 700,
                       cursor: "pointer",
                       boxSizing: "border-box",
