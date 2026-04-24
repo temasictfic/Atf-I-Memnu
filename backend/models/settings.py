@@ -25,6 +25,12 @@ class AppSettings(BaseModel):
     max_concurrent_apis: int = app_config.max_concurrent_apis
     max_concurrent_sources_per_pdf: int = app_config.max_concurrent_sources_per_pdf
     auto_scholar_after_verify: bool = True
+    # Callout text used by the Parsing page's per-trust-tag auto-annotate
+    # buttons. Persisted so a user's edits survive app restarts.
+    auto_callout_text_uydurma: str = "Literatürde bulunmamaktadır."
+    auto_callout_text_kunye: str = (
+        "Künye bilgilerinde eksik/hatalı bilgiler bulunmaktadır."
+    )
 
     @classmethod
     def default(cls) -> "AppSettings":

@@ -64,6 +64,9 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     max_concurrent_apis: 5,
     max_concurrent_sources_per_pdf: 3,
     language: 'tr',
+    auto_callout_text_uydurma: 'Literatürde bulunmamaktadır.',
+    auto_callout_text_kunye:
+      'Künye bilgilerinde eksik/hatalı bilgiler bulunmaktadır.',
   },
 
   loadSettings: async () => {

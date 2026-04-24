@@ -1,26 +1,30 @@
-// Build highlight + callout notes automatically from verification results.
+// Build highlight + callout notes automatically from verification results
+// for a single trust-tag category (`uydurma` or `künye`).
 //
-// For every SourceRectangle whose verification status is `not_found` or
-// `problematic`, we drop:
-//   1. A yellow highlight over each of its bboxes (primary + continuation
-//      bboxes for multi-page refs).
-//   2. A compact callout directly below the FIRST bbox of the reference —
-//      sized to its text width (plus padding), ideal single-line height.
-//      Consecutive auto-targeted refs alternate between left-aligned and
-//      right-aligned under the reference so they have less chance of
-//      stacking on top of each other horizontally.
+// For every SourceRectangle whose effective trust tag matches the requested
+// category, we drop:
+//   1. A highlight over each of its bboxes (primary + continuation bboxes
+//      for multi-page refs) using the user's persisted highlight color.
+//   2. A compact callout directly below the FIRST bbox of the reference,
+//      carrying the user-supplied explanation text. Consecutive refs
+//      alternate between left-aligned and right-aligned under the
+//      reference so they have less chance of stacking horizontally.
 //
-// The action is idempotent: every previously auto-generated note is
-// stripped before emitting the new batch.
+// Per-category idempotency: re-running the same category replaces its
+// previous batch without touching the OTHER category's auto notes.
 
-import type { SourceRectangle, VerificationResult, BoundingBox } from '../api/types'
+import type {
+  SourceRectangle,
+  VerificationResult,
+  BoundingBox,
+} from '../api/types'
 import {
   addNote,
-  removeAutoNotesForPdf,
+  removeAutoNotesForPdfByTrustTag,
   useNotesStore,
-  AUTO_CALLOUT_TEXT_NOT_FOUND,
-  AUTO_CALLOUT_TEXT_PROBLEMATIC,
+  type AutoTrustTag,
 } from '../stores/notes-store'
+import { effectiveTrustTag } from '../verification/tagState'
 import { SCALE } from '../pdf/types'
 // Load the exact same TTFs that annotation-writer embeds into the
 // exported PDF. The `?url` asset import gives us a URL we can feed into
@@ -51,6 +55,12 @@ interface GenerateArgs {
   resultsBySourceId: Record<string, VerificationResult>
   pageHeightFor: (pageNum: number) => number
   pageWidthFor: (pageNum: number) => number
+  // Which trust category this run targets. Only refs whose
+  // effectiveTrustTag() equals this value receive highlights/callouts.
+  trustTag: AutoTrustTag
+  // Text stamped into every callout this run. Comes from the user's
+  // editable, persisted text box for the corresponding button.
+  calloutText: string
 }
 
 interface GenerateStats {
@@ -65,6 +75,8 @@ export async function generateAutoNotesForPdf({
   resultsBySourceId,
   pageHeightFor,
   pageWidthFor,
+  trustTag,
+  calloutText,
 }: GenerateArgs): Promise<GenerateStats> {
   // Wait for Liberation Sans to be available to the canvas measurer
   // before we size any callouts. If loading fails we fall back to the
@@ -72,7 +84,7 @@ export async function generateAutoNotesForPdf({
   // below); otherwise widths match the exporter exactly.
   await measureFontReady.catch(() => undefined)
 
-  removeAutoNotesForPdf(pdfId)
+  removeAutoNotesForPdfByTrustTag(pdfId, trustTag)
 
   // Pull the user's persisted defaults (colors, text color, font size,
   // boldness) from the notes-store so Auto-annotate uses the same palette
@@ -98,7 +110,7 @@ export async function generateAutoNotesForPdf({
   for (const source of sources) {
     const result = resultsBySourceId[source.id]
     if (!result) continue
-    if (result.status !== 'not_found' && result.status !== 'problematic') continue
+    if (effectiveTrustTag(result) !== trustTag) continue
 
     const bboxes: BoundingBox[] =
       source.bboxes && source.bboxes.length > 0 ? source.bboxes : [source.bbox]
@@ -113,6 +125,7 @@ export async function generateAutoNotesForPdf({
         text: source.text,
         color: highlightColor,
         autoForSourceId: source.id,
+        autoTrustTag: trustTag,
       })
       highlightsAdded++
     }
@@ -122,10 +135,6 @@ export async function generateAutoNotesForPdf({
     const anchor = bboxes[0]
     const pageH = pageHeightFor(anchor.page)
 
-    const isNotFound = result.status === 'not_found'
-    const calloutText = isNotFound
-      ? AUTO_CALLOUT_TEXT_NOT_FOUND
-      : AUTO_CALLOUT_TEXT_PROBLEMATIC
     const textWidthPx = measureTextWidthScalePx(
       calloutText,
       calloutFontSize,
@@ -160,6 +169,7 @@ export async function generateAutoNotesForPdf({
       fontSize: calloutFontSize,
       bold: calloutBold,
       autoForSourceId: source.id,
+      autoTrustTag: trustTag,
     })
     calloutsAdded++
   }
@@ -195,6 +205,15 @@ export async function generateAutoNotesForPdf({
         x1: titleX0 + titleWidthPx,
         y1: titleTopMarginPx + titleHeightPx,
       }
+      // Strip the prior title (if the other category already stamped one)
+      // so re-running this function never double-adds.
+      const titleMarker = `__pdf_title__${pdfId}`
+      useNotesStore.setState(state => {
+        const list = state.notesByPdf[pdfId] ?? []
+        const filtered = list.filter(n => n.autoForSourceId !== titleMarker)
+        if (filtered.length === list.length) return state
+        return { notesByPdf: { ...state.notesByPdf, [pdfId]: filtered } }
+      })
       addNote({
         pdfId,
         pageNum: titlePageNum,
@@ -205,7 +224,7 @@ export async function generateAutoNotesForPdf({
         textColor: calloutTextColor,
         fontSize: titleFontSize,
         bold: true,
-        autoForSourceId: `__pdf_title__${pdfId}`,
+        autoForSourceId: titleMarker,
       })
       calloutsAdded++
     }

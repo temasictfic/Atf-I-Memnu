@@ -124,6 +124,13 @@ export default function ParsingPage() {
   const calloutTextColor = useNotesStore((s) => s.calloutTextColor);
   const calloutDefaultFontSize = useNotesStore((s) => s.calloutFontSize);
   const calloutDefaultBold = useNotesStore((s) => s.calloutBold);
+  const autoCalloutTextUydurma = useSettingsStore(
+    (s) => s.settings.auto_callout_text_uydurma ?? "",
+  );
+  const autoCalloutTextKunye = useSettingsStore(
+    (s) => s.settings.auto_callout_text_kunye ?? "",
+  );
+  const updateSetting = useSettingsStore((s) => s.updateSetting);
   const notes = useMemo(
     () => (selectedPdfId ? (notesByPdf[selectedPdfId] ?? []) : []),
     [notesByPdf, selectedPdfId],
@@ -798,7 +805,10 @@ export default function ParsingPage() {
     setSelectedNoteId(note.id);
   }
 
-  async function handleAutoAnnotate() {
+  async function runAutoAnnotateForTrustTag(
+    trustTag: "uydurma" | "künye",
+    calloutText: string,
+  ) {
     if (!selectedPdfId) return;
     beginNoteEdit(selectedPdfId);
     const results =
@@ -810,11 +820,11 @@ export default function ParsingPage() {
       resultsBySourceId: results,
       pageHeightFor: (pageNum) => pages[pageNum]?.height ?? 0,
       pageWidthFor: (pageNum) => pages[pageNum]?.width ?? 0,
+      trustTag,
+      calloutText,
     });
     if (stats.highlightsAdded === 0 && stats.calloutsAdded === 0) {
-      window.alert(
-        "No non-Found references to annotate.",
-      );
+      window.alert(t("parsing.autoAnnotateNoneMatched"));
     }
   }
 
@@ -1945,18 +1955,95 @@ export default function ParsingPage() {
                 </div>
               )}
 
-              {/* Auto-annotate Not Found + Problematic references. Creates
-                  a highlight over each matching reference and a Turkish
-                  explanation callout directly below it. Idempotent — runs
-                  twice produce the same set of notes. */}
-              <button
-                className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
-                onClick={handleAutoAnnotate}
-                disabled={!selectedPdfId || sources.length === 0}
-                title={t("parsing.autoAnnotateTitle")}
+              {/* Per-trust-tag auto-annotate. One block per category
+                  (Uydurma / Künye): an editable textarea carrying the
+                  callout text the user wants stamped, plus the button
+                  that runs the sweep. Textarea contents persist via the
+                  backend settings store. Each button only replaces its
+                  own category's prior auto notes. */}
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  padding: 8,
+                  border: "1px solid #e4e4e7",
+                  borderRadius: 4,
+                }}
               >
-                {t("parsing.autoAnnotate")}
-              </button>
+                <span style={{ fontSize: 11, color: "#71717a" }}>
+                  {t("parsing.autoAnnotateUydurmaLabel")}
+                </span>
+                <textarea
+                  value={autoCalloutTextUydurma}
+                  onChange={(e) =>
+                    updateSetting("auto_callout_text_uydurma", e.target.value)
+                  }
+                  rows={2}
+                  style={{
+                    padding: "4px 8px",
+                    border: "1px solid #d4d4d8",
+                    borderRadius: 4,
+                    fontSize: 12,
+                    resize: "vertical",
+                    fontFamily: "inherit",
+                    whiteSpace: "pre-wrap",
+                  }}
+                />
+                <button
+                  className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                  onClick={() =>
+                    runAutoAnnotateForTrustTag(
+                      "uydurma",
+                      autoCalloutTextUydurma,
+                    )
+                  }
+                  disabled={!selectedPdfId || sources.length === 0}
+                  title={t("parsing.autoAnnotateUydurmaTitle")}
+                >
+                  {t("parsing.autoAnnotateUydurma")}
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  padding: 8,
+                  border: "1px solid #e4e4e7",
+                  borderRadius: 4,
+                }}
+              >
+                <span style={{ fontSize: 11, color: "#71717a" }}>
+                  {t("parsing.autoAnnotateKunyeLabel")}
+                </span>
+                <textarea
+                  value={autoCalloutTextKunye}
+                  onChange={(e) =>
+                    updateSetting("auto_callout_text_kunye", e.target.value)
+                  }
+                  rows={2}
+                  style={{
+                    padding: "4px 8px",
+                    border: "1px solid #d4d4d8",
+                    borderRadius: 4,
+                    fontSize: 12,
+                    resize: "vertical",
+                    fontFamily: "inherit",
+                    whiteSpace: "pre-wrap",
+                  }}
+                />
+                <button
+                  className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
+                  onClick={() =>
+                    runAutoAnnotateForTrustTag("künye", autoCalloutTextKunye)
+                  }
+                  disabled={!selectedPdfId || sources.length === 0}
+                  title={t("parsing.autoAnnotateKunyeTitle")}
+                >
+                  {t("parsing.autoAnnotateKunye")}
+                </button>
+              </div>
 
               {/* Selected-note inline editor */}
               {selectedNote ? (
@@ -2123,8 +2210,14 @@ export default function ParsingPage() {
                           <a
                             className={styles["field-link"]}
                             href={parsedFields.url}
-                            target="_blank"
-                            rel="noreferrer"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              window.electronAPI
+                                .openExternal(parsedFields.url!)
+                                .catch((err) =>
+                                  console.error("Failed to open URL:", err),
+                                );
+                            }}
                           >
                             {parsedFields.url.length > 50
                               ? parsedFields.url.slice(0, 50) + "..."

@@ -7,7 +7,13 @@
 
 import { create } from 'zustand'
 
+import type { TrustTag } from '../api/types'
+
 export type NoteKind = 'highlight' | 'callout'
+
+// Subset of TrustTag that the per-trust-tag auto-annotate buttons emit. 'clean'
+// never produces auto notes — only flagged references do.
+export type AutoTrustTag = Extract<TrustTag, 'uydurma' | 'künye'>
 
 export interface NoteQuad {
   // A single highlight rectangle in page-local pixel coordinates (SCALE space),
@@ -43,6 +49,10 @@ export interface Note {
   // SourceRectangle. Used to dedupe on re-run so clicking auto-annotate
   // multiple times doesn't stack duplicate markup.
   autoForSourceId?: string
+  // Which trust-tag button produced this note. Lets the per-category auto
+  // remover wipe its own batch without touching the other category's notes.
+  // Absent on the shared title callout and on manual notes.
+  autoTrustTag?: AutoTrustTag
   createdAt: number
 }
 
@@ -52,11 +62,6 @@ export const CALLOUT_FONT_SIZE_MAX = 48
 export const DEFAULT_CALLOUT_TEXT_COLOR = '#13151f'
 export const DEFAULT_HIGHLIGHT_COLOR = '#fde68a'
 export const DEFAULT_CALLOUT_COLOR = '#fca5a5'
-
-// Hardcoded Turkish callout templates for the auto-annotate feature.
-export const AUTO_CALLOUT_TEXT_NOT_FOUND = 'Literatürde bulunmamaktadır.'
-export const AUTO_CALLOUT_TEXT_PROBLEMATIC =
-  'Künye bilgilerinde eksik/hatalı bilgiler bulunmaktadır.'
 
 // Default callout background alpha (0..1). User-adjustable via the Notes panel.
 export const DEFAULT_CALLOUT_OPACITY = 1.0
@@ -213,6 +218,26 @@ export function removeAutoNotesForPdf(pdfId: string): void {
     const list = state.notesByPdf[pdfId]
     if (!list) return state
     const filtered = list.filter(n => !n.autoForSourceId)
+    if (filtered.length === list.length) return state
+    return {
+      notesByPdf: { ...state.notesByPdf, [pdfId]: filtered },
+    }
+  })
+}
+
+// Drop only the auto-generated notes belonging to one trust-tag category.
+// Lets the two per-category buttons re-run independently without wiping each
+// other. The shared title callout is managed separately by auto-notes.ts so
+// clicking a category that has zero matching refs doesn't delete the title
+// stamped by the other category.
+export function removeAutoNotesForPdfByTrustTag(
+  pdfId: string,
+  trustTag: AutoTrustTag,
+): void {
+  useNotesStore.setState(state => {
+    const list = state.notesByPdf[pdfId]
+    if (!list) return state
+    const filtered = list.filter(n => n.autoTrustTag !== trustTag)
     if (filtered.length === list.length) return state
     return {
       notesByPdf: { ...state.notesByPdf, [pdfId]: filtered },
