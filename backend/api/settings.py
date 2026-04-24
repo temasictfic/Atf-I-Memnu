@@ -176,6 +176,19 @@ async def validate_openaire_token(payload: OpenaireValidateRequest):
     return {"valid": True, "settings": updated.model_dump()}
 
 
+@router.get("/settings/openaire/status")
+async def get_openaire_status():
+    """Expose the most recent refresh-token exchange outcome.
+
+    Lets the Settings page surface silent mid-run auth failures (expired
+    token, OpenAIRE brownout, etc.) that would otherwise go unnoticed —
+    the verifier falls back to anonymous, so rates quietly tank without a
+    visible error anywhere.
+    """
+    from services.openaire_token_manager import get_runtime_status
+    return get_runtime_status()
+
+
 @router.post("/settings/openaire/disconnect")
 async def disconnect_openaire():
     """Clear the stored OpenAIRE refresh token and reset its saved-at date."""

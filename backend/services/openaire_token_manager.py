@@ -22,6 +22,7 @@ the user has not connected, has typo'd their token, or OpenAIRE is down.
 import asyncio
 import time
 from datetime import datetime, timezone
+from typing import Literal
 
 import aiohttp
 
@@ -36,6 +37,30 @@ _EXPIRY_SAFETY_MARGIN_SECONDS = 60.0
 _cache_lock = asyncio.Lock()
 _cached_access_token: str | None = None
 _cached_expires_at: float = 0.0  # monotonic seconds; 0 = "no cache"
+# Truncated fingerprint of the refresh token the cached access token was
+# derived from. Lets us detect out-of-band rotations (user edited settings,
+# or a disconnect+reconnect with a different token) and drop the stale
+# bearer even if the caller forgot to invalidate.
+_cached_refresh_fingerprint: str | None = None
+
+# Runtime status of the most recent exchange. Surfaced to the Settings UI
+# so a silent mid-run failure (refresh token expired mid-batch, OpenAIRE
+# down, etc.) doesn't leave the user wondering why rate limits tanked.
+OpenaireExchangeStatus = Literal["never", "ok", "failed"]
+_runtime_status: OpenaireExchangeStatus = "never"
+_runtime_last_attempt_ms: int | None = None
+_runtime_last_error: str | None = None
+
+
+def _fingerprint_of(refresh_token: str) -> str:
+    """Truncated fingerprint for cache-binding without storing a duplicate token.
+
+    8-char prefix + length is enough to detect substitution; the raw token
+    still lives on disk via settings, we're only using this for equality.
+    """
+    if not refresh_token:
+        return ""
+    return refresh_token[:8] + ":" + str(len(refresh_token))
 
 
 def invalidate_cache() -> None:
@@ -45,9 +70,19 @@ def invalidate_cache() -> None:
     disconnected) so the next verifier request re-exchanges instead of
     reusing a token bound to a token the user just invalidated.
     """
-    global _cached_access_token, _cached_expires_at
+    global _cached_access_token, _cached_expires_at, _cached_refresh_fingerprint
     _cached_access_token = None
     _cached_expires_at = 0.0
+    _cached_refresh_fingerprint = None
+
+
+def get_runtime_status() -> dict:
+    """Return the most recent exchange outcome for the Settings UI."""
+    return {
+        "status": _runtime_status,
+        "last_attempt_at_ms": _runtime_last_attempt_ms,
+        "last_error": _runtime_last_error,
+    }
 
 
 async def exchange_refresh_token(
@@ -92,16 +127,24 @@ async def _refresh_and_cache(refresh_token: str) -> str | None:
 
     Returns the new access token on success, ``None`` on any error (the
     caller falls back to anonymous). Errors are swallowed here — the verifier
-    path should never raise just because auth glue hiccupped.
+    path should never raise just because auth glue hiccupped — but they are
+    recorded in the runtime status so the Settings UI can surface them.
     """
-    global _cached_access_token, _cached_expires_at
+    global _cached_access_token, _cached_expires_at, _cached_refresh_fingerprint
+    global _runtime_status, _runtime_last_attempt_ms, _runtime_last_error
+    _runtime_last_attempt_ms = int(time.time() * 1000)
+
     try:
         data = await exchange_refresh_token(refresh_token)
-    except RuntimeError:
+    except RuntimeError as exc:
+        _runtime_status = "failed"
+        _runtime_last_error = str(exc)
         return None
 
     access_token = data.get("access_token")
     if not isinstance(access_token, str) or not access_token:
+        _runtime_status = "failed"
+        _runtime_last_error = "OpenAIRE returned no access token."
         return None
 
     # OpenAIRE advertises expires_in in seconds (usually 3600). Be defensive —
@@ -117,6 +160,9 @@ async def _refresh_and_cache(refresh_token: str) -> str | None:
     _cached_expires_at = (
         time.monotonic() + max(expires_in - _EXPIRY_SAFETY_MARGIN_SECONDS, 30.0)
     )
+    _cached_refresh_fingerprint = _fingerprint_of(refresh_token)
+    _runtime_status = "ok"
+    _runtime_last_error = None
 
     # OpenAIRE may rotate the refresh token. Persist the new one so the user
     # doesn't hit an unexpected sign-out next month. Imported inline to avoid
@@ -135,6 +181,10 @@ async def _refresh_and_cache(refresh_token: str) -> str | None:
                 .isoformat(),
             })
             _save_settings(updated)
+            # Re-bind the fingerprint so a racing verifier that reads the
+            # freshly persisted refresh token right after this write doesn't
+            # treat our just-cached access token as stale and re-exchange.
+            _cached_refresh_fingerprint = _fingerprint_of(new_refresh)
         except Exception:
             # Persistence failure is non-fatal: we still have a valid access
             # token in memory. The worst case is the user re-paste next month.
@@ -148,6 +198,8 @@ async def get_access_token() -> str | None:
 
     Resolves the current refresh token from app settings each call so a
     user's disconnect/reconnect during the session takes effect immediately.
+    Also detects out-of-band token swaps via a fingerprint comparison, so a
+    reconnect with a different token can't serve the prior bearer.
     """
     # Resolving settings inline keeps this module import-safe before the
     # FastAPI app has finished wiring its settings router.
@@ -160,12 +212,26 @@ async def get_access_token() -> str | None:
         return None
 
     if not refresh_token:
+        # User disconnected. Clear cached token so a later reconnect with a
+        # different token can't round-trip the previous bearer.
+        invalidate_cache()
         return None
+
+    fingerprint = _fingerprint_of(refresh_token)
 
     async with _cache_lock:
         if (
             _cached_access_token
             and time.monotonic() < _cached_expires_at
+            and _cached_refresh_fingerprint == fingerprint
         ):
             return _cached_access_token
+        # Refresh token was replaced out-of-band (e.g. user edited the
+        # settings file directly). Drop the stale access token before we
+        # consider reusing it.
+        if (
+            _cached_refresh_fingerprint is not None
+            and _cached_refresh_fingerprint != fingerprint
+        ):
+            invalidate_cache()
         return await _refresh_and_cache(refresh_token)
