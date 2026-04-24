@@ -86,6 +86,12 @@ export const api = {
   overrideStatus: (pdfId: string, sourceId: string, status: 'found' | 'problematic' | 'not_found') =>
     request<{ success: boolean }>('PUT', `/api/verify/override/${pdfId}/${sourceId}`, { status }),
 
+  setTagOverride: (pdfId: string, sourceId: string, tag: string, state: boolean | null) =>
+    request<{ success: boolean }>('POST', `/api/verify/tag-override/${pdfId}/${sourceId}`, { tag, state }),
+
+  setTrustOverride: (pdfId: string, sourceId: string, trust: import('./types').TrustTag | null) =>
+    request<{ success: boolean }>('POST', `/api/verify/trust-override/${pdfId}/${sourceId}`, { trust }),
+
   scoreScholar: (pdfId: string, sourceId: string, sourceText: string, candidates: import('./types').ScholarCandidate[]) =>
     request<import('./types').ScoreScholarResponse>('POST', '/api/verify/score-scholar', {
       pdf_id: pdfId, source_id: sourceId, source_text: sourceText, candidates,

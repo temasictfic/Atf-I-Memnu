@@ -7,8 +7,9 @@ import { useVerificationStore } from '../../stores/verification-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useScholarScanStore } from '../../stores/scholar-scan-store'
 import { scholarScanner } from '../../services/scholar-scanner'
-import type { VerificationResult, MatchResult, DbCheckEntry } from '../../api/types'
+import type { VerificationResult, MatchResult, DbCheckEntry, TagKey } from '../../api/types'
 import { api } from '../../api/rest-client'
+import { TAG_ORDER, effectiveTagOn, effectiveTrustTag } from '../../verification/tagState'
 import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../../utils/reference-text'
 import styles from './VerificationPage.module.css'
 
@@ -22,7 +23,7 @@ function statusColor(result: VerificationResult | undefined): string {
   switch (result.status) {
     case 'found': return '#22c55e'
     case 'problematic': return '#f59e0b'
-    case 'not_found': return '#9ca3af'
+    case 'not_found': return '#ef4444'
     case 'in_progress': return '#3b82f6'
     default: return '#a8a29e'
   }
@@ -43,9 +44,9 @@ function problemTagDescription(tag: string): string {
   switch (tag) {
     case '!authors': return i18n.t('verification.problemDesc.authors')
     case '!doi/arXiv': return i18n.t('verification.problemDesc.doi')
-    case '!url': return i18n.t('verification.problemDesc.url')
     case '!year': return i18n.t('verification.problemDesc.year')
     case '!source': return i18n.t('verification.problemDesc.source')
+    case '!title': return i18n.t('verification.problemDesc.title')
     default: return tag
   }
 }
@@ -150,6 +151,20 @@ export default function VerificationPage() {
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const currentSummary = useMemo(() => (effectivePdfId ? summaries[effectivePdfId] : undefined), [summaries, effectivePdfId])
   const orderedSourceIds = useMemo(() => (effectivePdfId ? (sourceOrder[effectivePdfId] ?? []) : []), [sourceOrder, effectivePdfId])
+
+  // Sort-dropdown open state + click-outside wiring
+  const [sortOpen, setSortOpen] = useState(false)
+  const sortDropdownRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!sortOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (sortDropdownRef.current && !sortDropdownRef.current.contains(e.target as Node)) {
+        setSortOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [sortOpen])
 
   // Toast for verification completion – only for actual runs, not cached loads
   const [verifyToast, setVerifyToast] = useState<string | null>(null)
@@ -282,6 +297,26 @@ export default function VerificationPage() {
   // --- Left panel sorting (persisted in store) ---
   const { togglePdfSort } = useVerificationStore.getState()
 
+  // Per-PDF trust counts, computed from the in-memory results map.
+  // Kept in sync with the left-panel count pills and the new trust sorts.
+  const trustCountsByPdf = useMemo(() => {
+    const out: Record<string, { valid: number; kunye: number; uydurma: number }> = {}
+    for (const pdfId of Object.keys(resultsByPdf)) {
+      let v = 0, k = 0, u = 0
+      for (const r of Object.values(resultsByPdf[pdfId] ?? {})) {
+        // Skip sources still mid-verification — they'd otherwise get
+        // classified as Uydurma before the best match lands.
+        if (r.status === 'in_progress' || r.status === 'pending') continue
+        const tt = effectiveTrustTag(r)
+        if (tt === 'clean') v++
+        else if (tt === 'künye') k++
+        else if (tt === 'uydurma') u++
+      }
+      out[pdfId] = { valid: v, kunye: k, uydurma: u }
+    }
+    return out
+  }, [resultsByPdf])
+
   const sortedPdfs = useMemo(() => {
     const list = [...pdfs]
     const dir = pdfSortAsc ? 1 : -1
@@ -296,10 +331,16 @@ export default function VerificationPage() {
       }
       if (pdfSortKey === 'found') return dir * ((sa?.found ?? 0) - (sb?.found ?? 0))
       if (pdfSortKey === 'problematic') return dir * ((sa?.problematic ?? 0) - (sb?.problematic ?? 0))
-      return dir * ((sa?.not_found ?? 0) - (sb?.not_found ?? 0))
+      if (pdfSortKey === 'not_found') return dir * ((sa?.not_found ?? 0) - (sb?.not_found ?? 0))
+      const ta = trustCountsByPdf[a.id] ?? { valid: 0, kunye: 0, uydurma: 0 }
+      const tb = trustCountsByPdf[b.id] ?? { valid: 0, kunye: 0, uydurma: 0 }
+      if (pdfSortKey === 'valid') return dir * (ta.valid - tb.valid)
+      if (pdfSortKey === 'kunye') return dir * (ta.kunye - tb.kunye)
+      if (pdfSortKey === 'uydurma') return dir * (ta.uydurma - tb.uydurma)
+      return 0
     })
     return list
-  }, [pdfs, pdfSortKey, pdfSortAsc, summaries])
+  }, [pdfs, pdfSortKey, pdfSortAsc, summaries, trustCountsByPdf])
 
   // --- Center panel sorting (persisted in store) ---
   const { toggleCardSort } = useVerificationStore.getState()
@@ -316,6 +357,16 @@ export default function VerificationPage() {
       }
       if (cardSortKey === 'ref') {
         return dir * ((a.source.ref_number ?? 999) - (b.source.ref_number ?? 999))
+      }
+      if (cardSortKey === 'trust') {
+        // Order values chosen so that ascending (dir=+1) puts Uydurma first —
+        // but default direction is desc (asc=false, dir=-1), which flips to
+        // Geçerli-first. Invert by using the complement so the DEFAULT click
+        // lands on Uydurma → Künye → Geçerli.
+        const trustOrder: Record<string, number> = { uydurma: 0, 'künye': 1, clean: 2 }
+        const ao = trustOrder[effectiveTrustTag(a.result)] ?? 99
+        const bo = trustOrder[effectiveTrustTag(b.result)] ?? 99
+        return -dir * (ao - bo)
       }
       // enabled: enabled first when ascending
       const ae = a.enabled ? 0 : 1
@@ -540,10 +591,15 @@ export default function VerificationPage() {
       }
       if (!target) return
 
-      const currentSources = sourcesByPdf[effectivePdfId] ?? []
+      // Respect the middle-pane sort order (sorted but unfiltered), and
+      // exclude disabled references so the report reflects what the user
+      // actually verified/kept.
+      const sortedSourcesForExport = sortedSourceCards
+        .filter(c => c.enabled)
+        .map(c => c.source)
       const allVerifyTexts = useVerificationStore.getState().verifyTexts
 
-      const reportSources = currentSources.map(s => {
+      const reportSources = sortedSourcesForExport.map(s => {
         const r = pdfResults[s.id]
         const bm = r?.best_match
         const refText = allVerifyTexts[s.id] ?? s.text ?? ''
@@ -565,6 +621,9 @@ export default function VerificationPage() {
           text: refText,
           status: r?.status ?? 'pending',
           problemTags: r?.problem_tags ?? [],
+          trustTag: (r?.trust_tag ?? 'clean') as 'clean' | 'künye' | 'uydurma',
+          trustTagOverride: (r?.trust_tag_override ?? null) as 'clean' | 'künye' | 'uydurma' | null,
+          tagOverrides: r?.tag_overrides,
           scholarUrl,
           googleUrl,
           bestMatch: bm ? {
@@ -583,10 +642,16 @@ export default function VerificationPage() {
         }
       })
 
+      const baseSummary = summaries[effectivePdfId] ?? { found: 0, problematic: 0, not_found: 0, total: sortedSourcesForExport.length }
+      const effectiveTrust = (r: typeof reportSources[number]) => r.trustTagOverride ?? r.trustTag
+      const validCount = reportSources.filter(r => effectiveTrust(r) === 'clean').length
+      const kunyeCount = reportSources.filter(r => effectiveTrust(r) === 'künye').length
+      const uydurmaCount = reportSources.filter(r => effectiveTrust(r) === 'uydurma').length
+
       const { generateVerificationReport } = await import('../../pdf/verification-report-writer')
       const pdfBytes = await generateVerificationReport({
         pdfName,
-        summary: summaries[effectivePdfId] ?? { found: 0, problematic: 0, not_found: 0, total: currentSources.length },
+        summary: { ...baseSummary, valid: validCount, kunye: kunyeCount, uydurma: uydurmaCount },
         sources: reportSources,
         labels: {
           header: t('verification.exportPdfHeader'),
@@ -598,9 +663,10 @@ export default function VerificationPage() {
           noMatch: t('verification.exportPdfNoMatch'),
           references: t('verification.exportPdfReferences'),
           titleTag: t('verification.titleShort'),
+          validTag: t('verification.validTag'),
           citationTag: t('verification.citationTag'),
+          uydurmaTag: t('verification.uydurmaTag'),
           citationError: t('verification.exportPdfCitationError'),
-          highScoreWarning: t('verification.highScoreWarning'),
           tagLabel: (tag: string) => problemTagLabel(tag),
         },
       })
@@ -764,7 +830,7 @@ export default function VerificationPage() {
         if (!state || state.hasCaptcha || !state.hasResults) return
         if (state.ready !== 'complete' && state.ready !== 'interactive') return
 
-        console.log('[Scholar] CAPTCHA solved detected, auto-resuming')
+        // console.log('[Scholar] CAPTCHA solved detected, auto-resuming')
         resumed = true
         useScholarScanStore.getState().resumeAfterCaptcha()
       } catch {
@@ -1373,15 +1439,24 @@ export default function VerificationPage() {
             <button className={`${styles['sort-btn']} ${styles['sort-btn-grow']} ${pdfSortKey === 'name' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('name')} title={t('verification.sort.byName')}>
               {t('verification.sort.name')}{pdfSortKey === 'name' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'found' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('found')} title={t('verification.sort.byFound')} style={{ color: pdfSortKey === 'found' ? '#22c55e' : undefined }}>
-              &#x2713;{pdfSortKey === 'found' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
-            </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'problematic' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('problematic')} title={t('verification.sort.byProblematic')} style={{ color: pdfSortKey === 'problematic' ? '#f59e0b' : undefined }}>
-              !{pdfSortKey === 'problematic' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
-            </button>
-            <button className={`${styles['sort-btn']} ${pdfSortKey === 'not_found' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('not_found')} title={t('verification.sort.byNotFound')} style={{ color: pdfSortKey === 'not_found' ? '#9ca3af' : undefined }}>
-              &#x2715;{pdfSortKey === 'not_found' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
-            </button>
+            {([
+              { key: 'found',       color: '#22c55e', titleKey: 'verification.sort.byFound' },
+              { key: 'problematic', color: '#f59e0b', titleKey: 'verification.sort.byProblematic' },
+              { key: 'not_found',   color: '#ef4444', titleKey: 'verification.sort.byNotFound' },
+              { key: 'valid',       color: '#86efac', titleKey: 'verification.sort.byValid' },
+              { key: 'kunye',       color: '#94a3b8', titleKey: 'verification.sort.byKunye' },
+              { key: 'uydurma',     color: '#d946ef', titleKey: 'verification.sort.byUydurma' },
+            ] as const).map(({ key, color, titleKey }) => (
+              <button
+                key={key}
+                className={`${styles['sort-btn']} ${pdfSortKey === key ? styles['sort-active'] : ''}`}
+                onClick={() => togglePdfSort(key)}
+                title={t(titleKey)}
+              >
+                <span className={styles['sort-swatch']} style={{ ['--swatch-color' as string]: color } as React.CSSProperties} aria-hidden="true" />
+                {pdfSortKey === key && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
+              </button>
+            ))}
           </div>
         )}
 
@@ -1395,7 +1470,16 @@ export default function VerificationPage() {
             sortedPdfs.map(pdf => {
               const summary = summaries[pdf.id]
               const pdfVerifying = isPdfVerifying(pdf.id)
-              const hasPdfResults = Object.keys(resultsByPdf[pdf.id] ?? {}).length > 0
+              const pdfResults = resultsByPdf[pdf.id] ?? {}
+              const hasPdfResults = Object.keys(pdfResults).length > 0
+              let trustValid = 0, trustKunye = 0, trustUydurma = 0
+              for (const r of Object.values(pdfResults)) {
+                if (r.status === 'in_progress' || r.status === 'pending') continue
+                const tt = effectiveTrustTag(r)
+                if (tt === 'clean') trustValid++
+                else if (tt === 'künye') trustKunye++
+                else if (tt === 'uydurma') trustUydurma++
+              }
               return (
                 <div
                   key={pdf.id}
@@ -1422,6 +1506,14 @@ export default function VerificationPage() {
                       <span className={`${styles['vc']} ${styles['vc-found']}`}>{summary.found}</span>
                       <span className={`${styles['vc']} ${styles['vc-problematic']}`}>{summary.problematic}</span>
                       <span className={`${styles['vc']} ${styles['vc-not-found']}`}>{summary.not_found}</span>
+                      {hasPdfResults && (
+                        <>
+                          <span className={styles['vc-divider']} aria-hidden="true" />
+                          <span className={`${styles['vc']} ${styles['vc-valid']}`}>{trustValid}</span>
+                          <span className={`${styles['vc']} ${styles['vc-kunye']}`}>{trustKunye}</span>
+                          <span className={`${styles['vc']} ${styles['vc-uydurma']}`}>{trustUydurma}</span>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1455,6 +1547,56 @@ export default function VerificationPage() {
                 >
                   {enabledCount} / {orderedSources.length}
                 </button>
+                <div
+                  className={`${styles['sort-dropdown']} ${sortOpen ? styles['sort-dropdown-open'] : ''}`}
+                  ref={sortDropdownRef}
+                >
+                  <button
+                    type="button"
+                    className={`${styles['toolbar-btn']} ${cardSortKey !== 'default' ? styles['sort-active'] : ''}`}
+                    title={t('verification.sort.label')}
+                    aria-haspopup="menu"
+                    aria-expanded={sortOpen}
+                    onClick={() => setSortOpen(o => !o)}
+                  >
+                    {t(`verification.sort.${cardSortKey}`)}
+                    {cardSortKey !== 'default' && (
+                      <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>
+                    )}
+                    <span className={styles['sort-caret']} aria-hidden="true">{'\u25be'}</span>
+                  </button>
+                  {sortOpen && (
+                    <ul className={styles['sort-menu']} role="menu">
+                      {(['default', 'ref', 'enabled', 'status', 'trust'] as const).map(key => (
+                        <li key={key} role="none">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={cardSortKey === key ? styles['sort-active'] : ''}
+                            onClick={() => { toggleCardSort(key); setSortOpen(false) }}
+                          >
+                            <span>{t(`verification.sort.${key}`)}</span>
+                            {cardSortKey === key && key !== 'default' && (
+                              <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+              <div className={styles['toolbar-center']}>
+                <input
+                  type="text"
+                  className={styles['toolbar-search']}
+                  value={cardSearchQuery}
+                  onChange={(e) => setCardSearchQuery(e.target.value)}
+                  placeholder={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
+                  aria-label={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
+                />
+              </div>
+              <div className={styles['toolbar-right']}>
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
                   onClick={() => effectivePdfId && handleVerifyNonFoundPdf(effectivePdfId)}
@@ -1474,30 +1616,6 @@ export default function VerificationPage() {
                   </svg>
                 </button>
               </div>
-              <div className={styles['toolbar-center']}>
-                <input
-                  type="text"
-                  className={styles['toolbar-search']}
-                  value={cardSearchQuery}
-                  onChange={(e) => setCardSearchQuery(e.target.value)}
-                  placeholder={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
-                  aria-label={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
-                />
-              </div>
-              <div className={styles['toolbar-right']}>
-                <button className={`${styles['toolbar-btn']} ${cardSortKey === 'ref' ? styles['sort-active'] : ''}`} onClick={() => toggleCardSort('ref')}>
-                  {t('verification.sort.ref')}{cardSortKey === 'ref' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
-                </button>
-                <button className={`${styles['toolbar-btn']} ${cardSortKey === 'enabled' ? styles['sort-active'] : ''}`} onClick={() => toggleCardSort('enabled')}>
-                  {t('verification.sort.enabled')}{cardSortKey === 'enabled' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
-                </button>
-                <button className={`${styles['toolbar-btn']} ${cardSortKey === 'status' ? styles['sort-active'] : ''}`} onClick={() => toggleCardSort('status')}>
-                  {t('verification.sort.status')}{cardSortKey === 'status' && <span className={styles['sort-arrow']}>{cardSortAsc ? '\u2191' : '\u2193'}</span>}
-                </button>
-                {cardSortKey !== 'default' && (
-                  <button className={styles['toolbar-btn']} onClick={() => toggleCardSort('default')}>&#x21BA;</button>
-                )}
-              </div>
             </div>
 
             {/* Source cards */}
@@ -1511,11 +1629,28 @@ export default function VerificationPage() {
                   dropTargetIdx === idx && dragSourceId !== card.source.id ? styles['card-dragover'] : '',
                 ].filter(Boolean).join(' ')
 
+                // Tint the selected-border per trust state (Geçerli/Künye/Uydurma).
+                const trust = card.result ? effectiveTrustTag(card.result) : null
+                const trustBorderColor =
+                  trust === 'clean' ? '#86efac'
+                  : trust === 'künye' ? '#94a3b8'
+                  : trust === 'uydurma' ? '#e879f9'
+                  : undefined
+                const trustGlow =
+                  trust === 'clean' ? 'rgba(134, 239, 172, 0.35)'
+                  : trust === 'künye' ? 'rgba(148, 163, 184, 0.35)'
+                  : trust === 'uydurma' ? 'rgba(232, 121, 249, 0.35)'
+                  : undefined
+
                 return (
                   <div
                     key={card.source.id}
                     ref={(el) => { cardRefs.current[card.source.id] = el }}
                     className={cardClass}
+                    style={trustBorderColor ? {
+                      ['--card-trust-border' as string]: trustBorderColor,
+                      ['--card-trust-glow' as string]: trustGlow,
+                    } as React.CSSProperties : undefined}
                     role="button"
                     tabIndex={0}
                     aria-pressed={isSelected}
@@ -1536,29 +1671,18 @@ export default function VerificationPage() {
                     <div className={styles['card-body']}>
                       {/* Header row */}
                       <div className={styles['card-header']}>
-                        <span className={styles['ref-badge']}>[{card.source.ref_number ?? '?'}]</span>
-                        <label className={styles['toggle-label']}>
-                          <input
-                            type="checkbox"
-                            checked={card.enabled}
-                            className={styles['toggle-check']}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => { e.stopPropagation(); toggleSourceEnabled(card.source.id) }}
-                          />
-                        </label>
-                        <span
-                          className={styles['drag-handle']}
-                          draggable
-                          onDragStart={(e) => { e.stopPropagation(); onDragStart(e, card.source.id) }}
-                          onDragEnd={onDragEnd}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          title={t('verification.dragToReorder')}
-                          aria-hidden="true"
-                        >&#x2807;</span>
-                        {card.result?.best_match && card.result.best_match.match_details.title_similarity >= 0.9 &&
-                          card.result.problem_tags?.some(tag => ['!authors', '!year', '!source', '!doi/arXiv'].includes(tag)) && (
-                          <span className={styles['citation-tag']} title={t('verification.citationTagTooltip')}>
-                            {t('verification.citationTag')}
+                        <button
+                          type="button"
+                          className={`${styles['ref-badge']} ${card.enabled ? '' : styles['ref-badge-disabled']}`}
+                          aria-pressed={card.enabled}
+                          title={card.enabled ? t('verification.disableRef') : t('verification.enableRef')}
+                          onClick={(e) => { e.stopPropagation(); toggleSourceEnabled(card.source.id) }}
+                        >
+                          [{card.source.ref_number ?? '?'}]
+                        </button>
+                        {card.result?.status === 'in_progress' && (
+                          <span className={styles['status-badge']} style={{ background: '#3b82f6', color: 'white' }}>
+                            {i18n.t('verification.status.in_progress')}
                           </span>
                         )}
                         <span className={styles['card-actions']}>
@@ -1588,56 +1712,102 @@ export default function VerificationPage() {
                           )}
                         </span>
                         <span className={styles['card-status-group']}>
-                          {((card.result?.problem_tags && card.result.problem_tags.length > 0) ||
-                            (card.result && card.result.status !== 'found' && card.result.best_match && card.result.best_match.match_details.title_similarity > 0.75)) && (
-                            <span className={styles['problem-tags']}>
-                              {card.result && card.result.status !== 'found' && card.result.best_match && card.result.best_match.match_details.title_similarity > 0.75 && (
-                                <span className={styles['title-tag']} title={t('verification.titleSimilarity', { percent: Math.round(card.result.best_match.match_details.title_similarity * 100) })}>
-                                  {t('verification.titleShort')}: {Math.round(card.result.best_match.match_details.title_similarity * 100)}%
-                                </span>
-                              )}
-                              {card.result?.problem_tags?.filter(tag => {
-                                const bm = card.result?.best_match
-                                if (!bm) return true
-                                if (tag === '!authors' && bm.authors.length === 0) return false
-                                if (tag === '!year' && bm.year == null) return false
-                                if (tag === '!source' && !bm.journal) return false
-                                if (tag === '!doi/arXiv' && !bm.doi) return false
-                                return true
-                              }).map((tag) => (
-                                <span key={tag} className={styles['problem-tag']} title={problemTagDescription(tag)}>
-                                  {problemTagLabel(tag)}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                          {card.result?.status === 'not_found' && card.result.best_match && card.result.best_match.score > 0.75 && (
-                            <span className={styles['warning-tag']} title={t('verification.highScoreWarning', { percent: Math.round(card.result.best_match.score * 100) })}>
-                              ⚠️
-                            </span>
-                          )}
                           {card.result && (
-                            <span className={styles['status-badge']} style={{ background: statusColor(card.result), color: 'white' }}>
-                              {statusLabel(card.result)}
+                            <span className={styles['problem-tags']}>
+                              {TAG_ORDER.map((tag: TagKey) => {
+                                const on = effectiveTagOn(card.result, tag)
+                                const isTitle = tag === 'title'
+                                const baseClass = isTitle ? styles['title-tag'] : styles['problem-tag']
+                                const offClass = isTitle ? styles['title-tag-off'] : styles['problem-tag-off']
+                                const className = on ? baseClass : offClass
+                                const onToggle = (e: React.MouseEvent) => {
+                                  e.stopPropagation()
+                                  if (!effectivePdfId || !card.result) return
+                                  useVerificationStore.getState().toggleTag(effectivePdfId, card.source.id, tag)
+                                }
+                                if (isTitle) {
+                                  const bm = card.result?.best_match
+                                  const pct = bm ? Math.round(bm.match_details.title_similarity * 100) : null
+                                  const label = pct != null
+                                    ? `${t('verification.titleShort')}: ${pct}%`
+                                    : `${t('verification.titleShort')}: —`
+                                  const tip = on ? (pct != null ? t('verification.titleSimilarity', { percent: pct }) : t('verification.titleShort')) : undefined
+                                  return (
+                                    <button key={tag} type="button" className={className} onClick={onToggle} title={tip}>
+                                      {label}
+                                    </button>
+                                  )
+                                }
+                                const bangKey = `!${tag}`
+                                const tip = on ? problemTagDescription(bangKey) : undefined
+                                return (
+                                  <button key={tag} type="button" className={className} onClick={onToggle} title={tip}>
+                                    {problemTagLabel(bangKey)}
+                                  </button>
+                                )
+                              })}
                             </span>
                           )}
+                          {card.result && (() => {
+                            const trust = effectiveTrustTag(card.result)
+                            const cls = trust === 'clean'
+                              ? styles['valid-tag']
+                              : trust === 'künye'
+                                ? styles['citation-tag']
+                                : styles['uydurma-tag']
+                            const label = trust === 'clean'
+                              ? t('verification.validTag')
+                              : trust === 'künye'
+                                ? t('verification.citationTag')
+                                : t('verification.uydurmaTag')
+                            const tip = trust === 'clean'
+                              ? t('verification.validTagTooltip')
+                              : trust === 'künye'
+                                ? t('verification.citationTagTooltip')
+                                : t('verification.uydurmaTagTooltip')
+                            return (
+                              <button
+                                type="button"
+                                className={cls}
+                                title={tip}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (!effectivePdfId) return
+                                  useVerificationStore.getState().cycleTrustTag(effectivePdfId, card.source.id)
+                                }}
+                              >
+                                {label}
+                              </button>
+                            )
+                          })()}
                         </span>
                       </div>
 
-                      {/* Textarea */}
-                      <textarea
-                        className={styles['card-textarea']}
-                        value={verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)}
-                        onInput={(e) => {
-                          const el = e.target as HTMLTextAreaElement
-                          setVerifyText(card.source.id, el.value)
-                          autoResize(el)
-                        }}
-                        onFocus={(e) => autoResize(e.target as HTMLTextAreaElement)}
-                        onClick={(e) => e.stopPropagation()}
-                        rows={2}
-                        disabled={!card.enabled}
-                      />
+                      {/* Textarea row — drag handle on the left, vertically centered */}
+                      <div className={styles['card-body-row']}>
+                        <span
+                          className={styles['drag-handle']}
+                          draggable
+                          onDragStart={(e) => { e.stopPropagation(); onDragStart(e, card.source.id) }}
+                          onDragEnd={onDragEnd}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          title={t('verification.dragToReorder')}
+                          aria-hidden="true"
+                        >&#x2807;</span>
+                        <textarea
+                          className={styles['card-textarea']}
+                          value={verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)}
+                          onInput={(e) => {
+                            const el = e.target as HTMLTextAreaElement
+                            setVerifyText(card.source.id, el.value)
+                            autoResize(el)
+                          }}
+                          onFocus={(e) => autoResize(e.target as HTMLTextAreaElement)}
+                          onClick={(e) => e.stopPropagation()}
+                          rows={2}
+                          disabled={!card.enabled}
+                        />
+                      </div>
 
                       {/* Progress indicator */}
                       {card.progress && (card.result?.status === 'in_progress' || card.progress.checkedDbs.length > 0) && (
@@ -1918,20 +2088,14 @@ export default function VerificationPage() {
             >[{currentSource?.ref_number ?? '?'}]</button>
             <div className={styles['detail-actions']}>
               <button
-                className={`${styles['override-btn']} ${styles['override-found']} ${currentResult?.status === 'found' ? styles['override-found-active'] : ''}`}
-                disabled={!currentResult || currentResult.status === 'in_progress'}
-                onClick={() => handleOverride('found')} title={t('verification.markAsFound')}
-              >&#x2713;</button>
-              <button
-                className={`${styles['override-btn']} ${styles['override-problematic']} ${currentResult?.status === 'problematic' ? styles['override-problematic-active'] : ''}`}
-                disabled={!currentResult || currentResult.status === 'in_progress'}
-                onClick={() => handleOverride('problematic')} title={t('verification.markAsProblematic')}
-              >!</button>
-              <button
-                className={`${styles['override-btn']} ${styles['override-not-found']} ${currentResult?.status === 'not_found' ? styles['override-not-found-active'] : ''}`}
-                disabled={!currentResult || currentResult.status === 'in_progress'}
-                onClick={() => handleOverride('not_found')} title={t('verification.markAsNotFound')}
-              >X</button>
+                className={`${styles['action-btn']} ${styles['action-btn-accent']}`}
+                onClick={handleReverifyOrCancelSource}
+                title={currentResult?.status === 'in_progress' ? t('verification.stopVerification') : t('verification.verifyThisSource')}
+              >
+                {currentResult?.status === 'in_progress'
+                  ? <><span>&#x25A0;</span> {t('verification.stop')}</>
+                  : <><span>&#x21BB;</span> {t('verification.verify')}</>}
+              </button>
             </div>
           </div>
         )}
@@ -1956,14 +2120,54 @@ export default function VerificationPage() {
                   >{t('verification.googleSearch')}</button>
                 </div>
 
-                <div className={styles['section-header-row']}>
-                  <div className={styles['section-title']}>{t('verification.bestMatch')}</div>
-                  <div className={styles['result-summary']}>
-                    <button className={`${styles['action-btn']} ${styles['action-btn-accent']}`} onClick={handleReverifyOrCancelSource} title={currentResult?.status === 'in_progress' ? t('verification.stopVerification') : t('verification.verifyThisSource')}>
-                      {currentResult?.status === 'in_progress' ? <><span>&#x25A0;</span> {t('verification.stop')}</> : <><span>&#x21BB;</span> {t('verification.verify')}</>}
-                    </button>
-                  </div>
+                <div className={styles['detail-action-row']}>
+                  {currentResult && (() => {
+                    const trust = effectiveTrustTag(currentResult)
+                    const cls = trust === 'clean'
+                      ? styles['valid-tag']
+                      : trust === 'künye'
+                        ? styles['citation-tag']
+                        : styles['uydurma-tag']
+                    const label = trust === 'clean'
+                      ? t('verification.validTag')
+                      : trust === 'künye'
+                        ? t('verification.citationTag')
+                        : t('verification.uydurmaTag')
+                    const tip = trust === 'clean'
+                      ? t('verification.validTagTooltip')
+                      : trust === 'künye'
+                        ? t('verification.citationTagTooltip')
+                        : t('verification.uydurmaTagTooltip')
+                    return (
+                      <button
+                        type="button"
+                        className={`${cls} ${styles['detail-trust-pill']}`}
+                        title={tip}
+                        onClick={() => {
+                          if (!effectivePdfId || !selectedSourceId) return
+                          useVerificationStore.getState().cycleTrustTag(effectivePdfId, selectedSourceId)
+                        }}
+                      >{label}</button>
+                    )
+                  })()}
+                  <div className={styles['detail-action-spacer']} />
+                  <button
+                    className={`${styles['override-btn']} ${styles['override-found']} ${currentResult?.status === 'found' ? styles['override-found-active'] : ''}`}
+                    disabled={!currentResult || currentResult.status === 'in_progress'}
+                    onClick={() => handleOverride('found')} title={t('verification.markAsFound')}
+                  >&#x2713;</button>
+                  <button
+                    className={`${styles['override-btn']} ${styles['override-problematic']} ${currentResult?.status === 'problematic' ? styles['override-problematic-active'] : ''}`}
+                    disabled={!currentResult || currentResult.status === 'in_progress'}
+                    onClick={() => handleOverride('problematic')} title={t('verification.markAsProblematic')}
+                  >!</button>
+                  <button
+                    className={`${styles['override-btn']} ${styles['override-not-found']} ${currentResult?.status === 'not_found' ? styles['override-not-found-active'] : ''}`}
+                    disabled={!currentResult || currentResult.status === 'in_progress'}
+                    onClick={() => handleOverride('not_found')} title={t('verification.markAsNotFound')}
+                  >X</button>
                 </div>
+                <div className={styles['section-title']}>{t('verification.bestMatch')}</div>
 
                 {hasCompletedResult && r && (
                   <>

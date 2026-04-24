@@ -49,7 +49,11 @@ export interface ParsedSource {
 // Verification types
 export type VerifyStatus = 'found' | 'problematic' | 'not_found' | 'pending' | 'in_progress'
 
-export type ProblemTag = '!authors' | '!doi/arXiv' | '!url' | '!year' | '!source'
+export type ProblemTag = '!authors' | '!doi/arXiv' | '!year' | '!source' | '!title'
+
+export type TrustTag = 'clean' | 'künye' | 'uydurma'
+
+export type TagKey = 'authors' | 'year' | 'title' | 'source' | 'doi/arXiv'
 
 export interface MatchResult {
   database: string
@@ -73,6 +77,10 @@ export interface VerificationResult {
   source_id: string
   status: VerifyStatus
   problem_tags: string[]
+  trust_tag?: TrustTag
+  // Three-state user override for the trust pill. null = use trust_tag.
+  trust_tag_override?: TrustTag | null
+  tag_overrides?: Record<string, boolean>
   url_liveness: Record<string, boolean>
   best_match?: MatchResult
   all_results: MatchResult[]
@@ -113,6 +121,8 @@ export interface AppSettings {
   max_concurrent_sources_per_pdf: number
   auto_scholar_after_verify?: boolean
   language?: 'tr' | 'en'
+  auto_callout_text_uydurma?: string
+  auto_callout_text_kunye?: string
 }
 
 // WebSocket event types

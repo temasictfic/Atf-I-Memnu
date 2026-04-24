@@ -2,14 +2,15 @@ import { create } from 'zustand'
 import type {
   VerificationResult, PdfVerificationSummary, VerifyStatus,
   SourceRectangle, SourceVerifyProgress, DbCheckStatus, DbCheckEntry,
+  TrustTag,
 } from '../api/types'
 import { api } from '../api/rest-client'
 import { wsClient } from '../api/ws-client'
 import { sanitizeReferenceText } from '../utils/reference-text'
 import { usePdfStore } from './pdf-store'
 
-type CardSortKey = 'default' | 'status' | 'ref' | 'enabled'
-type PdfSortKey = 'name' | 'status' | 'found' | 'problematic' | 'not_found'
+type CardSortKey = 'default' | 'status' | 'ref' | 'enabled' | 'trust'
+type PdfSortKey = 'name' | 'status' | 'found' | 'problematic' | 'not_found' | 'valid' | 'kunye' | 'uydurma'
 
 interface VerificationState {
   resultsByPdf: Record<string, Record<string, VerificationResult>>
@@ -45,6 +46,8 @@ interface VerificationState {
   reverifySource: (pdfId: string, sourceId: string, text?: string) => Promise<void>
   reverifyPdf: (pdfId: string) => Promise<void>
   overrideStatus: (pdfId: string, sourceId: string, status: 'found' | 'problematic' | 'not_found') => Promise<void>
+  toggleTag: (pdfId: string, sourceId: string, tag: 'authors' | 'year' | 'title' | 'source' | 'doi/arXiv') => Promise<void>
+  cycleTrustTag: (pdfId: string, sourceId: string) => Promise<void>
   cancelAll: () => Promise<void>
   cancelPdf: (pdfId: string) => Promise<void>
   cancelSource: (sourceId: string) => Promise<void>
@@ -201,79 +204,79 @@ function flushPdfVerifyLog(pdfId: string): void {
   if (!pdfLog) return
 
   // Resolve PDF name from store
-  const pdf = usePdfStore.getState().pdfs.find(p => p.id === pdfId)
-  const pdfName = pdf?.name ?? pdfId
+  // const pdf = usePdfStore.getState().pdfs.find(p => p.id === pdfId)
+  // const pdfName = pdf?.name ?? pdfId
 
-  console.groupCollapsed(`%c${pdfName}`, 'color: #e2e8f0; font-weight: bold')
-
-  for (const [, sourceLog] of pdfLog.sources) {
-    const statusColors: Record<string, string> = {
-      found: '#22c55e', problematic: '#f59e0b', not_found: '#9ca3af',
-    }
-    const statusColor = statusColors[sourceLog.finalStatus ?? ''] ?? '#a8a29e'
-    const statusLabel = (sourceLog.finalStatus ?? 'unknown').toUpperCase()
-
-    console.groupCollapsed(
-      `%c${sourceLog.sourceId} %c[${statusLabel}]`,
-      'color: #e2e8f0',
-      `color: ${statusColor}; font-weight: bold`,
-    )
-
-    for (const dbCheck of sourceLog.dbChecks) {
-      // Build summary for the database group label
-      const queryLabels: Record<string, string> = {
-        found: 'successful', not_found: 'successful', timeout: 'failed (timeout)',
-        error: 'failed',
-      }
-      const queryLabel = queryLabels[dbCheck.dbStatus] ?? dbCheck.dbStatus
-      const isFound = dbCheck.dbStatus === 'found' && dbCheck.match
-      const score = isFound ? ((dbCheck.match as Record<string, unknown>).score as number) ?? 0 : 0
-      const matchLabel = isFound
-        ? (score >= 0.65 ? 'Match' : 'Partial Match')
-        : (dbCheck.dbStatus === 'not_found' ? 'Not Found' : '')
-
-      const dbColor = '#38bdf8'
-      const queryColors: Record<string, string> = {
-        found: '#22c55e', not_found: '#22c55e', timeout: '#ef4444',
-        error: '#ef4444',
-      }
-      const qColor = queryColors[dbCheck.dbStatus] ?? '#a8a29e'
-      const matchColors: Record<string, string> = { Match: '#22c55e', 'Partial Match': '#eab308', 'Not Found': '#111827' }
-      const mColor = matchColors[matchLabel] ?? '#a8a29e'
-
-      // Database group header shows: "Crossref  | successful | Match"
-      if (isFound) {
-        console.groupCollapsed(
-          `%c${dbCheck.database}  %c${queryLabel}  %c${matchLabel}`,
-          `color: ${dbColor}; font-weight: bold`,
-          `color: ${qColor}`,
-          `color: ${mColor}; font-weight: bold`,
-        )
-        console.log('%cFound Object:', 'color: #22c55e; font-weight: bold')
-        console.dir(JSON.parse(JSON.stringify(dbCheck.match)))
-        if (dbCheck.searchUrl) {
-          console.log('%csearch_url: %s', 'color: #a8a29e', dbCheck.searchUrl)
-        }
-        console.groupEnd()
-      } else {
-        // No match — show as single collapsed line with search_url inside
-        console.groupCollapsed(
-          `%c${dbCheck.database}  %c${queryLabel}  %c${matchLabel}`,
-          `color: ${dbColor}; font-weight: bold`,
-          `color: ${qColor}`,
-          `color: ${mColor}`,
-        )
-        if (dbCheck.searchUrl) {
-          console.log(dbCheck.searchUrl)
-        }
-        console.groupEnd()
-      }
-    }
-
-    console.groupEnd() // source
-  }
-
-  console.groupEnd() // PDF
+  // console.groupCollapsed(`%c${pdfName}`, 'color: #e2e8f0; font-weight: bold')
+  //
+  // for (const [, sourceLog] of pdfLog.sources) {
+  //   const statusColors: Record<string, string> = {
+  //     found: '#22c55e', problematic: '#f59e0b', not_found: '#9ca3af',
+  //   }
+  //   const statusColor = statusColors[sourceLog.finalStatus ?? ''] ?? '#a8a29e'
+  //   const statusLabel = (sourceLog.finalStatus ?? 'unknown').toUpperCase()
+  //
+  //   console.groupCollapsed(
+  //     `%c${sourceLog.sourceId} %c[${statusLabel}]`,
+  //     'color: #e2e8f0',
+  //     `color: ${statusColor}; font-weight: bold`,
+  //   )
+  //
+  //   for (const dbCheck of sourceLog.dbChecks) {
+  //     // Build summary for the database group label
+  //     const queryLabels: Record<string, string> = {
+  //       found: 'successful', not_found: 'successful', timeout: 'failed (timeout)',
+  //       error: 'failed',
+  //     }
+  //     const queryLabel = queryLabels[dbCheck.dbStatus] ?? dbCheck.dbStatus
+  //     const isFound = dbCheck.dbStatus === 'found' && dbCheck.match
+  //     const score = isFound ? ((dbCheck.match as Record<string, unknown>).score as number) ?? 0 : 0
+  //     const matchLabel = isFound
+  //       ? (score >= 0.65 ? 'Match' : 'Partial Match')
+  //       : (dbCheck.dbStatus === 'not_found' ? 'Not Found' : '')
+  //
+  //     const dbColor = '#38bdf8'
+  //     const queryColors: Record<string, string> = {
+  //       found: '#22c55e', not_found: '#22c55e', timeout: '#ef4444',
+  //       error: '#ef4444',
+  //     }
+  //     const qColor = queryColors[dbCheck.dbStatus] ?? '#a8a29e'
+  //     const matchColors: Record<string, string> = { Match: '#22c55e', 'Partial Match': '#eab308', 'Not Found': '#111827' }
+  //     const mColor = matchColors[matchLabel] ?? '#a8a29e'
+  //
+  //     // Database group header shows: "Crossref  | successful | Match"
+  //     if (isFound) {
+  //       console.groupCollapsed(
+  //         `%c${dbCheck.database}  %c${queryLabel}  %c${matchLabel}`,
+  //         `color: ${dbColor}; font-weight: bold`,
+  //         `color: ${qColor}`,
+  //         `color: ${mColor}; font-weight: bold`,
+  //       )
+  //       console.log('%cFound Object:', 'color: #22c55e; font-weight: bold')
+  //       console.dir(JSON.parse(JSON.stringify(dbCheck.match)))
+  //       if (dbCheck.searchUrl) {
+  //         console.log('%csearch_url: %s', 'color: #a8a29e', dbCheck.searchUrl)
+  //       }
+  //       console.groupEnd()
+  //     } else {
+  //       // No match — show as single collapsed line with search_url inside
+  //       console.groupCollapsed(
+  //         `%c${dbCheck.database}  %c${queryLabel}  %c${matchLabel}`,
+  //         `color: ${dbColor}; font-weight: bold`,
+  //         `color: ${qColor}`,
+  //         `color: ${mColor}`,
+  //       )
+  //       if (dbCheck.searchUrl) {
+  //         console.log(dbCheck.searchUrl)
+  //       }
+  //       console.groupEnd()
+  //     }
+  //   }
+  //
+  //   console.groupEnd() // source
+  // }
+  //
+  // console.groupEnd() // PDF
 }
 
 // --- Store ---
@@ -683,6 +686,95 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
     }
   },
 
+  toggleTag: async (pdfId, sourceId, tag) => {
+    const { effectiveTagOn } = await import('../verification/tagState')
+    const current = useVerificationStore.getState().resultsByPdf[pdfId]?.[sourceId]
+    if (!current) return
+    const wasOn = effectiveTagOn(current, tag)
+    const next = !wasOn
+    const prevOverrides = current.tag_overrides ?? {}
+    const newOverrides = { ...prevOverrides, [tag]: next }
+
+    set(state => {
+      const prev = state.resultsByPdf[pdfId]?.[sourceId]
+      if (!prev) return state
+      return {
+        resultsByPdf: {
+          ...state.resultsByPdf,
+          [pdfId]: {
+            ...state.resultsByPdf[pdfId],
+            [sourceId]: { ...prev, tag_overrides: newOverrides },
+          },
+        },
+      }
+    })
+
+    try {
+      await api.setTagOverride(pdfId, sourceId, tag, next)
+    } catch (e) {
+      console.error('Failed to toggle tag:', e)
+      set(state => {
+        const prev = state.resultsByPdf[pdfId]?.[sourceId]
+        if (!prev) return state
+        return {
+          resultsByPdf: {
+            ...state.resultsByPdf,
+            [pdfId]: {
+              ...state.resultsByPdf[pdfId],
+              [sourceId]: { ...prev, tag_overrides: prevOverrides },
+            },
+          },
+        }
+      })
+    }
+  },
+
+  cycleTrustTag: async (pdfId, sourceId) => {
+    const CYCLE: Record<TrustTag, TrustTag> = {
+      clean: 'künye',
+      'künye': 'uydurma',
+      uydurma: 'clean',
+    }
+    const { effectiveTrustTag } = await import('../verification/tagState')
+    const current = useVerificationStore.getState().resultsByPdf[pdfId]?.[sourceId]
+    if (!current) return
+    const next = CYCLE[effectiveTrustTag(current)]
+    const prevOverride = current.trust_tag_override ?? null
+
+    set(state => {
+      const prev = state.resultsByPdf[pdfId]?.[sourceId]
+      if (!prev) return state
+      return {
+        resultsByPdf: {
+          ...state.resultsByPdf,
+          [pdfId]: {
+            ...state.resultsByPdf[pdfId],
+            [sourceId]: { ...prev, trust_tag_override: next },
+          },
+        },
+      }
+    })
+
+    try {
+      await api.setTrustOverride(pdfId, sourceId, next)
+    } catch (e) {
+      console.error('Failed to cycle trust tag:', e)
+      set(state => {
+        const prev = state.resultsByPdf[pdfId]?.[sourceId]
+        if (!prev) return state
+        return {
+          resultsByPdf: {
+            ...state.resultsByPdf,
+            [pdfId]: {
+              ...state.resultsByPdf[pdfId],
+              [sourceId]: { ...prev, trust_tag_override: prevOverride },
+            },
+          },
+        }
+      })
+    }
+  },
+
   cancelAll: async () => {
     stopPolling()
     set(state => {
@@ -1014,6 +1106,14 @@ export function initVerificationListeners(): () => void {
             source_id: sourceId,
             status: data.status as VerifyStatus,
             problem_tags: (data.problem_tags as string[]) ?? [],
+            trust_tag: (data.trust_tag as 'clean' | 'künye' | 'uydurma' | undefined),
+            trust_tag_override:
+              (data.trust_tag_override as TrustTag | null | undefined)
+              ?? existing[sourceId]?.trust_tag_override
+              ?? null,
+            tag_overrides: (data.tag_overrides as Record<string, boolean> | undefined)
+              ?? existing[sourceId]?.tag_overrides
+              ?? {},
             url_liveness: (data.url_liveness as Record<string, boolean>) ?? {},
             best_match: data.best_match as any,
             all_results: (data.all_results as any[]) ?? [],
