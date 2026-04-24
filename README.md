@@ -48,7 +48,7 @@ Key design notes:
 
 ## Prerequisites
 
-- **Node.js** ≥ 22
+- **Node.js** ≥ 24
 - **Python** ≥ 3.12 (managed by `uv`)
 - **uv** — fast Python package manager (`pipx install uv` or see [uv docs](https://docs.astral.sh/uv/))
 - **Git LFS** — required to pull the bundled NER model. After cloning, run `git lfs pull`.
