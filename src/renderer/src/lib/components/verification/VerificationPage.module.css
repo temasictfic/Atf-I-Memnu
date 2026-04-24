@@ -133,7 +133,7 @@
 .sort-menu {
   position: absolute;
   top: calc(100% + 2px);
-  left: 0;
+  right: 0;
   min-width: 160px;
   margin: 0;
   padding: 4px;

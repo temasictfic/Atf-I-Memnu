@@ -1998,6 +1998,24 @@ export default function VerificationPage() {
                 >
                   {enabledCount} / {orderedSources.length}
                 </button>
+                <button
+                  className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
+                  onClick={() => effectivePdfId && handleVerifyNonFoundPdf(effectivePdfId)}
+                  disabled={!effectivePdfId || (effectivePdfId ? isPdfVerifying(effectivePdfId) : true)}
+                  title={t('verification.verifyNonFound')}
+                ><span aria-hidden="true">&#x25B6;</span>{t('verification.nfShort')}</button>
+              </div>
+              <div className={styles['toolbar-center']}>
+                <input
+                  type="text"
+                  className={styles['toolbar-search']}
+                  value={cardSearchQuery}
+                  onChange={(e) => setCardSearchQuery(e.target.value)}
+                  placeholder={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
+                  aria-label={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
+                />
+              </div>
+              <div className={styles['toolbar-right']}>
                 <div
                   className={`${styles['sort-dropdown']} ${sortOpen ? styles['sort-dropdown-open'] : ''}`}
                   ref={sortDropdownRef}
@@ -2034,24 +2052,6 @@ export default function VerificationPage() {
                     </ul>
                   )}
                 </div>
-              </div>
-              <div className={styles['toolbar-center']}>
-                <input
-                  type="text"
-                  className={styles['toolbar-search']}
-                  value={cardSearchQuery}
-                  onChange={(e) => setCardSearchQuery(e.target.value)}
-                  placeholder={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
-                  aria-label={effectivePdfId ? t('verification.searchPlaceholderPdf', { name: (pdfs.find(p => p.id === effectivePdfId)?.name ?? '').replace(/\.[^.]+$/, '') }) : t('verification.searchPlaceholder')}
-                />
-              </div>
-              <div className={styles['toolbar-right']}>
-                <button
-                  className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
-                  onClick={() => effectivePdfId && handleVerifyNonFoundPdf(effectivePdfId)}
-                  disabled={!effectivePdfId || (effectivePdfId ? isPdfVerifying(effectivePdfId) : true)}
-                  title={t('verification.verifyNonFound')}
-                ><span aria-hidden="true">&#x25B6;</span>{t('verification.nfShort')}</button>
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-export']}`}
                   onClick={handleExportVerificationReport}
