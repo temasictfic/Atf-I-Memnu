@@ -81,9 +81,11 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     const srcStore = useSourcesStore.getState()
     const results = verStore.resultsByPdf[pdfId] ?? {}
     const sources = srcStore.sourcesByPdf[pdfId] ?? []
+    const enabledSources = verStore.enabledSources
 
     const selected = sources.filter((s) => {
       if (sourceIds) return sourceIds.includes(s.id)
+      if (enabledSources[s.id] === false) return false
       const r = results[s.id]
       return r && (r.status === 'not_found' || r.status === 'problematic')
     })
