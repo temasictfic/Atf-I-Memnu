@@ -60,6 +60,12 @@ excludes = [
     "optimum",
     "optimum.onnxruntime",
     "optimum_onnx",
+    # scipy is pulled in transitively (no `import scipy` in our code).
+    # Excluding it drops scipy/optimize/_highspy and scipy.libs' OpenBLAS
+    # (~45-50 MB combined). numpy keeps its own bundled OpenBLAS in
+    # numpy.libs/, so linear algebra still works.
+    "scipy",
+    "scipy.libs",
 ]
 
 a = Analysis(
@@ -73,12 +79,42 @@ a = Analysis(
     runtime_hooks=[],
     excludes=excludes,
     noarchive=False,
-    optimize=0,
+    # -OO equivalent: strip docstrings and asserts from bundled .pyc files.
+    # Pydantic uses annotations, not docstrings, so no behavioral impact.
+    optimize=2,
 )
+
+
+# PyInstaller's numpy hook emits OpenBLAS twice: once at the bundle root
+# (so Windows' DLL search path finds it) and once under `numpy.libs/`
+# (where numpy._distributor_init's `os.add_dll_directory` points). On
+# numpy 2.x the latter is sufficient — verified empirically by removing
+# the root copy and confirming the backend boots and NER loads. Drop the
+# duplicate to recover ~20 MB.
+def _drop_root_libs_dupes(binaries):
+    in_libs_dir = {
+        Path(dest).name
+        for dest, _src, _kind in binaries
+        if any(part.endswith(".libs") for part in Path(dest).parts)
+    }
+    kept, dropped = [], 0
+    for entry in binaries:
+        dest, _src, _kind = entry
+        path = Path(dest)
+        if path.parent == Path(".") and path.name in in_libs_dir:
+            dropped += 1
+            continue
+        kept.append(entry)
+    print(f"[spec] Stripped {dropped} root-level *.libs duplicate(s)")
+    return kept
+
+
+a.binaries = _drop_root_libs_dupes(a.binaries)
+
 pyz = PYZ(a.pure)
 
-# UPX is disabled: it routinely corrupts onnxruntime's DirectML DLLs and is
-# a major antivirus false-positive trigger on Windows. The bundle is small
+# UPX is disabled: it's a major antivirus false-positive trigger on Windows
+# and historically corrupted onnxruntime's native DLLs. The bundle is small
 # enough without UPX and runs reliably.
 exe = EXE(
     pyz,
