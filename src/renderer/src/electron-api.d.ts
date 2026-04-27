@@ -5,6 +5,7 @@ declare global {
     electronAPI: {
       selectDirectory: () => Promise<string | null>
       selectPdfs: () => Promise<string[]>
+      getPathForFile: (file: File) => string
       openExternal: (url: string) => Promise<void>
       openCacheFolder: () => Promise<{ ok: boolean; path: string; error: string | null }>
       clearScholarSession: () => Promise<{ ok: boolean }>

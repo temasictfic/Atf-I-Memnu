@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { usePdfStore } from "../../stores/pdf-store";
+import { useSessionPdfsStore } from "../../stores/session-pdfs-store";
 import {
   useSourcesStore,
   loadSources,
@@ -114,6 +115,14 @@ export default function ParsingPage() {
   const sortKey = usePdfStore((s) => s.parsingSortKey);
   const sortAsc = usePdfStore((s) => s.parsingSortAsc);
   const { toggleParsingSort } = usePdfStore.getState();
+
+  const lastSessionPdfs = useSessionPdfsStore((s) => s.lastSessionPdfs);
+  const recordSessionImport = useSessionPdfsStore((s) => s.recordImport);
+  const removeFromLastSession = useSessionPdfsStore((s) => s.removeFromLastSession);
+  const [isDragOver, setIsDragOver] = useState(false);
+  // Track drag enter/leave at counter level — child elements fire enter/leave
+  // as the cursor moves over them, so we count to know when we've truly left.
+  const dragCounterRef = useRef(0);
 
   const sourcesByPdf = useSourcesStore((s) => s.sourcesByPdf);
   const historyByPdf = useSourcesStore((s) => s.historyByPdf);
@@ -567,12 +576,70 @@ export default function ParsingPage() {
       const files = await window.electronAPI.selectPdfs();
       if (files.length > 0) {
         await usePdfStore.getState().loadFiles(files);
+        recordSessionImport(files);
       }
     } catch {
       const dir = prompt("Enter PDF directory path:");
       if (dir) await usePdfStore.getState().loadDirectory(dir);
     }
   }
+
+  async function importPdfPaths(paths: string[]) {
+    if (paths.length === 0) return;
+    await usePdfStore.getState().loadFiles(paths);
+    recordSessionImport(paths);
+  }
+
+  function extractPdfPathsFromDrop(dt: DataTransfer): string[] {
+    const out: string[] = [];
+    for (const file of Array.from(dt.files)) {
+      if (!file.name.toLowerCase().endsWith(".pdf")) continue;
+      const path = window.electronAPI.getPathForFile(file);
+      if (path) out.push(path);
+    }
+    return out;
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    setIsDragOver(true);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+    if (dragCounterRef.current === 0) setIsDragOver(false);
+  }
+
+  async function handleDrop(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    const paths = extractPdfPathsFromDrop(e.dataTransfer);
+    await importPdfPaths(paths);
+  }
+
+  // Prevent the renderer from navigating to a dropped file when the user
+  // misses the panel. Without these handlers, Electron's default behavior
+  // is to navigate the window to file:// of the first dropped file.
+  useEffect(() => {
+    const prevent = (ev: DragEvent) => ev.preventDefault();
+    window.addEventListener("dragover", prevent);
+    window.addEventListener("drop", prevent);
+    return () => {
+      window.removeEventListener("dragover", prevent);
+      window.removeEventListener("drop", prevent);
+    };
+  }, []);
 
   function handleRemovePdf(pdfId: string) {
     const pdf = allPdfs.find((p) => p.id === pdfId);
@@ -1291,7 +1358,13 @@ export default function ParsingPage() {
       onKeyDown={onKeyDown}
     >
       {/* Left Panel: PDF List */}
-      <aside className={styles["pdf-list-panel"]}>
+      <aside
+        className={`${styles["pdf-list-panel"]} ${isDragOver ? styles["pdf-list-panel-drag-over"] : ""}`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <div className={styles["panel-header"]}>
           <h2 className={styles["panel-title"]}>
             {t("parsing.documents")}
@@ -1399,6 +1472,62 @@ export default function ParsingPage() {
               <p className={styles["empty-sub"]}>
                 {t("parsing.emptyStateSub")}
               </p>
+              {lastSessionPdfs.length > 0 && (
+                <div className={styles["last-session-section"]}>
+                  <div className={styles["last-session-header"]}>
+                    <span>{t("parsing.lastSessionHeader")}</span>
+                    {lastSessionPdfs.length >= 2 && (
+                      <button
+                        type="button"
+                        className={styles["last-session-import-all"]}
+                        onClick={() => {
+                          void importPdfPaths(
+                            lastSessionPdfs.map((e) => e.path),
+                          );
+                        }}
+                        disabled={loading}
+                      >
+                        {t("parsing.importAll")}
+                      </button>
+                    )}
+                  </div>
+                  {lastSessionPdfs.map((entry) => (
+                    <div
+                      key={entry.path}
+                      className={styles["last-session-item"]}
+                    >
+                      <button
+                        type="button"
+                        className={styles["last-session-item-btn"]}
+                        onClick={() => {
+                          void importPdfPaths([entry.path]);
+                        }}
+                        disabled={loading}
+                        title={entry.path}
+                      >
+                        <span className={styles["last-session-item-icon"]}>
+                          &#x1F4C4;
+                        </span>
+                        <span className={styles["last-session-item-name"]}>
+                          {entry.name}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className={styles["last-session-remove"]}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFromLastSession(entry.path);
+                        }}
+                        title={t("parsing.removeFromRecent")}
+                        aria-label={t("parsing.removeFromRecent")}
+                      >
+                        &#x2715;
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             sortedPdfs.map((pdf) => (
@@ -1444,6 +1573,14 @@ export default function ParsingPage() {
             ))
           )}
         </div>
+        {isDragOver && (
+          <div className={styles["drop-overlay"]}>
+            <div className={styles["drop-overlay-icon"]}>&#x1F4E5;</div>
+            <div className={styles["drop-overlay-text"]}>
+              {t("parsing.dropHint")}
+            </div>
+          </div>
+        )}
       </aside>
 
       {/* Center Panel: PDF Viewer */}

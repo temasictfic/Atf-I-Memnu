@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 interface UpdateAvailablePayload {
   version: string
@@ -16,6 +16,7 @@ const electronAPI = {
   selectPdfs: (): Promise<string[]> => {
     return ipcRenderer.invoke('dialog:selectPdfs')
   },
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   openExternal: (url: string): Promise<void> => {
     return ipcRenderer.invoke('shell:openExternal', url)
   },
