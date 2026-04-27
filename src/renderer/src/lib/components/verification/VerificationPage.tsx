@@ -6,7 +6,7 @@ import { useSourcesStore, loadSources as loadSourcesFn } from '../../stores/sour
 import { useVerificationStore } from '../../stores/verification-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useScholarScanStore } from '../../stores/scholar-scan-store'
-import { scholarScanner, PROBE_PAGE_STATE_SCRIPT } from '../../services/scholar-scanner'
+import { scholarScanner, PROBE_PAGE_STATE_SCRIPT, buildSearchUrl } from '../../services/scholar-scanner'
 import type { VerificationResult, MatchResult, DbCheckEntry, TagKey } from '../../api/types'
 import { api } from '../../api/rest-client'
 import { TAG_ORDER, effectiveTagOn, effectiveTrustTag } from '../../verification/tagState'
@@ -68,6 +68,8 @@ function dbScoreColor(score: number): string {
   if (score >= 0.5) return '#eab308'
   return '#ef4444'
 }
+
+const VERIFY_TOAST_DURATION_MS = 3000
 
 function googleSearchUrl(text: string): string {
   const cleaned = sanitizeReferenceTextForSearch(text)
@@ -283,7 +285,7 @@ export default function VerificationPage() {
       } else {
         if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
         setVerifyToast(t('verification.verificationComplete', { name }))
-        verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+        verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), VERIFY_TOAST_DURATION_MS)
       }
 
       // Advance the sequential "Verify All" queue if this PDF was the active one.
@@ -839,7 +841,7 @@ export default function VerificationPage() {
       await window.electronAPI.writePdfFile(target, pdfBytes)
       setVerifyToast(t('verification.exportPdf'))
       if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
-      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), VERIFY_TOAST_DURATION_MS)
     } catch (err) {
       console.error('[VerificationPage] report PDF export failed:', err)
       window.alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -925,7 +927,7 @@ export default function VerificationPage() {
       deferredToastNameRef.current = null
       if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
       setVerifyToast(t('verification.verificationComplete', { name }))
-      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), VERIFY_TOAST_DURATION_MS)
     }
   }, [scholarStatus])
 
@@ -969,7 +971,7 @@ export default function VerificationPage() {
     const showSolveFirstToast = (): void => {
       if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
       setVerifyToast(t('verification.scholarSolveFirst'))
-      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), VERIFY_TOAST_DURATION_MS)
     }
     if (view) {
       try {
@@ -1266,18 +1268,14 @@ export default function VerificationPage() {
     // avoid the race where the frontend hasn't finished NER extraction yet.
     const backendUrl = currentResult?.scholar_url
     const url = backendUrl
-      || (selectedTitleOrText
-        ? `https://scholar.google.com/scholar?q=${encodeURIComponent(selectedTitleOrText)}`
-        : 'https://scholar.google.com/')
+      || (selectedTitleOrText ? buildSearchUrl(selectedTitleOrText) : 'https://scholar.google.com/')
     openOverlayWithUrl(url)
   }
 
   function openGoogleOverlay() {
     const backendUrl = currentResult?.google_url
     const url = backendUrl
-      || (selectedTitleOrText
-        ? `https://www.google.com/search?q=${encodeURIComponent(selectedTitleOrText)}`
-        : 'https://www.google.com/')
+      || (selectedTitleOrText ? googleSearchUrl(selectedTitleOrText) : 'https://www.google.com/')
     openOverlayWithUrl(url)
   }
 

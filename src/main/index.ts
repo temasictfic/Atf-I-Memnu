@@ -371,7 +371,9 @@ let downloadCancellationToken: CancellationToken | null = null
 ipcMain.on('update:download', () => {
   if (isDev) return
   downloadCancellationToken = new CancellationToken()
-  autoUpdater.downloadUpdate(downloadCancellationToken).catch(() => {})
+  autoUpdater.downloadUpdate(downloadCancellationToken).catch((err) => {
+    console.warn('[autoUpdater] downloadUpdate failed:', err)
+  })
 })
 
 ipcMain.on('update:cancel', () => {

@@ -221,7 +221,7 @@ function sleep(ms: number): Promise<void> {
 // `lookup=0` forces the full results page; without it Scholar may show a
 // single "best result" view that breaks our scrape. Truncated to 300 chars
 // because Scholar silently rejects very long queries.
-function buildSearchUrl(searchText: string): string {
+export function buildSearchUrl(searchText: string): string {
   const query = encodeURIComponent(searchText.slice(0, 300))
   return `https://scholar.google.com/scholar?lookup=0&q=${query}`
 }
