@@ -6,6 +6,31 @@ directories:
 files:
   - out/**
   - package.json
+  # Renderer-side deps are already bundled into out/renderer/ by Vite
+  # (PDF.js worker + standard fonts are emitted via `?url` imports — see
+  # src/renderer/src/lib/pdf/pdfjs-setup.ts and friends — and CSS via the
+  # default Vite pipeline). The duplicate copies under node_modules/ are
+  # pure waste. Main-process deps (electron-updater + transitive tree) are
+  # externalized by electron-vite and DO need to remain in node_modules at
+  # runtime, so we exclude only the renderer-side packages explicitly.
+  - "!node_modules/react/**"
+  - "!node_modules/react-dom/**"
+  - "!node_modules/react-i18next/**"
+  - "!node_modules/i18next/**"
+  - "!node_modules/zustand/**"
+  - "!node_modules/pdfjs-dist/**"
+  - "!node_modules/pdf-lib/**"
+  - "!node_modules/@pdf-lib/**"
+  # @napi-rs/canvas is pdfjs-dist's optional Node-side renderer; we only
+  # render in the browser, so this 38 MB native binding is dead weight.
+  - "!node_modules/@napi-rs/**"
+  - "!node_modules/@babel/**"
+  - "!node_modules/tslib/**"
+  - "!node_modules/scheduler/**"
+  - "!node_modules/use-sync-external-store/**"
+  - "!node_modules/html-parse-stringify/**"
+  - "!node_modules/void-elements/**"
+  - "!node_modules/tiny-typed-emitter/**"
 asar: true
 extraResources:
   - from: backend/dist/atfi-memnu-backend
