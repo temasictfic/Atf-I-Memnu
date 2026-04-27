@@ -113,9 +113,9 @@ def determine_status(score: float) -> str:
 TITLE_MATCH_THRESHOLD = 0.85
 
 # Composite-score bands for the three-way status.
-#   score >= 0.75  → "found"       (UI: Well / İyi)
-#   0.50–0.75      → "problematic" (UI: Mediocre / Vasat)
-#   score <  0.50  → "not_found"   (UI: Bad / Fena)
+#   score >= 0.75  → "found"       (UI: High / Yüksek)
+#   0.50–0.75      → "problematic" (UI: Medium / Orta)
+#   score <  0.50  → "not_found"   (UI: Low / Düşük)
 STATUS_FOUND_THRESHOLD = 0.75
 STATUS_PROBLEMATIC_THRESHOLD = 0.50
 

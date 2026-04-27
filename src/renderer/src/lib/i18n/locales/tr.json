@@ -234,12 +234,12 @@
     "urlStatus": "URL Durumu",
     "openSource": "Aç",
     "scrollToCard": "Karta kaydır",
-    "markAsFound": "İyi olarak işaretle",
-    "markAsProblematic": "Vasat olarak işaretle",
-    "markAsNotFound": "Fena olarak işaretle",
+    "markAsFound": "Yüksek olarak işaretle",
+    "markAsProblematic": "Orta olarak işaretle",
+    "markAsNotFound": "Düşük olarak işaretle",
     "enableRef": "Bu referansı etkinleştirmek için tıkla",
     "disableRef": "Bu referansı devre dışı bırakmak için tıkla",
-    "verifyNonFound": "İyi harici doğrula",
+    "verifyNonFound": "Yüksek harici doğrula",
     "scholarScanNonFound": "Bulunamayanlar için Google Scholar taraması",
     "scholarPreparing": "Hazırlanıyor…",
     "scholarCaptchaBanner": "CAPTCHA algılandı — lütfen aşağıda çözün. Tarama otomatik olarak devam edecek; ya da Web görünümünü kapatıp Devam et'e tıklayın.",
@@ -253,9 +253,9 @@
     "sort": {
       "byStatus": "Duruma göre sırala",
       "byName": "Ada göre sırala",
-      "byFound": "İyi sayısına göre sırala",
-      "byProblematic": "Vasat sayısına göre sırala",
-      "byNotFound": "Fena sayısına göre sırala",
+      "byFound": "Yüksek sayısına göre sırala",
+      "byProblematic": "Orta sayısına göre sırala",
+      "byNotFound": "Düşük sayısına göre sırala",
       "byValid": "Geçerli sayısına göre sırala",
       "byKunye": "Künye sayısına göre sırala",
       "byUydurma": "Uydurma sayısına göre sırala",
@@ -271,7 +271,7 @@
     "verifyAllMenu": "Tümünü Doğrula seçenekleri",
     "verifyAllModes": {
       "all": "Tümünü doğrula",
-      "nonFound": "Tümünü İyi harici doğrula (~X)"
+      "nonFound": "Tümünü Yüksek harici doğrula (~X)"
     },
     "cutoff": {
       "labelAll": "Tümü çalışacak",
@@ -310,9 +310,9 @@
       "findClose": "Bulmayı kapat (Esc)"
     },
     "status": {
-      "found": "İyi",
-      "problematic": "Vasat",
-      "not_found": "Fena",
+      "found": "Yüksek",
+      "problematic": "Orta",
+      "not_found": "Düşük",
       "pending": "Beklemede",
       "in_progress": "Aranıyor…"
     },

@@ -234,12 +234,12 @@
     "urlStatus": "URL Status",
     "openSource": "Open source",
     "scrollToCard": "Scroll to card",
-    "markAsFound": "Mark as Well",
-    "markAsProblematic": "Mark as Mediocre",
-    "markAsNotFound": "Mark as Bad",
+    "markAsFound": "Mark as High",
+    "markAsProblematic": "Mark as Medium",
+    "markAsNotFound": "Mark as Low",
     "enableRef": "Click to enable this reference",
     "disableRef": "Click to disable this reference",
-    "verifyNonFound": "Verify only non-Well sources",
+    "verifyNonFound": "Verify only non-High sources",
     "scholarScanNonFound": "Google Scholar scan for non-Found sources",
     "scholarPreparing": "Preparing…",
     "scholarCaptchaBanner": "CAPTCHA detected — please solve it below. Scan will resume automatically, or close Webview and click Resume.",
@@ -253,9 +253,9 @@
     "sort": {
       "byStatus": "Sort by status",
       "byName": "Sort by name",
-      "byFound": "Sort by Well count",
-      "byProblematic": "Sort by Mediocre count",
-      "byNotFound": "Sort by Bad count",
+      "byFound": "Sort by High count",
+      "byProblematic": "Sort by Medium count",
+      "byNotFound": "Sort by Low count",
       "byValid": "Sort by Valid count",
       "byKunye": "Sort by Citation count",
       "byUydurma": "Sort by Fabricated count",
@@ -271,7 +271,7 @@
     "verifyAllMenu": "Verify All options",
     "verifyAllModes": {
       "all": "Verify all",
-      "nonFound": "Verify all non-Well (~X)"
+      "nonFound": "Verify all non-High (~X)"
     },
     "cutoff": {
       "labelAll": "All will run",
@@ -310,9 +310,9 @@
       "findClose": "Close find (Esc)"
     },
     "status": {
-      "found": "Well",
-      "problematic": "Mediocre",
-      "not_found": "Bad",
+      "found": "High",
+      "problematic": "Medium",
+      "not_found": "Low",
       "pending": "Pending",
       "in_progress": "Searching…"
     },
