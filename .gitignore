@@ -148,7 +148,6 @@ vite.config.ts.timestamp-*
 .vite/
 
 .playwright-mcp/
-diagnostics/
 
 # Reference-detector parity fixtures (generated from local PDFs)
 test-fixtures/detector/*.json
