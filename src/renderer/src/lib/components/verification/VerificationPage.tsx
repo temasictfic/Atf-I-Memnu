@@ -2600,21 +2600,6 @@ export default function VerificationPage() {
             const hasCompletedResult = Boolean(r && r.status !== 'in_progress')
             return (
               <>
-                <div className={styles['detail-search-actions']}>
-                  <button
-                    className={`${styles['action-btn']} ${styles['detail-search-btn']}`}
-                    onClick={openScholarOverlay}
-                    disabled={!selectedTitleOrText}
-                    title={t('verification.openGoogleScholar')}
-                  >{t('verification.googleScholar')}</button>
-                  <button
-                    className={`${styles['action-btn']} ${styles['detail-search-btn']}`}
-                    onClick={openGoogleOverlay}
-                    disabled={!selectedTitleOrText}
-                    title={t('verification.openGoogleSearch')}
-                  >{t('verification.googleSearch')}</button>
-                </div>
-
                 <div className={styles['detail-action-row']}>
                   {currentResult && (() => {
                     const trust = effectiveTrustTag(currentResult)
@@ -2661,6 +2646,21 @@ export default function VerificationPage() {
                     disabled={!currentResult || currentResult.status === 'in_progress'}
                     onClick={() => handleOverride('not_found')} title={t('verification.markAsNotFound')}
                   >X</button>
+                </div>
+
+                <div className={styles['detail-search-actions']}>
+                  <button
+                    className={`${styles['action-btn']} ${styles['detail-search-btn']}`}
+                    onClick={openScholarOverlay}
+                    disabled={!selectedTitleOrText}
+                    title={t('verification.openGoogleScholar')}
+                  >{t('verification.googleScholar')}</button>
+                  <button
+                    className={`${styles['action-btn']} ${styles['detail-search-btn']}`}
+                    onClick={openGoogleOverlay}
+                    disabled={!selectedTitleOrText}
+                    title={t('verification.openGoogleSearch')}
+                  >{t('verification.googleSearch')}</button>
                 </div>
                 <div className={styles['section-title']}>{t('verification.bestMatch')}</div>
 
