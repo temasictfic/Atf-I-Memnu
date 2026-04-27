@@ -28,6 +28,58 @@ export interface ScholarScanCallbacks {
   onSourceDone: (sourceId: string, updated: boolean) => void
 }
 
+// --- Shared in-page detection fragments ---
+// These JS source strings are injected into the webview as part of larger
+// scripts. Keeping them in one place means the renderer's resume probes and
+// the scanner's extraction loop use the *same* CAPTCHA/result definitions —
+// previously they had drifted, with the renderer missing localized markers
+// (e.g. Turkish "alışılmadık trafik") that the scanner already detected.
+const CAPTCHA_DETECTION_FN_JS = `
+function detectCaptcha() {
+  var CAPTCHA_SELECTORS = '#gs_captcha_f, #gs_captcha_ccl, #captcha-form, #recaptcha, iframe[src*="recaptcha"], iframe[src*="captcha"]';
+  if (document.querySelector(CAPTCHA_SELECTORS)) return true;
+  if (window.location.hostname.indexOf('sorry.google.com') !== -1) return true;
+  var title = (document.title || '').toLowerCase();
+  if (title.indexOf('sorry') !== -1 || title.indexOf('unusual traffic') !== -1) return true;
+  if (title.indexOf('\\u00fczg\\u00fcn\\u00fcz') !== -1) return true; // "Üzgünüz"
+  var bodyText = (document.body && document.body.innerText) || '';
+  if (bodyText.indexOf('unusual traffic') !== -1 || bodyText.indexOf('not a robot') !== -1) return true;
+  if (bodyText.indexOf('al\\u0131\\u015f\\u0131lmad\\u0131k trafik') !== -1) return true; // "alışılmadık trafik"
+  if (bodyText.indexOf('robot olmad\\u0131\\u011f\\u0131n\\u0131z') !== -1) return true; // "robot olmadığınız"
+  return false;
+}
+`
+
+const RESULT_DETECTION_FN_JS = `
+var RESULT_SELECTORS = ['.gs_r.gs_or.gs_scl', '.gs_r.gs_or', '.gs_ri', '[data-cid]'];
+function findItems() {
+  for (var i = 0; i < RESULT_SELECTORS.length; i++) {
+    var items = document.querySelectorAll(RESULT_SELECTORS[i]);
+    if (items.length) return items;
+  }
+  return [];
+}
+function hasResultsContainer() {
+  return !!document.querySelector('#gs_res_ccl, #gs_res_ccl_mid, .gs_r, .gs_ri');
+}
+`
+
+// Lightweight one-shot probe used by the renderer to decide whether the
+// overlay is on a real Scholar results page (CAPTCHA solved) or still
+// showing the challenge. Returns immediately — no polling — so it is safe
+// to call from a tight interval.
+export const PROBE_PAGE_STATE_SCRIPT = `
+(function() {
+  ${CAPTCHA_DETECTION_FN_JS}
+  ${RESULT_DETECTION_FN_JS}
+  return {
+    hasCaptcha: detectCaptcha(),
+    hasResults: hasResultsContainer(),
+    ready: document.readyState
+  };
+})()
+`
+
 // --- Extraction script injected into the webview ---
 // Single async IIFE that polls up to 2500ms for either CAPTCHA markers or
 // result items, extracts in the same pass, and short-circuits as soon as
@@ -37,29 +89,8 @@ export interface ScholarScanCallbacks {
 // instead of waiting out the full delay.
 const POLL_AND_EXTRACT_SCRIPT = `
 (async function() {
-  var CAPTCHA_SELECTORS = '#gs_captcha_f, #gs_captcha_ccl, #captcha-form, #recaptcha, iframe[src*="recaptcha"], iframe[src*="captcha"]';
-  var RESULT_SELECTORS = ['.gs_r.gs_or.gs_scl', '.gs_r.gs_or', '.gs_ri', '[data-cid]'];
-
-  function detectCaptcha() {
-    if (document.querySelector(CAPTCHA_SELECTORS)) return true;
-    if (window.location.hostname.indexOf('sorry.google.com') !== -1) return true;
-    var title = (document.title || '').toLowerCase();
-    if (title.indexOf('sorry') !== -1 || title.indexOf('unusual traffic') !== -1) return true;
-    if (title.indexOf('\\u00fczg\\u00fcn\\u00fcz') !== -1) return true; // "Üzgünüz"
-    var bodyText = (document.body && document.body.innerText) || '';
-    if (bodyText.indexOf('unusual traffic') !== -1 || bodyText.indexOf('not a robot') !== -1) return true;
-    if (bodyText.indexOf('al\\u0131\\u015f\\u0131lmad\\u0131k trafik') !== -1) return true; // "alışılmadık trafik"
-    if (bodyText.indexOf('robot olmad\\u0131\\u011f\\u0131n\\u0131z') !== -1) return true; // "robot olmadığınız"
-    return false;
-  }
-
-  function findItems() {
-    for (var i = 0; i < RESULT_SELECTORS.length; i++) {
-      var items = document.querySelectorAll(RESULT_SELECTORS[i]);
-      if (items.length) return items;
-    }
-    return [];
-  }
+  ${CAPTCHA_DETECTION_FN_JS}
+  ${RESULT_DETECTION_FN_JS}
 
   function extract(items) {
     var results = [];
@@ -185,6 +216,14 @@ class ScholarRateLimiter {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// `lookup=0` forces the full results page; without it Scholar may show a
+// single "best result" view that breaks our scrape. Truncated to 300 chars
+// because Scholar silently rejects very long queries.
+function buildSearchUrl(searchText: string): string {
+  const query = encodeURIComponent(searchText.slice(0, 300))
+  return `https://scholar.google.com/scholar?lookup=0&q=${query}`
 }
 
 // Cheap token-overlap similarity used to pick the single best candidate
@@ -324,9 +363,14 @@ export class ScholarScanner {
     // Prevent re-entry
     this.setStatus('scanning')
 
-    // Try to extract results from the overlay webview (user solved CAPTCHA there)
+    // Try to extract results from the overlay webview (user solved CAPTCHA there).
+    // `null` means "extraction unavailable" (overlay missing/closed/threw/wrong
+    // shape) and triggers the hidden-webview fallback below. An empty array
+    // means "extraction succeeded, Scholar returned 0 hits" — a legitimate
+    // signal we MUST NOT retry, otherwise we burn an extra request per
+    // genuine no-result reference.
     const overlay = this.overlayWebview
-    let candidates: ScholarCandidate[] = []
+    let candidates: ScholarCandidate[] | null = null
     console.log(`[Scholar] Overlay webview available: ${!!overlay}`)
     if (overlay) {
       try {
@@ -346,6 +390,29 @@ export class ScholarScanner {
       this.callbacks?.onCaptchaResolved()
     } catch (err) {
       console.warn('[Scholar] onCaptchaResolved failed:', err)
+    }
+
+    // Fallback: overlay extraction was unavailable, so retry the search via
+    // the hidden webview. Cookies for the scholar partition are now valid
+    // post-CAPTCHA, so this typically succeeds without a fresh challenge.
+    if (candidates === null) {
+      const url = buildSearchUrl(item.searchText)
+      console.log('[Scholar] Overlay extraction unavailable; retrying via hidden webview')
+      try {
+        const result = await this.loadAndExtract(url)
+        if (this.cancelRequested) return
+        if (result === 'captcha') {
+          // Hit another CAPTCHA — re-enter captcha state without advancing.
+          this.rateLimiter.onCaptcha()
+          this.setStatus('captcha')
+          this.callbacks?.onCaptcha(url)
+          return
+        }
+        candidates = result
+      } catch (err) {
+        console.warn('[Scholar] Hidden-webview fallback failed:', err)
+        candidates = []
+      }
     }
 
     // Always score, even with an empty candidate list, so the backend records
@@ -397,9 +464,7 @@ export class ScholarScanner {
       }
       if (this.cancelRequested) return
 
-      const query = encodeURIComponent(item.searchText.slice(0, 300))
-      // lookup=0 forces full results page (without it Scholar may show single "best result")
-      const url = `https://scholar.google.com/scholar?lookup=0&q=${query}`
+      const url = buildSearchUrl(item.searchText)
       console.log(`[Scholar] Searching: ${url.substring(0, 120)}...`)
 
       let candidates: ScholarCandidate[] | 'captcha'
@@ -552,8 +617,13 @@ export class ScholarScanner {
           // pages resolve here in 200-500ms — the full 2.5s is only spent
           // on pages that never render (soft blocks, empty results).
           const extraction = await view.executeJavaScript(POLL_AND_EXTRACT_SCRIPT)
+          // Stale paths must still resolve — silently returning leaves the
+          // caller's promise pending forever. Empty array is the safest
+          // signal: callers either check cancelRequested or score against
+          // [] (which costs one no-op POST at most).
           if (isStale()) {
             console.warn('[Scholar] stale onLoaded after extraction — discarding results')
+            resolve([])
             return
           }
           if (extraction && extraction.captcha) {
@@ -571,11 +641,17 @@ export class ScholarScanner {
             bodyLen: document.body?.innerText?.length || 0,
             html: document.documentElement.outerHTML.substring(0, 500)
           })`)
-          if (isStale()) return
+          if (isStale()) {
+            resolve([])
+            return
+          }
           console.warn('[Scholar] Extraction returned unexpected shape. Page info:', debugInfo)
           resolve([])
         } catch (err) {
-          if (isStale()) return
+          if (isStale()) {
+            resolve([])
+            return
+          }
           reject(new Error(`Extraction failed: ${err}`))
         }
       }

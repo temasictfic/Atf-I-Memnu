@@ -251,6 +251,7 @@
     "scholarGotResults": "got results",
     "scholarNoResults": "no results",
     "scholarCaptchaBanner": "CAPTCHA detected — please solve it below. Scan will resume automatically, or close Webview and click Resume.",
+    "scholarSolveFirst": "Solve the CAPTCHA first, or click Cancel to abort.",
     "scholarResume": "Resume",
     "scholarCancel": "Cancel",
     "nfShort": "~X",

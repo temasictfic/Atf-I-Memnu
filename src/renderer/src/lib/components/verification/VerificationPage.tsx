@@ -6,7 +6,7 @@ import { useSourcesStore, loadSources as loadSourcesFn } from '../../stores/sour
 import { useVerificationStore } from '../../stores/verification-store'
 import { useSettingsStore } from '../../stores/settings-store'
 import { useScholarScanStore } from '../../stores/scholar-scan-store'
-import { scholarScanner } from '../../services/scholar-scanner'
+import { scholarScanner, PROBE_PAGE_STATE_SCRIPT } from '../../services/scholar-scanner'
 import type { VerificationResult, MatchResult, DbCheckEntry, TagKey } from '../../api/types'
 import { api } from '../../api/rest-client'
 import { TAG_ORDER, effectiveTagOn, effectiveTrustTag } from '../../verification/tagState'
@@ -960,6 +960,34 @@ export default function VerificationPage() {
     }
   }, [scholarStatus, scholarCaptchaUrl])
 
+  // Manual Resume: confirm the overlay is on a Scholar results page before
+  // resuming, so an accidental click on the still-visible CAPTCHA page does
+  // not advance the queue with empty results. If the overlay is unreachable,
+  // we still resume — the scanner will fall back to the hidden webview.
+  const handleResumeClick = useCallback(async () => {
+    const view = browserWebviewRef.current
+    const showSolveFirstToast = (): void => {
+      if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
+      setVerifyToast(t('verification.scholarSolveFirst'))
+      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), 3000)
+    }
+    if (view) {
+      try {
+        const state = await view.executeJavaScript(PROBE_PAGE_STATE_SCRIPT)
+        const ready = state?.ready === 'complete' || state?.ready === 'interactive'
+        if (!state || state.hasCaptcha || !state.hasResults || !ready) {
+          showSolveFirstToast()
+          return
+        }
+      } catch (err) {
+        // Overlay not responsive — proceed; the scanner's fallback handles it.
+        // Logged so this path leaves a breadcrumb if it ever misbehaves.
+        console.warn('[Scholar] Resume probe failed; proceeding to scanner fallback:', err)
+      }
+    }
+    useScholarScanStore.getState().resumeAfterCaptcha()
+  }, [t])
+
   // Auto-resume: detect when overlay navigates to a Scholar results page (CAPTCHA solved)
   useEffect(() => {
     if (scholarStatus !== 'captcha') return
@@ -980,16 +1008,7 @@ export default function VerificationPage() {
         // merely the absence of a CAPTCHA element. Otherwise an in-flight
         // navigation (empty document) reads as "solved" and we auto-resume
         // while the webview is still loading the CAPTCHA page.
-        const state = await view.executeJavaScript(`
-          (function() {
-            var hasCaptcha = !!document.querySelector('#gs_captcha_f, #gs_captcha_ccl, #captcha-form, #recaptcha')
-              || !!document.querySelector('iframe[src*="recaptcha"]')
-            var txt = (document.body && document.body.innerText) || ''
-            if (txt.indexOf('unusual traffic') !== -1 || txt.indexOf('not a robot') !== -1) hasCaptcha = true
-            var hasResults = !!document.querySelector('#gs_res_ccl, #gs_res_ccl_mid, .gs_r, .gs_ri')
-            return { hasCaptcha: hasCaptcha, hasResults: hasResults, ready: document.readyState }
-          })()
-        `)
+        const state = await view.executeJavaScript(PROBE_PAGE_STATE_SCRIPT)
         if (!state || state.hasCaptcha || !state.hasResults) return
         if (state.ready !== 'complete' && state.ready !== 'interactive') return
 
@@ -2323,7 +2342,7 @@ export default function VerificationPage() {
                   )}
                 </span>
                 {scholarStatus === 'captcha' && (
-                  <button className={styles['action-btn']} onClick={() => useScholarScanStore.getState().resumeAfterCaptcha()}>
+                  <button className={styles['action-btn']} onClick={handleResumeClick}>
                     {t('verification.scholarResume')}
                   </button>
                 )}

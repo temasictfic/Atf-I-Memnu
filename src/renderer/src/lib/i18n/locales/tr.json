@@ -251,6 +251,7 @@
     "scholarGotResults": "sonuç bulundu",
     "scholarNoResults": "sonuç yok",
     "scholarCaptchaBanner": "CAPTCHA algılandı — lütfen aşağıda çözün. Tarama otomatik olarak devam edecek; ya da Web görünümünü kapatıp Devam et'e tıklayın.",
+    "scholarSolveFirst": "Önce CAPTCHA'yı çözün veya iptal etmek için İptal'e tıklayın.",
     "scholarResume": "Devam et",
     "scholarCancel": "İptal",
     "nfShort": "~X",
