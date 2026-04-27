@@ -2307,18 +2307,18 @@ export default function VerificationPage() {
             {(scholarStatus === 'scanning' || scholarStatus === 'captcha') && (
               <div className={styles['scholar-scan-bar']}>
                 <span className={styles['scholar-scan-info']}>
-                  Scholar
+                  {t('verification.scholarScanLabel')}
                   {scholarTotal === 0 ? (
                     <> &middot; {t('verification.scholarPreparing')}</>
                   ) : (
                     <>
                       {scholarBannerInfo.pdfName && <> | {scholarBannerInfo.pdfName}</>}
+                      {' '}&middot; {scholarCurrentIndex}/{scholarTotal} {t('verification.scholarVerified')}
                       {scholarBannerInfo.lastRefNumber != null && scholarBannerInfo.lastUpdated != null ? (
-                        <> : #{scholarBannerInfo.lastRefNumber} {scholarBannerInfo.lastUpdated ? 'Found' : 'Not Found'}</>
+                        <> : [{scholarBannerInfo.lastRefNumber}] {scholarBannerInfo.lastUpdated ? t('verification.scholarGotResults') : t('verification.scholarNoResults')}</>
                       ) : scholarBannerInfo.refNumber != null ? (
-                        <> : #{scholarBannerInfo.refNumber}</>
+                        <> : [{scholarBannerInfo.refNumber}]</>
                       ) : null}
-                      {' '}&middot; {scholarCurrentIndex}/{scholarTotal} checked
                     </>
                   )}
                 </span>
