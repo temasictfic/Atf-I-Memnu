@@ -58,6 +58,8 @@ import { generateAutoNotesForPdf } from "../../notes/auto-notes";
 import { useSettingsStore } from "../../stores/settings-store";
 import { NotesLayer } from "./NotesLayer";
 import { PdfPageCanvas } from "./PdfPageCanvas";
+import { buildDefaultSavePath } from "../../utils/path";
+import { parseStatusColor, parseStatusIcon } from "../../utils/status-helpers";
 import styles from "./ParsingPage.module.css";
 
 const statusOrder: Record<string, number> = {
@@ -68,41 +70,7 @@ const statusOrder: Record<string, number> = {
   error: 4,
 };
 
-function buildDefaultSavePath(dir: string | undefined, filename: string): string {
-  const trimmed = dir?.trim()
-  if (!trimmed) return filename
-  const sep = trimmed.includes('\\') ? '\\' : '/'
-  const stripped = trimmed.replace(/[\\/]+$/, '')
-  return `${stripped}${sep}${filename}`
-}
 
-function statusIcon(status: string): string {
-  switch (status) {
-    case "approved":
-      return "\u2713";
-    case "parsed":
-      return "?";
-    case "parsing":
-      return "\u25CC";
-    case "error":
-      return "\u2715";
-    default:
-      return "\u25CC";
-  }
-}
-
-function statusColorStyle(status: string): string {
-  switch (status) {
-    case "approved":
-      return "#22c55e";
-    case "parsed":
-      return "#eab308";
-    case "error":
-      return "#ef4444";
-    default:
-      return "#a8a29e";
-  }
-}
 
 export default function ParsingPage() {
   const { t } = useTranslation();
@@ -1551,9 +1519,9 @@ export default function ParsingPage() {
                   >
                     <span
                       className={styles["pdf-status-default"]}
-                      style={{ color: statusColorStyle(pdf.status) }}
+                      style={{ color: parseStatusColor(pdf.status) }}
                     >
-                      {statusIcon(pdf.status)}
+                      {parseStatusIcon(pdf.status)}
                     </span>
                     <span className={styles["pdf-status-remove"]}>
                       &times;

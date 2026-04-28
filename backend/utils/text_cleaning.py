@@ -18,6 +18,30 @@ ACCESS_DATE_PATTERNS = [
     r"(?i)[,;]?\s*eri[şs]im\s+tarihi\s*:?\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\.?",
 ]
 
+# Four-digit publication years 1900–2099.
+YEAR_PATTERN = re.compile(r"\b((?:19|20)\d{2})\b")
+
+# Author conjunctions ("&", "and", "ve") substituted by ", " in author lists.
+# Order is significant: ampersand first, then English "and" (case-insensitive),
+# then Turkish "ve". Keep this contract — call sites that previously inlined
+# these substitutions relied on this ordering.
+_CONJUNCTION_AMP = re.compile(r"\s+&\s+")
+_CONJUNCTION_AND = re.compile(r"\s+and\s+", re.IGNORECASE)
+_CONJUNCTION_VE = re.compile(r"\s+ve\s+")
+
+
+def is_valid_year(val: int) -> bool:
+    """True if `val` is a plausible publication year (1900–2099)."""
+    return 1900 <= val <= 2099
+
+
+def normalize_author_conjunctions(text: str) -> str:
+    """Replace " & ", " and ", " ve " separators with ", " in an author list."""
+    text = _CONJUNCTION_AMP.sub(", ", text)
+    text = _CONJUNCTION_AND.sub(", ", text)
+    text = _CONJUNCTION_VE.sub(", ", text)
+    return text
+
 
 def normalize_text(text: str) -> str:
     """Normalize Unicode text for comparison."""

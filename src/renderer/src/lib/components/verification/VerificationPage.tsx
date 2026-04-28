@@ -11,34 +11,19 @@ import type { VerificationResult, MatchResult, DbCheckEntry, TagKey } from '../.
 import { api } from '../../api/rest-client'
 import { TAG_ORDER, effectiveTagOn, effectiveTrustTag } from '../../verification/tagState'
 import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../../utils/reference-text'
+import { buildDefaultSavePath } from '../../utils/path'
+import {
+  dbScoreColor,
+  dbScoreIcon,
+  verifyStatusColor as statusColor,
+} from '../../utils/status-helpers'
+import {
+  BROWSER_ZOOM_STEP,
+  MAX_BROWSER_ZOOM,
+  MIN_BROWSER_ZOOM,
+  VERIFY_TOAST_DURATION_MS,
+} from '../../constants/timings'
 import styles from './VerificationPage.module.css'
-
-const ALL_DATABASES = [
-  'Crossref', 'OpenAlex', 'OpenAIRE', 'Europe PMC', 'arXiv',
-  'PubMed', 'TRDizin', 'Open Library', 'Semantic Scholar',
-]
-
-function statusColor(result: VerificationResult | undefined): string {
-  if (!result) return '#9ca3af'
-  switch (result.status) {
-    case 'found': return '#22c55e'
-    case 'problematic': return '#f59e0b'
-    case 'not_found': return '#ef4444'
-    case 'in_progress': return '#3b82f6'
-    default: return '#a8a29e'
-  }
-}
-
-function statusLabel(result: VerificationResult | undefined): string {
-  if (!result) return i18n.t('verification.status.pending')
-  switch (result.status) {
-    case 'found': return i18n.t('verification.status.found')
-    case 'problematic': return i18n.t('verification.status.problematic')
-    case 'not_found': return i18n.t('verification.status.not_found')
-    case 'in_progress': return i18n.t('verification.status.in_progress')
-    default: return i18n.t('verification.status.pending')
-  }
-}
 
 function problemTagDescription(tag: string): string {
   switch (tag) {
@@ -57,19 +42,6 @@ function problemTagLabel(tag: string): string {
   return translated === key ? tag : translated
 }
 
-function dbScoreIcon(score: number): string {
-  if (score >= 0.75) return '\u2713'
-  if (score >= 0.5) return '~'
-  return '\u2715'
-}
-
-function dbScoreColor(score: number): string {
-  if (score >= 0.75) return '#22c55e'
-  if (score >= 0.5) return '#eab308'
-  return '#ef4444'
-}
-
-const VERIFY_TOAST_DURATION_MS = 3000
 
 function googleSearchUrl(text: string): string {
   const cleaned = sanitizeReferenceTextForSearch(text)
@@ -96,19 +68,8 @@ function buildDbSearchUrl(db: string, text: string): string {
   return urls[db] ?? ''
 }
 
-function buildDefaultSavePath(dir: string | undefined, filename: string): string {
-  const trimmed = dir?.trim()
-  if (!trimmed) return filename
-  const sep = trimmed.includes('\\') ? '\\' : '/'
-  const stripped = trimmed.replace(/[\\/]+$/, '')
-  return `${stripped}${sep}${filename}`
-}
-
 const statusOrder: Record<string, number> = { found: 0, problematic: 1, not_found: 2, in_progress: 3, pending: 4 }
 type CardSortMode = 'status' | 'ref' | 'enabled' | 'trust'
-const MIN_BROWSER_ZOOM = 0.5
-const MAX_BROWSER_ZOOM = 3
-const BROWSER_ZOOM_STEP = 1.1
 
 export default function VerificationPage() {
   const { t } = useTranslation()
@@ -137,7 +98,10 @@ export default function VerificationPage() {
 
   const configuredDatabases = useSettingsStore(s => s.settings.databases)
   const enabledDatabases = useMemo(() => {
-    const known = new Set(ALL_DATABASES)
+    const known = new Set([
+      'Crossref', 'OpenAlex', 'OpenAIRE', 'Europe PMC', 'arXiv',
+      'PubMed', 'TRDizin', 'Open Library', 'Semantic Scholar',
+    ])
     return configuredDatabases
       .filter(db => db.enabled && known.has(db.name))
       .map(db => db.name)

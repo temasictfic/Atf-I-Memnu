@@ -1,0 +1,70 @@
+// Shared mappings between verification/parse status values and UI presentation
+// (color, icon, label). Single source of truth so ParsingPage, VerificationPage,
+// and the PDF report writer can't drift apart.
+
+import i18n from '../i18n'
+import type { VerificationResult } from '../api/types'
+import { DB_SCORE_HEX, STATUS_HEX } from '../constants/colors'
+import {
+  STATUS_FOUND_THRESHOLD,
+  STATUS_PROBLEMATIC_THRESHOLD,
+} from '../constants/scoring'
+
+// --- Parsing-page status (PdfDocument.status) ---
+
+export function parseStatusIcon(status: string): string {
+  switch (status) {
+    case 'approved': return '✓'
+    case 'parsed':   return '?'
+    case 'parsing':  return '◌'
+    case 'error':    return '✕'
+    default:         return '◌'
+  }
+}
+
+export function parseStatusColor(status: string): string {
+  switch (status) {
+    case 'approved': return DB_SCORE_HEX.high
+    case 'parsed':   return DB_SCORE_HEX.medium
+    case 'error':    return DB_SCORE_HEX.low
+    default:         return STATUS_HEX.neutral
+  }
+}
+
+// --- Verification-page status (VerificationResult.status) ---
+
+export function verifyStatusColor(result: VerificationResult | undefined): string {
+  if (!result) return STATUS_HEX.pending
+  switch (result.status) {
+    case 'found':       return STATUS_HEX.found
+    case 'problematic': return STATUS_HEX.problematic
+    case 'not_found':   return STATUS_HEX.not_found
+    case 'in_progress': return STATUS_HEX.in_progress
+    default:            return STATUS_HEX.neutral
+  }
+}
+
+export function verifyStatusLabel(result: VerificationResult | undefined): string {
+  if (!result) return i18n.t('verification.status.pending')
+  switch (result.status) {
+    case 'found':       return i18n.t('verification.status.found')
+    case 'problematic': return i18n.t('verification.status.problematic')
+    case 'not_found':   return i18n.t('verification.status.not_found')
+    case 'in_progress': return i18n.t('verification.status.in_progress')
+    default:            return i18n.t('verification.status.pending')
+  }
+}
+
+// --- Per-database score → UI presentation ---
+
+export function dbScoreIcon(score: number): string {
+  if (score >= STATUS_FOUND_THRESHOLD) return '✓'
+  if (score >= STATUS_PROBLEMATIC_THRESHOLD) return '~'
+  return '✕'
+}
+
+export function dbScoreColor(score: number): string {
+  if (score >= STATUS_FOUND_THRESHOLD) return DB_SCORE_HEX.high
+  if (score >= STATUS_PROBLEMATIC_THRESHOLD) return DB_SCORE_HEX.medium
+  return DB_SCORE_HEX.low
+}

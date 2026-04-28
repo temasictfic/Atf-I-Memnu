@@ -6,6 +6,7 @@ import type {
 } from '../api/types'
 import { api } from '../api/rest-client'
 import { wsClient } from '../api/ws-client'
+import { POLL_INTERVAL_MS } from '../constants/timings'
 import { sanitizeReferenceText } from '../utils/reference-text'
 import { effectiveTagOn, effectiveTrustTag } from '../verification/tagState'
 import { usePdfStore } from './pdf-store'
@@ -153,7 +154,7 @@ function startPolling(pdfIds: string[], jobId: string): void {
         stopPolling()
       }
     }
-  }, 5000)
+  }, POLL_INTERVAL_MS)
 }
 
 // --- Buffered verification console logging ---

@@ -12,6 +12,7 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
+from services.scoring_constants import DOI_MATCH_MIN_SCORE
 from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -29,7 +30,7 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     # Priority 1: DOI lookup
     if source.doi:
         result = await _search_query(session, f'{source.doi}[doi]', source, api_key)
-        if result and result.score >= 0.5:
+        if result and result.score >= DOI_MATCH_MIN_SCORE:
             return result
 
     # Priority 2: Title search

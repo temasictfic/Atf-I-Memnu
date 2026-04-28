@@ -8,7 +8,23 @@ from rapidfuzz import fuzz
 from models.source import ParsedSource
 from models.verification_result import MatchDetails, MatchResult
 from services.author_matcher import author_score, authors_match
+from services.scoring_constants import (
+    DOI_MATCH_MIN_SCORE,
+    STATUS_FOUND_THRESHOLD,
+    STATUS_PROBLEMATIC_THRESHOLD,
+    TITLE_MATCH_THRESHOLD,
+)
 from utils.doi_extractor import extract_arxiv_id, normalize_doi
+
+__all__ = [
+    "DOI_MATCH_MIN_SCORE",
+    "STATUS_FOUND_THRESHOLD",
+    "STATUS_PROBLEMATIC_THRESHOLD",
+    "TITLE_MATCH_THRESHOLD",
+    "classify_trust",
+    "determine_verification_status",
+    "score_match",
+]
 
 
 def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
@@ -94,30 +110,6 @@ def _urls_match(source: ParsedSource, candidate: dict[str, Any]) -> bool:
 
     # URL identifier matching (arXiv ID with version-suffix tolerance, DOI URL)
     return _url_match_score(source, candidate) >= 1.0
-
-
-def determine_status(score: float) -> str:
-    """Legacy: 4-category status from score. Kept for back-compat callers."""
-    if score >= 0.65:
-        return "green"
-    elif score >= 0.50:
-        return "yellow"
-    elif score > 0:
-        return "red"
-    else:
-        return "black"
-
-
-# Title threshold used for the !title tag and the trust-rule "title_matches"
-# definition.
-TITLE_MATCH_THRESHOLD = 0.85
-
-# Composite-score bands for the three-way status.
-#   score >= 0.75  → "found"       (UI: High / Yüksek)
-#   0.50–0.75      → "problematic" (UI: Medium / Orta)
-#   score <  0.50  → "not_found"   (UI: Low / Düşük)
-STATUS_FOUND_THRESHOLD = 0.75
-STATUS_PROBLEMATIC_THRESHOLD = 0.50
 
 
 def determine_verification_status(

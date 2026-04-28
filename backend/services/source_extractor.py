@@ -9,12 +9,14 @@ import re
 
 from models.source import ParsedSource
 from services.citation_format_detector import CitationFormat, detect_format
-from utils.text_cleaning import strip_reference_noise
 from utils.doi_extractor import extract_doi, extract_arxiv_id
+from utils.text_cleaning import (
+    YEAR_PATTERN,
+    is_valid_year,
+    normalize_author_conjunctions,
+    strip_reference_noise,
+)
 from utils.url_cleaner import find_best_url
-
-# Year pattern
-YEAR_PATTERN = re.compile(r"\b((?:19|20)\d{2})\b")
 
 
 async def extract_source_fields(raw_text: str) -> ParsedSource:
@@ -162,13 +164,13 @@ def _find_author_boundary(text: str, fmt: CitationFormat | None) -> int:
     # Rule 8 (Definite): "., YYYY" = last author is right before year
     for m in re.finditer(r"\.,\s*(\d{4})", text):
         year_val = int(m.group(1))
-        if 1900 <= year_val <= 2099:
+        if is_valid_year(year_val):
             return m.start() + 1  # include the period
 
     # Rule 9 (Definite): ". YYYY" = last author is right before year
     for m in re.finditer(r"\.\s+(\d{4})", text):
         year_val = int(m.group(1))
-        if 1900 <= year_val <= 2099:
+        if is_valid_year(year_val):
             # Make sure this isn't in the middle of a title/journal
             # Check that the text before looks like author names
             before = text[:m.start() + 1]
@@ -314,7 +316,7 @@ def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]
     paren_year_with_tail = re.search(r"\((\d{4})[a-z]?(?:\s*,[^)]*)?\)", text, re.IGNORECASE)
     if paren_year_with_tail:
         year_val = int(paren_year_with_tail.group(1))
-        if 1900 <= year_val <= 2099:
+        if is_valid_year(year_val):
             return year_val, paren_year_with_tail.start(), paren_year_with_tail.end()
 
     # Rule 3 (Definite): Year after &, and, ve, et al.
@@ -323,7 +325,7 @@ def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]
     )
     if conj_year:
         year_val = int(conj_year.group(1))
-        if 1900 <= year_val <= 2099:
+        if is_valid_year(year_val):
             return year_val, conj_year.start(1), conj_year.end(1)
 
     # Rule 4 (Definite): After conjunctions, if ( follows, year = 4 digits inside (
@@ -332,7 +334,7 @@ def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]
     )
     if conj_paren:
         year_val = int(conj_paren.group(1))
-        if 1900 <= year_val <= 2099:
+        if is_valid_year(year_val):
             return year_val, conj_paren.start(1), conj_paren.end(1)
 
     # Rule 6 (Definite): First 4-digit number after author_end_pos. Once found, stop.
@@ -340,7 +342,7 @@ def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]
     first_year = YEAR_PATTERN.search(after_authors)
     if first_year:
         year_val = int(first_year.group(1))
-        if 1900 <= year_val <= 2099:
+        if is_valid_year(year_val):
             abs_start = author_end_pos + first_year.start(1)
             abs_end = author_end_pos + first_year.end(1)
             return year_val, abs_start, abs_end
@@ -349,7 +351,7 @@ def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]
     fallback = YEAR_PATTERN.search(text)
     if fallback:
         year_val = int(fallback.group(1))
-        if 1900 <= year_val <= 2099:
+        if is_valid_year(year_val):
             return year_val, fallback.start(1), fallback.end(1)
 
     return None, -1, -1
@@ -605,35 +607,6 @@ def _parse_vancouver_authors(text: str) -> list[str]:
     return authors[:20]
 
 
-def _parse_ieee_authors(text: str) -> list[str]:
-    """Parse IEEE-style: 'G. Liu, K. Y. Lee, and H. F. Jordan'
-
-    Initials first, then last name.
-    """
-    # Normalize conjunctions
-    text = re.sub(r"\s+and\s+", ", ", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+&\s+", ", ", text)
-
-    # Split by comma
-    parts = [p.strip() for p in text.split(",") if p.strip()]
-    authors = []
-    i = 0
-    while i < len(parts):
-        part = parts[i].strip()
-        if not part:
-            i += 1
-            continue
-        if re.fullmatch(r"(?i)(?:ed\.?|eds\.?|editor|editors)", part):
-            i += 1
-            continue
-        # IEEE author: "G. Liu" or "K. Y. Lee" — initials + last name
-        # Could also be just a last name fragment; skip very short parts
-        if len(part) > 1:
-            authors.append(part)
-        i += 1
-    return authors[:20]
-
-
 def _parse_standard_authors(author_text: str) -> list[str]:
     """Parse standard author format (APA/MLA/Chicago/Harvard).
 
@@ -644,9 +617,7 @@ def _parse_standard_authors(author_text: str) -> list[str]:
         return []
 
     # Normalize conjunctions to commas
-    author_text = re.sub(r"\s+&\s+", ", ", author_text)
-    author_text = re.sub(r"\s+and\s+", ", ", author_text, flags=re.IGNORECASE)
-    author_text = re.sub(r"\s+ve\s+", ", ", author_text)  # Turkish "and"
+    author_text = normalize_author_conjunctions(author_text)
 
     # Remove "et al." and Turkish "vd" / "vd." / "diğerleri" (= "et al.")
     author_text = re.sub(r",?\s*et\s+al\.?\s*$", "", author_text, flags=re.IGNORECASE).strip()

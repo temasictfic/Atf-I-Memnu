@@ -15,6 +15,8 @@
 
 import { PDFDocument, PDFName, PDFString, PDFArray, PDFNumber, PDFDict, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
+import { STATUS_FOUND_THRESHOLD, STATUS_PROBLEMATIC_THRESHOLD } from '../constants/scoring'
+import { DB_SCORE_RGB, STATUS_RGB, TRUST_RGB } from '../constants/colors'
 // @ts-expect-error Vite ?url import returns a string
 import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
 // @ts-expect-error Vite ?url import returns a string
@@ -61,11 +63,13 @@ const TAG_SIZE = 8
 const TINY_SIZE = 7.5
 const LH = 1.4
 
-const COLOR_FOUND: RGB       = rgb(0.133, 0.773, 0.369)
-const COLOR_PROBLEMATIC: RGB = rgb(0.961, 0.620, 0.043)
-const COLOR_NOT_FOUND: RGB   = rgb(0.937, 0.267, 0.267)
+const tup = (t: readonly [number, number, number]): RGB => rgb(t[0], t[1], t[2])
+
+const COLOR_FOUND: RGB        = tup(STATUS_RGB.found)
+const COLOR_PROBLEMATIC: RGB  = tup(STATUS_RGB.problematic)
+const COLOR_NOT_FOUND: RGB    = tup(STATUS_RGB.not_found)
 const COLOR_TEXT: RGB         = rgb(0.1, 0.1, 0.1)
-const COLOR_MUTED: RGB       = rgb(0.47, 0.44, 0.40)
+const COLOR_MUTED: RGB        = rgb(0.47, 0.44, 0.40)
 const COLOR_DARK: RGB         = rgb(0.267, 0.251, 0.235)
 const COLOR_SOURCE: RGB       = rgb(0.341, 0.325, 0.310)
 const COLOR_LINK: RGB         = rgb(0.161, 0.404, 0.749)  // #2967bf (DOI + URL)
@@ -75,13 +79,13 @@ const COLOR_CARD_BORDER: RGB  = rgb(0.906, 0.898, 0.890)
 const COLOR_CARD_BG: RGB      = rgb(0.980, 0.980, 0.978)
 const COLOR_DB_BG: RGB        = rgb(0.996, 0.953, 0.780)
 const COLOR_TEAL: RGB         = rgb(0.0, 0.588, 0.533)
-// Trust-tag palette (Geçerli / Künye / Uydurma)
-const COLOR_VALID_BORDER: RGB = rgb(0.525, 0.937, 0.675)  // #86efac
-const COLOR_VALID_TEXT: RGB   = rgb(0.086, 0.396, 0.204)  // #166534
-const COLOR_KUNYE_BORDER: RGB = rgb(0.580, 0.639, 0.722)  // #94a3b8
-const COLOR_KUNYE_TEXT: RGB   = rgb(0.200, 0.255, 0.333)  // #334155
-const COLOR_UYDURMA_BORDER: RGB = rgb(0.910, 0.475, 0.976) // #e879f9
-const COLOR_UYDURMA_TEXT: RGB   = rgb(0.525, 0.098, 0.561) // #86198f
+// Trust-tag palette (Geçerli / Künye / Uydurma) — sourced from constants/colors.ts.
+const COLOR_VALID_BORDER: RGB   = tup(TRUST_RGB.validBorder)
+const COLOR_VALID_TEXT: RGB     = tup(TRUST_RGB.validText)
+const COLOR_KUNYE_BORDER: RGB   = tup(TRUST_RGB.kunyeBorder)
+const COLOR_KUNYE_TEXT: RGB     = tup(TRUST_RGB.kunyeText)
+const COLOR_UYDURMA_BORDER: RGB = tup(TRUST_RGB.uydurmaBorder)
+const COLOR_UYDURMA_TEXT: RGB   = tup(TRUST_RGB.uydurmaText)
 
 function statusColor(s: string): RGB {
   if (s === 'found') return COLOR_FOUND
@@ -89,9 +93,9 @@ function statusColor(s: string): RGB {
   return COLOR_NOT_FOUND
 }
 function dbScoreColor(s: number): RGB {
-  if (s >= 0.65) return COLOR_FOUND
-  if (s >= 0.5) return rgb(0.918, 0.702, 0.031)
-  return rgb(0.937, 0.267, 0.267)
+  if (s >= STATUS_FOUND_THRESHOLD) return tup(DB_SCORE_RGB.high)
+  if (s >= STATUS_PROBLEMATIC_THRESHOLD) return tup(DB_SCORE_RGB.medium)
+  return tup(DB_SCORE_RGB.low)
 }
 
 // --- Public interfaces ---

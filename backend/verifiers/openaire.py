@@ -15,6 +15,7 @@ from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.openaire_token_manager import get_access_token
+from services.scoring_constants import DOI_MATCH_MIN_SCORE
 from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 OPENAIRE_API = "https://api.openaire.eu/graph/v2/researchProducts"
@@ -52,7 +53,7 @@ async def search(source: ParsedSource) -> MatchResult | None:
     # Priority 1: DOI via persistent identifier filter (pid covers DOI, PMID, etc.)
     if source.doi:
         result = await _fetch_best_match(session, {"pid": source.doi, "pageSize": "5"}, source)
-        if result and result.score >= 0.5:
+        if result and result.score >= DOI_MATCH_MIN_SCORE:
             return result
 
     # Priority 2: Title search. `mainTitle` is the structured title filter on v2.

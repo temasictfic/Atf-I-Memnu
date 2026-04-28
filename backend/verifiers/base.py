@@ -14,7 +14,3 @@ class AbstractVerifier(ABC):
     async def search(self, source: ParsedSource) -> MatchResult | None:
         """Search this database for the given source. Returns best match or None."""
         pass
-
-    def build_search_url(self, query: str) -> str:
-        """Build an external search URL for linking in UI."""
-        return self.base_url

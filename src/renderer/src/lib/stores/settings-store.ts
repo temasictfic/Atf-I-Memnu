@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import type { AppSettings, DatabaseConfig } from '../api/types'
 import { api } from '../api/rest-client'
+import {
+  SETTINGS_ERROR_FLASH_MS,
+  SETTINGS_SAVED_FLASH_MS,
+} from '../constants/timings'
 import i18n from '../i18n'
 
 const defaultDatabases: DatabaseConfig[] = [
@@ -28,9 +32,6 @@ interface SettingsState {
   updateApiKey: (key: string, value: string) => void
   connectOpenaire: (refreshToken: string) => Promise<{ ok: boolean; error?: string }>
   disconnectOpenaire: () => Promise<void>
-  addInstance: (engine: string, url: string) => void
-  removeInstance: (engine: string, url: string) => void
-  reorderInstances: (engine: string, urls: string[]) => void
 }
 
 // Auto-save settings to backend after a short debounce
@@ -44,11 +45,11 @@ function _debouncedSave(get: () => SettingsState) {
     try {
       const s = await api.updateSettings(get().settings)
       useSettingsStore.setState({ settings: s, saveStatus: 'saved' })
-      _savedTimer = setTimeout(() => useSettingsStore.setState({ saveStatus: 'idle' }), 2000)
+      _savedTimer = setTimeout(() => useSettingsStore.setState({ saveStatus: 'idle' }), SETTINGS_SAVED_FLASH_MS)
     } catch (e) {
       console.error('Failed to auto-save settings:', e)
       useSettingsStore.setState({ saveStatus: 'error' })
-      _savedTimer = setTimeout(() => useSettingsStore.setState({ saveStatus: 'idle' }), 3000)
+      _savedTimer = setTimeout(() => useSettingsStore.setState({ saveStatus: 'idle' }), SETTINGS_ERROR_FLASH_MS)
     }
   }, 500)
 }
@@ -179,17 +180,5 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     } catch (err) {
       console.error('Failed to disconnect OpenAIRE:', err)
     }
-  },
-
-  addInstance: () => {
-    // Deprecated: instance lists were removed from persisted settings.
-  },
-
-  removeInstance: () => {
-    // Deprecated: instance lists were removed from persisted settings.
-  },
-
-  reorderInstances: () => {
-    // Deprecated: instance lists were removed from persisted settings.
   },
 }))

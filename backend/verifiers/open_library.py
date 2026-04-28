@@ -10,6 +10,7 @@ from urllib.parse import quote
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
+from services.scoring_constants import DOI_MATCH_MIN_SCORE
 from verifiers._http import check_parked_url, check_rate_limit, get_session
 
 SEARCH_API = "https://openlibrary.org/search.json"
@@ -25,7 +26,7 @@ async def search(source: ParsedSource) -> MatchResult | None:
     # Priority 1: DOI lookup
     if source.doi:
         result = await _search_query(session, {"q": source.doi}, source)
-        if result and result.score >= 0.5:
+        if result and result.score >= DOI_MATCH_MIN_SCORE:
             return result
 
     # Priority 2: Title search
