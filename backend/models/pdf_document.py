@@ -26,3 +26,7 @@ class PdfDocument(BaseModel):
     source_count: int = 0
     pages: list[PageContent] = []
     error: str | None = None
+    # Note: the renderer's PdfDocument type carries an extra `numbered`
+    # flag derived client-side by parseAndDetect(). It is not set on
+    # this model — backend never computes it. The cached parse JSON
+    # written by api/parsing.py stores it separately.

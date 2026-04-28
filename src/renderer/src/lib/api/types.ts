@@ -5,6 +5,13 @@ export interface PdfDocument {
   path: string
   status: 'pending' | 'parsing' | 'parsed' | 'approved' | 'error'
   source_count: number
+  /**
+   * Client-only — set by the renderer's parseAndDetect() based on which
+   * detection strategy fired (numbered list vs heuristic). The backend
+   * persists this inside the parse-cache JSON (backend/api/parsing.py) but
+   * never sets it on the PdfDocument Pydantic model. Always `false` on
+   * objects that come straight from a REST endpoint returning PdfDocument.
+   */
   numbered: boolean
   error?: string
 }
