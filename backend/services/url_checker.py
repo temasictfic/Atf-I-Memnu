@@ -26,35 +26,33 @@ def is_doi_or_arxiv_url(url: str) -> bool:
     return "doi.org" in lower or "arxiv.org" in lower
 
 
-async def check_url_liveness(url: str, timeout: float = 10.0) -> bool:
-    """Check if a URL is alive (returns HTTP < 400).
+async def _check_url_with_session(session: aiohttp.ClientSession, url: str) -> bool:
+    """Check liveness of a single URL using a shared session.
 
     Tries HEAD first; falls back to GET if the server rejects HEAD or returns
-    a non-2xx/3xx status.  Returns False on any network error or timeout.
+    a non-2xx/3xx status. Returns False on any network error or timeout.
     """
     if not url or not url.startswith(("http://", "https://")):
         return False
 
-    client_timeout = aiohttp.ClientTimeout(total=timeout)
     try:
-        async with aiohttp.ClientSession(timeout=client_timeout, headers=_HEADERS) as session:
-            # HEAD attempt
-            try:
-                async with session.head(url, allow_redirects=True) as resp:
-                    if resp.status < 400:
-                        return True
-                    # Some servers return 405/403 for HEAD — fall back to GET
-                    if resp.status not in (405, 403, 404):
-                        return False
-            except aiohttp.ClientError:
-                pass
+        # HEAD attempt
+        try:
+            async with session.head(url, allow_redirects=True) as resp:
+                if resp.status < 400:
+                    return True
+                # Some servers return 405/403 for HEAD — fall back to GET
+                if resp.status not in (405, 403, 404):
+                    return False
+        except aiohttp.ClientError:
+            pass
 
-            # GET fallback
-            try:
-                async with session.get(url, allow_redirects=True) as resp:
-                    return resp.status < 400
-            except aiohttp.ClientError:
-                return False
+        # GET fallback
+        try:
+            async with session.get(url, allow_redirects=True) as resp:
+                return resp.status < 400
+        except aiohttp.ClientError:
+            return False
     except asyncio.TimeoutError:
         logger.debug("URL liveness timeout: %s", url)
         return False
@@ -68,15 +66,20 @@ async def check_urls(urls: list[str], timeout: float = 10.0) -> dict[str, bool]:
 
     DOI/arXiv URLs are skipped (validated separately by API verifiers).
     Returns {url: alive} for the URLs that were actually checked.
+
+    A single aiohttp.ClientSession is shared across all URLs in this call so
+    we reuse the connection pool instead of paying a TLS handshake per URL.
     """
     targets = [u for u in urls if u and not is_doi_or_arxiv_url(u)]
     if not targets:
         return {}
 
-    results = await asyncio.gather(
-        *(check_url_liveness(u, timeout=timeout) for u in targets),
-        return_exceptions=True,
-    )
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
+    async with aiohttp.ClientSession(timeout=client_timeout, headers=_HEADERS) as session:
+        results = await asyncio.gather(
+            *(_check_url_with_session(session, u) for u in targets),
+            return_exceptions=True,
+        )
 
     out: dict[str, bool] = {}
     for url, alive in zip(targets, results):
