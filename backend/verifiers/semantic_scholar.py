@@ -9,7 +9,7 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
 
 API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 _HOST = "api.semanticscholar.org"
@@ -42,14 +42,11 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
         headers["x-api-key"] = api_key
 
     session = get_session()
-    best = await _fetch_best_match(session, params, source, headers)
-
-    # Retry without year filter if it produced nothing.
-    if best is None and "year" in params:
-        params_no_year = {k: v for k, v in params.items() if k != "year"}
-        best = await _fetch_best_match(session, params_no_year, source, headers)
-
-    return best
+    return await fetch_with_year_fallback(
+        lambda p: _fetch_best_match(session, p, source, headers),
+        params,
+        {"year"},
+    )
 
 
 async def _fetch_best_match(

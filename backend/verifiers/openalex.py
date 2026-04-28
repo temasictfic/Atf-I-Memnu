@@ -10,7 +10,7 @@ from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.search_settings import get_polite_pool_email
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
 
 OPENALEX_API = "https://api.openalex.org/works"
 _HOST = "api.openalex.org"
@@ -50,15 +50,11 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
         )
 
     session = get_session()
-    best = await _fetch_best_match(session, params, source)
-
-    # If the year filter produced nothing (e.g. mis-parsed year),
-    # retry without it so we don't silently miss the correct paper.
-    if best is None and "filter" in params:
-        params_no_filter = {k: v for k, v in params.items() if k != "filter"}
-        best = await _fetch_best_match(session, params_no_filter, source)
-
-    return best
+    return await fetch_with_year_fallback(
+        lambda p: _fetch_best_match(session, p, source),
+        params,
+        {"filter"},
+    )
 
 
 async def _fetch_best_match(

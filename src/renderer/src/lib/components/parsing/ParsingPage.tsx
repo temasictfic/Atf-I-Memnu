@@ -60,6 +60,8 @@ import { NotesLayer } from "./NotesLayer";
 import { PdfPageCanvas } from "./PdfPageCanvas";
 import { buildDefaultSavePath } from "../../utils/path";
 import { parseStatusColor, parseStatusIcon } from "../../utils/status-helpers";
+import { HIGHLIGHT_PALETTE_HEX } from "../../constants/colors";
+import { PARSE_FIELD_DEBOUNCE_MS } from "../../constants/timings";
 import styles from "./ParsingPage.module.css";
 
 const statusOrder: Record<string, number> = {
@@ -656,11 +658,9 @@ export default function ParsingPage() {
       await unapproveSources(pdfId);
       usePdfStore.getState().updatePdfStatus(pdfId, "parsed");
     } else {
-      let existingSources = useSourcesStore.getState().sourcesByPdf[pdfId];
-      if (!existingSources) {
-        await loadSources(pdfId);
-        existingSources = useSourcesStore.getState().sourcesByPdf[pdfId];
-      }
+      const existingSources =
+        useSourcesStore.getState().sourcesByPdf[pdfId] ??
+        (await loadSources(pdfId));
       if (!existingSources) {
         console.warn(`Could not load sources for ${pdfId}; skipping approve.`);
         return;
@@ -973,21 +973,24 @@ export default function ParsingPage() {
 
   // Text extraction — pulls text from the already-loaded pdfjs-dist document
   // for the given bbox. Replaces the old backend /api/parse/extract-text call.
+  // Returns the source's id *after* the text update — updateRectangle
+  // content-rehashes on text change, so the input sourceId may be stale.
   async function extractAndSetText(
     pdfId: string,
     sourceId: string,
     bbox: { x0: number; y0: number; x1: number; y1: number; page: number },
-  ) {
+  ): Promise<string | null> {
     const doc = pdfDocRef.current;
-    if (!doc) return;
+    if (!doc) return sourceId;
     try {
       const text = await extractTextInBbox(doc, bbox.page, bbox);
-      if (text) {
-        updateRectangle(pdfId, sourceId, { text });
-        saveSources(pdfId);
-      }
+      if (!text) return sourceId;
+      const newId = updateRectangle(pdfId, sourceId, { text });
+      saveSources(pdfId);
+      return newId;
     } catch (e) {
       console.error("Failed to extract text:", e);
+      return null;
     }
   }
 
@@ -1114,7 +1117,7 @@ export default function ParsingPage() {
             y1: pageY1,
             page: targetPage,
           };
-          addRectangle(pdfId, {
+          const addedId = addRectangle(pdfId, {
             id: newId,
             pdf_id: pdfId,
             bbox: newBbox,
@@ -1122,20 +1125,23 @@ export default function ParsingPage() {
             ref_number: undefined,
             status: "edited",
           });
-          const updated = useSourcesStore.getState().sourcesByPdf[pdfId] ?? [];
-          const newSource = updated.find(
-            (s) =>
-              s.bbox.x0 === newBbox.x0 &&
-              s.bbox.y0 === newBbox.y0 &&
-              s.bbox.page === newBbox.page,
-          );
-          setSelectedSourceId(newSource?.id ?? null);
+          setSelectedSourceId(addedId);
           saveSources(pdfId);
-          if (newSource) extractAndSetText(pdfId, newSource.id, newBbox);
+          // extractAndSetText returns the post-renumber id; without
+          // re-selecting it the freshly drawn box loses selection and
+          // the user has to left-click it to re-select.
+          void extractAndSetText(pdfId, addedId, newBbox).then((finalId) => {
+            if (finalId) setSelectedSourceId(finalId);
+          });
         }
       }
     }
 
+    // Drag/resize fire-and-forget the extract: text changes rehash the id,
+    // but neither path updates selection afterwards so the stale id never
+    // surfaces. If a future change wants to keep the dragged/resized box
+    // selected through extraction, capture the returned id like the
+    // right-click draw above.
     if (hadDrag && pdfId && dragIntentRef.current) {
       const draggedId = dragIntentRef.current.sourceId;
       void saveSources(pdfId).catch((e) => {
@@ -1145,7 +1151,7 @@ export default function ParsingPage() {
         useSourcesStore.getState().sourcesByPdf[pdfId] ?? [];
       const movedSource = currentSources.find((s) => s.id === draggedId);
       if (movedSource)
-        extractAndSetText(pdfId, draggedId, movedSource.bbox);
+        void extractAndSetText(pdfId, draggedId, movedSource.bbox);
     }
     if (hadResize && pdfId) {
       void saveSources(pdfId).catch((e) => {
@@ -1157,7 +1163,7 @@ export default function ParsingPage() {
         (s) => s.id === hadResize.sourceId,
       );
       if (resizedSource)
-        extractAndSetText(pdfId, hadResize.sourceId, resizedSource.bbox);
+        void extractAndSetText(pdfId, hadResize.sourceId, resizedSource.bbox);
     }
 
     dragIntentRef.current = null;
@@ -1279,7 +1285,7 @@ export default function ParsingPage() {
   );
   const selectedSourceStatus = selectedSource?.status ?? null;
 
-  // Fetch parsed fields when a source is selected (debounced 300ms, cached)
+  // Fetch parsed fields when a source is selected (debounced, cached)
   useEffect(() => {
     const text = selectedSource?.text;
     if (!selectedSource || !text) {
@@ -1310,7 +1316,7 @@ export default function ParsingPage() {
         .finally(() => {
           setParsedFieldsLoading(false);
         });
-    }, 300);
+    }, PARSE_FIELD_DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
   }, [selectedSource?.id, selectedSource?.text]);
@@ -1911,15 +1917,7 @@ export default function ParsingPage() {
                     boxSizing: "border-box",
                   }}
                 />
-                {[
-                  "#fde68a",
-                  "#a7f3d0",
-                  "#bae6fd",
-                  "#fbcfe8",
-                  "#fed7aa",
-                  "#ddd6fe",
-                  "#fecaca",
-                ].map(
+                {HIGHLIGHT_PALETTE_HEX.map(
                   (swatch) => (
                     <button
                       key={swatch}

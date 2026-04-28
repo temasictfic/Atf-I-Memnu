@@ -9,6 +9,7 @@ import re
 
 from models.source import ParsedSource
 from services.citation_format_detector import CitationFormat, detect_format
+from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
 from utils.doi_extractor import extract_doi, extract_arxiv_id
 from utils.text_cleaning import (
     YEAR_PATTERN,
@@ -17,6 +18,16 @@ from utils.text_cleaning import (
     strip_reference_noise,
 )
 from utils.url_cleaner import find_best_url
+
+# Leading inline parenthetical citation that some refs duplicate before the
+# real author list, e.g. "(Jenkins vd., 2024) Jenkins, A., ve diğerleri (2024)".
+# Used both on the whole text (before parsing) and on the extracted author
+# section (before pairing) to defend against bracketed reprints either side
+# of the boundary.
+_LEADING_INLINE_CITATION_RE = re.compile(
+    r"^\(\s*[^)]*?(?:vd|et\s+al|diğerleri)\.?\s*(?:,?\s*(?:19|20)\d{2})?\s*\)\s*",
+    flags=re.IGNORECASE,
+)
 
 
 async def extract_source_fields(raw_text: str) -> ParsedSource:
@@ -33,7 +44,7 @@ async def extract_source_fields(raw_text: str) -> ParsedSource:
     cleaned_text = strip_reference_noise(raw_text)
 
     ner_result = await extract_fields_ner(cleaned_text)
-    if ner_result is not None and ner_result.parse_confidence >= 0.3:
+    if ner_result is not None and ner_result.parse_confidence >= LOW_PARSE_CONFIDENCE_THRESHOLD:
         return ner_result
 
     return _extract_source_fields_regex(cleaned_text)
@@ -51,12 +62,7 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
     #   "(Jenkins vd., 2024) Jenkins, A., ve diğerleri (2024). …"
     # The parenthetical confuses every downstream rule (boundary, year,
     # author pairing), so we remove it up front.
-    text = re.sub(
-        r"^\(\s*[^)]*?(?:vd|et\s+al|diğerleri)\.?\s*(?:,?\s*(?:19|20)\d{2})?\s*\)\s*",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
+    text = _LEADING_INLINE_CITATION_RE.sub("", text)
 
     # Extract identifiers for URL building
     doi = extract_doi(text)
@@ -87,12 +93,7 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
     ).strip().rstrip(",").rstrip(".")
     # Strip leading inline citations that some refs duplicate before the
     # real author list, e.g. "(Calazans vd. 2024) Calazans, M. A. A., ..."
-    author_text = re.sub(
-        r"^\(\s*[^)]*?(?:vd|et\s+al|diğerleri)\.?\s*(?:,?\s*(?:19|20)\d{2})?\s*\)\s*",
-        "",
-        author_text,
-        flags=re.IGNORECASE,
-    ).strip()
+    author_text = _LEADING_INLINE_CITATION_RE.sub("", author_text).strip()
     # Strip quoted nicknames embedded in the author list, e.g.
     # `Um, E. "Rachel", Plass, J. L., ...`. The nickname confuses the
     # comma-split pairing; the "Rachel" span adds no signal for matching.

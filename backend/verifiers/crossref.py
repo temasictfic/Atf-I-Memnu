@@ -1,6 +1,7 @@
 """Crossref API verifier - DOI lookup and bibliographic search."""
 
 import re
+from itertools import combinations
 from typing import Any
 from urllib.parse import quote, quote_plus
 
@@ -10,7 +11,7 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from services.scoring_constants import DOI_MATCH_MIN_SCORE
+from services.scoring_constants import DOI_MATCH_MIN_SCORE, HIGH_PARSE_CONFIDENCE_THRESHOLD
 from services.search_settings import get_polite_pool_email
 from verifiers._http import check_parked_url, check_rate_limit, get_session
 
@@ -102,7 +103,7 @@ async def search(source: ParsedSource) -> MatchResult | None:
     author_query = _build_author_query(source.authors)
     if (
         author_query
-        and source.parse_confidence >= 0.7
+        and source.parse_confidence >= HIGH_PARSE_CONFIDENCE_THRESHOLD
         and not _looks_like_editor_reference(source.raw_text)
     ):
         params["query.author"] = author_query
@@ -121,37 +122,17 @@ async def search(source: ParsedSource) -> MatchResult | None:
         )
 
     session = get_session()
-    variants: list[dict[str, str]] = [params]
-    if "query.container-title" in params:
-        variants.append({k: v for k, v in params.items() if k != "query.container-title"})
-    if "query.author" in params:
-        variants.append({k: v for k, v in params.items() if k != "query.author"})
-    if "filter" in params:
-        variants.append({k: v for k, v in params.items() if k != "filter"})
-    if "query.author" in params and "filter" in params:
-        variants.append({
-            k: v for k, v in params.items()
-            if k not in {"query.author", "filter"}
-        })
-    if "query.container-title" in params and "filter" in params:
-        variants.append({
-            k: v for k, v in params.items()
-            if k not in {"query.container-title", "filter"}
-        })
-    if "query.container-title" in params and "query.author" in params:
-        variants.append({
-            k: v for k, v in params.items()
-            if k not in {"query.container-title", "query.author"}
-        })
-    if (
-        "query.container-title" in params
-        and "query.author" in params
-        and "filter" in params
-    ):
-        variants.append({
-            k: v for k, v in params.items()
-            if k not in {"query.container-title", "query.author", "filter"}
-        })
+    # Walk every subset of present {query.container-title, query.author,
+    # filter} keys, dropping fewest first. The full-params variant runs
+    # first; the bare-title fallback (all three dropped) runs last. Any
+    # absent keys silently shrink the search space.
+    optional_keys = ("query.container-title", "query.author", "filter")
+    present = [k for k in optional_keys if k in params]
+    variants: list[dict[str, str]] = []
+    for size in range(len(present) + 1):
+        for drop in combinations(present, size):
+            drop_set = set(drop)
+            variants.append({k: v for k, v in params.items() if k not in drop_set})
 
     # Walk the variant list, but break out as soon as a variant lands a
     # DOI-exact hit (score ≥ 0.95 with a URL/DOI match). That's the same

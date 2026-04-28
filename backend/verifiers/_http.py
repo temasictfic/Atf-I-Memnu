@@ -6,14 +6,18 @@ citation. This module exposes a single lazily-created session that is reused
 across calls, and a shutdown hook the FastAPI app can wire into lifespan.
 """
 
+from collections.abc import Awaitable, Callable, Iterable
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
+from typing import TypeVar
 from urllib.parse import urlparse
 
 import aiohttp
 
 from scrapers.rate_limiter import rate_limiter
 from services.search_settings import get_client_timeout
+
+T = TypeVar("T")
 
 _session: aiohttp.ClientSession | None = None
 
@@ -114,3 +118,25 @@ async def close_session() -> None:
     if _session is not None and not _session.closed:
         await _session.close()
     _session = None
+
+
+async def fetch_with_year_fallback(
+    fetch_fn: Callable[[dict[str, str]], Awaitable[T | None]],
+    params: dict[str, str],
+    year_keys: Iterable[str],
+) -> T | None:
+    """Run a search with year-restricted params; if it produced nothing, retry
+    once after stripping the year-related keys.
+
+    Several verifiers (OpenAlex, OpenAIRE, Semantic Scholar) share this exact
+    pattern: a ±1-year filter is applied for disambiguation, but a mis-parsed
+    source year would silently exclude the correct paper. The single retry
+    without the year keys recovers those cases without doubling traffic on
+    the common path where the first call already returned hits.
+    """
+    best = await fetch_fn(params)
+    drop = set(year_keys)
+    if best is None and drop & params.keys():
+        params_no_year = {k: v for k, v in params.items() if k not in drop}
+        best = await fetch_fn(params_no_year)
+    return best

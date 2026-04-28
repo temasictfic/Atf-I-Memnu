@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import styles from './UpdateNotification.module.css'
 
@@ -55,22 +55,6 @@ export default function UpdateNotification() {
     }
   }, [])
 
-  const message = useMemo(() => {
-    if (stage === 'available') {
-      return version ? t('update.availableWithVersion', { version }) : t('update.availableGeneric')
-    }
-    if (stage === 'downloading') {
-      return t('update.downloading', { percent: progressPercent.toFixed(1) })
-    }
-    if (stage === 'ready') {
-      return t('update.ready')
-    }
-    if (stage === 'error') {
-      return errorMessage || t('update.failed')
-    }
-    return ''
-  }, [errorMessage, progressPercent, stage, version, t])
-
   if (!visible || stage === 'hidden') {
     return null
   }
@@ -79,7 +63,7 @@ export default function UpdateNotification() {
     if (stage === 'available') return version ? t('update.availableWithVersion', { version }) : t('update.availableGeneric')
     if (stage === 'downloading') return `${progressPercent.toFixed(1)}%`
     if (stage === 'ready') return t('update.ready')
-    if (stage === 'error') return t('update.failed')
+    if (stage === 'error') return errorMessage || t('update.failed')
     return ''
   })()
 
@@ -141,8 +125,6 @@ export default function UpdateNotification() {
     }
     return null
   })()
-
-  void message
 
   return (
     <aside className={styles['update-card']} role="status" aria-live="polite">

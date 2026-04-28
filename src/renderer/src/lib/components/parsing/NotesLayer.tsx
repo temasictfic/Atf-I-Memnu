@@ -16,6 +16,9 @@ import {
 import { SCALE } from '../../pdf/types'
 import styles from './ParsingPage.module.css'
 
+// Outline color shared by selected highlights and selected callouts.
+const SELECTED_OUTLINE = '#1f2937'
+
 interface Props {
   notes: Note[]
   scale: number
@@ -217,7 +220,7 @@ function HighlightBox({ note, scale, selected, onSelect }: HighlightBoxProps) {
             background: note.color,
             opacity: 0.4,
             mixBlendMode: 'multiply',
-            outline: selected ? '1px solid #1f2937' : undefined,
+            outline: selected ? `1px solid ${SELECTED_OUTLINE}` : undefined,
             pointerEvents: 'auto',
           }}
           onMouseDown={e => {
@@ -311,8 +314,6 @@ function CalloutBox({
         const x0 = ob.x0 + dxPx
         const y0 = ob.y0 + dyPx
         next = { x0, y0, x1: x0 + width, y1: y0 + height }
-        void pw
-        void ph
       } else {
         const h = state.handle ?? 'se'
         let { x0, y0, x1, y1 } = ob
@@ -426,7 +427,7 @@ function CalloutBox({
         overflow: 'hidden',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
-        outline: selected ? '2px solid #1f2937' : undefined,
+        outline: selected ? `2px solid ${SELECTED_OUTLINE}` : undefined,
         pointerEvents: interactive ? 'auto' : 'none',
         cursor: interactive ? 'move' : 'default',
         userSelect: 'none',

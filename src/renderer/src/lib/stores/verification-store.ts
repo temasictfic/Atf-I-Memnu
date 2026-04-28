@@ -58,31 +58,38 @@ interface VerificationState {
   loadResults: (pdfId: string) => Promise<void>
 }
 
-let pollingTimer: ReturnType<typeof setInterval> | null = null
-let pollingPdfIds: string[] = []
-let pollingConsecutiveErrors = 0
+interface PollingState {
+  jobId: string
+  pdfIds: string[]
+  errors: number
+  timer: ReturnType<typeof setInterval>
+}
+
 const MAX_POLLING_CONSECUTIVE_ERRORS = 3
 
+// At most one polling job is in flight at a time. startPolling clears the
+// previous state before starting a new tick, so the three pieces (jobId,
+// pdfIds, errors, timer) can never disagree about which job is being polled.
+let polling: PollingState | null = null
+
 function stopPolling(): void {
-  if (pollingTimer) {
-    clearInterval(pollingTimer)
-    pollingTimer = null
+  if (polling) {
+    clearInterval(polling.timer)
+    polling = null
   }
-  pollingPdfIds = []
-  pollingConsecutiveErrors = 0
 }
 
 function startPolling(pdfIds: string[], jobId: string): void {
   stopPolling()
-  pollingPdfIds = pdfIds
 
-  pollingTimer = setInterval(async () => {
+  const timer = setInterval(async () => {
+    const current = polling
     // Skip if polling was stopped between ticks
-    if (!pollingTimer) return
+    if (!current) return
     try {
       // Check local state first — WS events may have already completed everything
       const localState = useVerificationStore.getState()
-      const localDone = pollingPdfIds.every(pdfId => {
+      const localDone = current.pdfIds.every(pdfId => {
         const pdfResults = localState.resultsByPdf[pdfId] ?? {}
         const vals = Object.values(pdfResults)
         return vals.length > 0 && vals.every(r => r.status !== 'in_progress')
@@ -91,7 +98,7 @@ function startPolling(pdfIds: string[], jobId: string): void {
         // Mark summaries as completed and stop
         useVerificationStore.setState(state => {
           const next = { ...state.summaries }
-          for (const pdfId of pollingPdfIds) {
+          for (const pdfId of current.pdfIds) {
             if (next[pdfId] && !next[pdfId].completed) {
               next[pdfId] = { ...next[pdfId], in_progress: 0, completed: true }
             }
@@ -102,7 +109,7 @@ function startPolling(pdfIds: string[], jobId: string): void {
         return
       }
 
-      const statusResp = await api.verifyStatus(jobId)
+      const statusResp = await api.verifyStatus(current.jobId)
       useVerificationStore.setState(state => {
         const next = { ...state.summaries }
         for (const s of statusResp.pdfs) {
@@ -111,7 +118,7 @@ function startPolling(pdfIds: string[], jobId: string): void {
         return { summaries: next }
       })
 
-      for (const pdfId of pollingPdfIds) {
+      for (const pdfId of current.pdfIds) {
         try {
           const resultResp = await api.verifyResults(pdfId)
           const newResults = resultResp.results
@@ -139,22 +146,26 @@ function startPolling(pdfIds: string[], jobId: string): void {
 
       const allDone = statusResp.pdfs.length > 0 && statusResp.pdfs.every(s => s.completed)
       if (allDone) stopPolling()
-      // Successful tick — reset the consecutive-error counter
-      pollingConsecutiveErrors = 0
+      // Successful tick — reset the consecutive-error counter (guarding
+      // against a concurrent stopPolling between awaits)
+      if (polling) polling.errors = 0
     } catch (e) {
-      pollingConsecutiveErrors++
+      if (!polling) return
+      polling.errors++
       console.error(
-        `[Poll] Polling error (${pollingConsecutiveErrors}/${MAX_POLLING_CONSECUTIVE_ERRORS}):`,
+        `[Poll] Polling error (${polling.errors}/${MAX_POLLING_CONSECUTIVE_ERRORS}):`,
         e,
       )
       // Backend is probably down (restart, crash, network hiccup). Don't
       // spin forever hammering a dead endpoint — stop after a few failures.
-      if (pollingConsecutiveErrors >= MAX_POLLING_CONSECUTIVE_ERRORS) {
+      if (polling.errors >= MAX_POLLING_CONSECUTIVE_ERRORS) {
         console.warn('[Poll] Too many consecutive errors, stopping poll loop')
         stopPolling()
       }
     }
   }, POLL_INTERVAL_MS)
+
+  polling = { jobId, pdfIds, errors: 0, timer }
 }
 
 // --- Buffered verification console logging ---
@@ -1191,9 +1202,9 @@ export function initVerificationListeners(): () => void {
       }))
 
       // Stop polling if all polled PDFs are now complete
-      if (pollingPdfIds.length > 0) {
+      if (polling) {
         const sums = useVerificationStore.getState().summaries
-        if (pollingPdfIds.every(id => sums[id]?.completed)) stopPolling()
+        if (polling.pdfIds.every(id => sums[id]?.completed)) stopPolling()
       }
 
       // Flush buffered log for this PDF
@@ -1247,9 +1258,11 @@ export function initVerificationListeners(): () => void {
 }
 
 export function clearVerificationForPdf(pdfId: string): void {
-  pollingPdfIds = pollingPdfIds.filter(id => id !== pdfId)
-  if (pollingPdfIds.length === 0) {
-    stopPolling()
+  if (polling) {
+    polling.pdfIds = polling.pdfIds.filter(id => id !== pdfId)
+    if (polling.pdfIds.length === 0) {
+      stopPolling()
+    }
   }
 
   useVerificationStore.setState(state => {

@@ -9,10 +9,19 @@ from models.source import ParsedSource
 from models.verification_result import MatchDetails, MatchResult
 from services.author_matcher import author_score, authors_match
 from services.scoring_constants import (
+    COMPOSITE_AUTHOR_WEIGHT,
+    COMPOSITE_TITLE_WEIGHT,
     DOI_MATCH_MIN_SCORE,
+    FIELD_MATCH_BONUS,
+    LOW_PARSE_CONFIDENCE_THRESHOLD,
     STATUS_FOUND_THRESHOLD,
     STATUS_PROBLEMATIC_THRESHOLD,
     TITLE_MATCH_THRESHOLD,
+    TITLE_SEQUENTIAL_WEIGHT,
+    TITLE_TOKEN_SORT_WEIGHT,
+    VENUE_FUZZY_MATCH_THRESHOLD,
+    YEAR_EXACT_SCORE,
+    YEAR_OFF_BY_ONE_SCORE,
 )
 from utils.doi_extractor import extract_arxiv_id, normalize_doi
 
@@ -41,21 +50,21 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
         cand_lower = candidate["title"].lower()
         token_sort = fuzz.token_sort_ratio(src_lower, cand_lower) / 100.0
         sequential = fuzz.ratio(src_lower, cand_lower) / 100.0
-        title_score = 0.6 * token_sort + 0.4 * sequential
+        title_score = TITLE_TOKEN_SORT_WEIGHT * token_sort + TITLE_SEQUENTIAL_WEIGHT * sequential
     details.title_similarity = title_score
 
     # 2. Author match
-    author_score = _compare_authors(source.authors, candidate.get("authors", []))
-    details.author_match = author_score
+    author_match_score = _compare_authors(source.authors, candidate.get("authors", []))
+    details.author_match = author_match_score
 
     # 3. Year match
     year_score = 0.0
     if source.year and candidate.get("year"):
         diff = abs(source.year - candidate["year"])
         if diff == 0:
-            year_score = 1.0
+            year_score = YEAR_EXACT_SCORE
         elif diff == 1:
-            year_score = 0.5
+            year_score = YEAR_OFF_BY_ONE_SCORE
     details.year_match = year_score
 
     # 4. URL match (covers doi, arXiv, and other URLs)
@@ -63,25 +72,25 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
 
     # Base composite — title+author weighted mix, falling back to title-only
     # when the reference was parsed with low confidence or has no authors.
-    if source.parse_confidence < 0.3 or source.authors == []:
+    if source.parse_confidence < LOW_PARSE_CONFIDENCE_THRESHOLD or source.authors == []:
         base = title_score
     else:
-        base = title_score * 0.75 + author_score * 0.25
+        base = title_score * COMPOSITE_TITLE_WEIGHT + author_match_score * COMPOSITE_AUTHOR_WEIGHT
 
-    # Field-match bonuses: +0.10 each when source HAS the field AND it matches
-    # the candidate. Gated on "source has field" so missing metadata can't
-    # silently inflate a score. Final composite clamped to [0, 1].
+    # Field-match bonuses: +FIELD_MATCH_BONUS each when source HAS the field
+    # AND it matches the candidate. Gated on "source has field" so missing
+    # metadata can't silently inflate a score. Final composite clamped to [0, 1].
     bonus = 0.0
     if source.year and candidate.get("year") and abs(source.year - candidate["year"]) <= 1:
-        bonus += 0.10
+        bonus += FIELD_MATCH_BONUS
 
     src_venue = (source.source or "").strip()
     cand_venue = (candidate.get("journal") or "").strip()
     if src_venue and cand_venue and _venues_match(src_venue, cand_venue):
-        bonus += 0.10
+        bonus += FIELD_MATCH_BONUS
 
     if (source.doi or source.arxiv_id) and details.url_match:
-        bonus += 0.10
+        bonus += FIELD_MATCH_BONUS
 
     composite = max(0.0, min(1.0, base + bonus))
 
@@ -120,9 +129,9 @@ def determine_verification_status(
     """Score-banded status + per-signal problem tags.
 
     Status is derived purely from the composite score (no title-only gate):
-      >= STATUS_FOUND_THRESHOLD (0.75)       → "found"
-      >= STATUS_PROBLEMATIC_THRESHOLD (0.50) → "problematic"
-      otherwise                              → "not_found"
+      >= STATUS_FOUND_THRESHOLD       → "found"
+      >= STATUS_PROBLEMATIC_THRESHOLD → "problematic"
+      otherwise                       → "not_found"
 
     Problem tags are emitted independently of the status band so the five
     card chips stay in sync with per-signal reality:
@@ -211,7 +220,7 @@ def classify_trust(
       - both have the field and they disagree      → does NOT match
 
     Title uses a similarity threshold instead:
-      title_matches = title_similarity >= TITLE_MATCH_THRESHOLD (0.85)
+      title_matches = title_similarity >= TITLE_MATCH_THRESHOLD
 
     Rule:
       all four of {author, year, title, source} match     → "clean"
@@ -428,7 +437,7 @@ def _venues_match(source_venue: str, cand_journal: str) -> bool:
         fuzz.token_sort_ratio(src, cand),
         fuzz.token_set_ratio(src, cand),
     ) / 100.0
-    if best >= 0.6:
+    if best >= VENUE_FUZZY_MATCH_THRESHOLD:
         return True
 
     # Initialism: short/all-caps acronym vs expanded title

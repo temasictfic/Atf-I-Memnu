@@ -16,7 +16,7 @@ from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.openaire_token_manager import get_access_token
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
 
 OPENAIRE_API = "https://api.openaire.eu/graph/v2/researchProducts"
 _HOST = "api.openaire.eu"
@@ -73,16 +73,11 @@ async def search(source: ParsedSource) -> MatchResult | None:
         params["fromPublicationDate"] = f"{source.year - 1}-01-01"
         params["toPublicationDate"] = f"{source.year + 1}-12-31"
 
-    best = await _fetch_best_match(session, params, source)
-    # Retry without the year window if it filtered out every candidate.
-    if best is None and "fromPublicationDate" in params:
-        params_no_year = {
-            k: v for k, v in params.items()
-            if k not in {"fromPublicationDate", "toPublicationDate"}
-        }
-        best = await _fetch_best_match(session, params_no_year, source)
-
-    return best
+    return await fetch_with_year_fallback(
+        lambda p: _fetch_best_match(session, p, source),
+        params,
+        {"fromPublicationDate", "toPublicationDate"},
+    )
 
 
 async def _fetch_best_match(

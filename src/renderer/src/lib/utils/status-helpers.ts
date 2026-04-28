@@ -4,11 +4,13 @@
 
 import i18n from '../i18n'
 import type { VerificationResult } from '../api/types'
-import { DB_SCORE_HEX, STATUS_HEX } from '../constants/colors'
+import { DB_SCORE_HEX, DB_SCORE_RGB, STATUS_HEX, STATUS_RGB } from '../constants/colors'
 import {
   STATUS_FOUND_THRESHOLD,
   STATUS_PROBLEMATIC_THRESHOLD,
 } from '../constants/scoring'
+
+type RgbTuple = readonly [number, number, number]
 
 // --- Parsing-page status (PdfDocument.status) ---
 
@@ -67,4 +69,26 @@ export function dbScoreColor(score: number): string {
   if (score >= STATUS_FOUND_THRESHOLD) return DB_SCORE_HEX.high
   if (score >= STATUS_PROBLEMATIC_THRESHOLD) return DB_SCORE_HEX.medium
   return DB_SCORE_HEX.low
+}
+
+// --- RGB tuple variants (for pdf-lib export) ---
+// Same threshold/mapping logic as the hex variants above, returning [r, g, b]
+// floats so the report writer can wrap them with pdf-lib's `rgb()` without
+// re-implementing the threshold checks.
+
+export function verifyStatusRgbTuple(status: string): RgbTuple {
+  switch (status) {
+    case 'found':       return STATUS_RGB.found
+    case 'problematic': return STATUS_RGB.problematic
+    case 'not_found':   return STATUS_RGB.not_found
+    case 'in_progress': return STATUS_RGB.in_progress
+    case 'pending':     return STATUS_RGB.pending
+    default:            return STATUS_RGB.neutral
+  }
+}
+
+export function dbScoreRgbTuple(score: number): RgbTuple {
+  if (score >= STATUS_FOUND_THRESHOLD) return DB_SCORE_RGB.high
+  if (score >= STATUS_PROBLEMATIC_THRESHOLD) return DB_SCORE_RGB.medium
+  return DB_SCORE_RGB.low
 }

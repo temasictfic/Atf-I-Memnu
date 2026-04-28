@@ -48,82 +48,77 @@ function pushHistory(pdfId: string): void {
   })
 }
 
-function renumberSources(pdfId: string): void {
+// Sort by reading order, then assign content-addressed IDs (hash of text +
+// pdfId) and a 1-based ref_number. Duplicate texts within one PDF get
+// `_2`, `_3` … appended in reading order — deterministic. Used as the single
+// numbering pass for both fresh detection (setSources) and edits
+// (renumberSources), so the suffix format can't drift between paths.
+function renumberAndRehash(
+  pdfId: string,
+  sources: SourceRectangle[],
+  trackId?: string,
+): { renumbered: SourceRectangle[]; trackedNewId?: string } {
+  const sorted = [...sources].sort((a, b) => {
+    if (a.bbox.page !== b.bbox.page) return a.bbox.page - b.bbox.page
+    return a.bbox.y0 - b.bbox.y0
+  })
+  const seen = new Map<string, number>()
+  let trackedNewId: string | undefined
+  const renumbered = sorted.map((s, i) => {
+    const base = makeSourceId(pdfId, s.text)
+    const n = (seen.get(base) ?? 0) + 1
+    seen.set(base, n)
+    const id = n > 1 ? `${base}_${n}` : base
+    if (trackId !== undefined && s.id === trackId) trackedNewId = id
+    return { ...s, ref_number: i + 1, id }
+  })
+  return { renumbered, trackedNewId }
+}
+
+// If `trackId` is provided, returns that source's new id after rehashing
+// so callers updating selection don't have to re-search the store.
+function renumberSources(pdfId: string, trackId?: string): string | undefined {
+  let trackedNewId: string | undefined
   useSourcesStore.setState(state => {
     const sources = state.sourcesByPdf[pdfId]
     if (!sources) return state
-    const sorted = [...sources].sort((a, b) => {
-      if (a.bbox.page !== b.bbox.page) return a.bbox.page - b.bbox.page
-      return a.bbox.y0 - b.bbox.y0
-    })
-    // IDs are content-addressed: hash(text) keeps entries stable across
-    // merge/delete/reorder unless the text itself changes, so verification
-    // cache entries stay attached to the right reference. Duplicates in one
-    // PDF get `_2`, `_3` appended in reading order — deterministic.
-    const seen = new Map<string, number>()
-    const renumbered = sorted.map((s, i) => {
-      const base = makeSourceId(pdfId, s.text)
-      const n = (seen.get(base) ?? 0) + 1
-      seen.set(base, n)
-      const id = n > 1 ? `${base}_${n}` : base
-      return { ...s, ref_number: i + 1, id }
-    })
-    return { sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: renumbered } }
+    const result = renumberAndRehash(pdfId, sources, trackId)
+    trackedNewId = result.trackedNewId
+    return { sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: result.renumbered } }
   })
+  return trackedNewId
 }
 
 export function getSources(pdfId: string): SourceRectangle[] {
   return useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
 }
 
-// Content-addressed IDs collide when two references share identical text
-// (e.g. the same URL cited twice). renumberSources dedupes with _2/_3 but
-// only runs on edits — fresh detection and backend loads skip it, so the
-// collision leaks into sourceOrder and React keys. Suffix-dedupe here so
-// every path through setSources produces unique IDs.
-function ensureUniqueSourceIds(sources: SourceRectangle[]): SourceRectangle[] {
-  const used = new Set<string>()
-  let changed = false
-  const out = sources.map(s => {
-    if (!used.has(s.id)) {
-      used.add(s.id)
-      return s
-    }
-    changed = true
-    let n = 2
-    let candidate = `${s.id}_${n}`
-    while (used.has(candidate)) {
-      n++
-      candidate = `${s.id}_${n}`
-    }
-    used.add(candidate)
-    return { ...s, id: candidate }
-  })
-  return changed ? out : sources
-}
-
 export function setSources(pdfId: string, sources: SourceRectangle[]): void {
-  const unique = ensureUniqueSourceIds(sources)
+  const { renumbered } = renumberAndRehash(pdfId, sources)
   useSourcesStore.setState(state => ({
-    sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: unique },
-    originalSourcesByPdf: state.originalSourcesByPdf[pdfId]
+    sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: renumbered },
+    originalSourcesByPdf: state.originalSourcesByPdf[pdfId] !== undefined
       ? state.originalSourcesByPdf
-      : { ...state.originalSourcesByPdf, [pdfId]: [...unique] },
+      : { ...state.originalSourcesByPdf, [pdfId]: [...renumbered] },
   }))
-  updateSourceCount(pdfId, unique.length)
+  updateSourceCount(pdfId, renumbered.length)
 }
 
-export function addRectangle(pdfId: string, rect: SourceRectangle): void {
+// Returns the rect's id after renumberSources rehashes it (content-addressed
+// from text), so callers tracking the new source — e.g. for selection — can
+// use the returned id without re-searching the store.
+export function addRectangle(pdfId: string, rect: SourceRectangle): string {
   pushHistory(pdfId)
-  useSourcesStore.setState(state => ({
-    sourcesByPdf: {
-      ...state.sourcesByPdf,
-      [pdfId]: [...(state.sourcesByPdf[pdfId] ?? []), rect],
-    },
-  }))
-  renumberSources(pdfId)
-  updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  let newLength = 0
+  useSourcesStore.setState(state => {
+    const next = [...(state.sourcesByPdf[pdfId] ?? []), rect]
+    newLength = next.length
+    return { sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: next } }
+  })
+  const newId = renumberSources(pdfId, rect.id) ?? rect.id
+  updateSourceCount(pdfId, newLength)
   autoUnapproveOnEdit(pdfId)
+  return newId
 }
 
 /**
@@ -180,22 +175,21 @@ function mergeTwo(pdfId: string, aId: string, bId: string): string | null {
     status: 'edited',
   }
 
-  useSourcesStore.setState(state => ({
-    sourcesByPdf: {
-      ...state.sourcesByPdf,
-      [pdfId]: (state.sourcesByPdf[pdfId] ?? [])
-        .filter(s => s.id !== first.id && s.id !== second.id)
-        .concat(merged),
-    },
-  }))
-  renumberSources(pdfId)
-  updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  let newLength = 0
+  useSourcesStore.setState(state => {
+    const next = (state.sourcesByPdf[pdfId] ?? [])
+      .filter(s => s.id !== first.id && s.id !== second.id)
+      .concat(merged)
+    newLength = next.length
+    return { sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: next } }
+  })
+  // merged carries first.id (spread above), so renumberSources can track it
+  // and return the post-rehash id directly — immune to text-duplication
+  // suffixing (`_2`/`_3`) that a find-by-text recovery would mishandle.
+  const newId = renumberSources(pdfId, first.id) ?? null
+  updateSourceCount(pdfId, newLength)
   autoUnapproveOnEdit(pdfId)
-
-  // Find the new id of the merged source after renumbering
-  const renumbered = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
-  const newOne = renumbered.find(s => s.text === mergedText)
-  return newOne?.id ?? null
+  return newId
 }
 
 /**
@@ -249,18 +243,22 @@ export function mergeWithPrevious(pdfId: string, sourceId: string): string | nul
 
 export function removeRectangle(pdfId: string, sourceId: string): void {
   pushHistory(pdfId)
-  useSourcesStore.setState(state => ({
-    sourcesByPdf: {
-      ...state.sourcesByPdf,
-      [pdfId]: (state.sourcesByPdf[pdfId] ?? []).filter(s => s.id !== sourceId),
-    },
-  }))
+  let newLength = 0
+  useSourcesStore.setState(state => {
+    const next = (state.sourcesByPdf[pdfId] ?? []).filter(s => s.id !== sourceId)
+    newLength = next.length
+    return { sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: next } }
+  })
   renumberSources(pdfId)
-  updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  updateSourceCount(pdfId, newLength)
   autoUnapproveOnEdit(pdfId)
 }
 
-export function updateRectangle(pdfId: string, sourceId: string, updates: Partial<SourceRectangle>): void {
+// Returns the source's id after the update. Text changes trigger
+// renumberSources, which content-rehashes the id, so the input sourceId
+// can be stale on return — callers tracking the source (e.g. selection)
+// should use the returned id.
+export function updateRectangle(pdfId: string, sourceId: string, updates: Partial<SourceRectangle>): string {
   pushHistory(pdfId)
   useSourcesStore.setState(state => ({
     sourcesByPdf: {
@@ -272,10 +270,12 @@ export function updateRectangle(pdfId: string, sourceId: string, updates: Partia
   }))
   // Text edits produce a new content-hash ID; let renumberSources rehash
   // and dedup. Bbox/status-only updates stay stable.
+  let newId = sourceId
   if (updates.text !== undefined) {
-    renumberSources(pdfId)
+    newId = renumberSources(pdfId, sourceId) ?? sourceId
   }
   autoUnapproveOnEdit(pdfId)
+  return newId
 }
 
 export function beginEdit(pdfId: string): void {
@@ -295,16 +295,18 @@ export function updateRectangleSilent(pdfId: string, sourceId: string, updates: 
 }
 
 export function revert(pdfId: string): void {
+  let newLength: number | null = null
   useSourcesStore.setState(state => {
     const history = state.historyByPdf[pdfId]
     if (!history || history.length === 0) return state
     const prev = history[history.length - 1]
+    newLength = prev.length
     return {
       sourcesByPdf: { ...state.sourcesByPdf, [pdfId]: prev },
       historyByPdf: { ...state.historyByPdf, [pdfId]: history.slice(0, -1) },
     }
   })
-  updateSourceCount(pdfId, useSourcesStore.getState().sourcesByPdf[pdfId]?.length ?? 0)
+  if (newLength !== null) updateSourceCount(pdfId, newLength)
   autoUnapproveOnEdit(pdfId)
 }
 
@@ -368,18 +370,22 @@ export async function unapproveSources(pdfId: string): Promise<void> {
   }
 }
 
-export async function loadSources(pdfId: string): Promise<void> {
+// Returns the loaded sources when the backend had a cache entry, or null
+// otherwise (cache miss or fetch error). Lets callers act on the result
+// without re-reading the store.
+export async function loadSources(pdfId: string): Promise<SourceRectangle[] | null> {
   try {
     const response = await api.getSources(pdfId)
     // Only seed the store when the backend actually had a cache entry.
     // Otherwise we'd overwrite freshly-detected client-side sources with []
     // on the cold path where a PDF is opened before the orchestrator has
     // finished persisting.
-    if (response.cached) {
-      setSources(pdfId, response.sources)
-    }
+    if (!response.cached) return null
+    setSources(pdfId, response.sources)
+    return response.sources
   } catch (e) {
     console.error('Failed to load sources:', e)
+    return null
   }
 }
 

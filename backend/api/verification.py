@@ -10,6 +10,7 @@ from api.parsing import load_sources_for_pdf
 from config import settings
 from models.source import SourceRectangle
 from models.verification_result import VerificationResult, MatchResult
+from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
 
 router = APIRouter()
 
@@ -446,7 +447,7 @@ async def score_scholar(request: ScoreScholarRequest):
         journal = ""
         if cand.apa_citation:
             ner = await extract_fields_ner(cand.apa_citation)
-            if ner is not None and ner.parse_confidence >= 0.3:
+            if ner is not None and ner.parse_confidence >= LOW_PARSE_CONFIDENCE_THRESHOLD:
                 if ner.title:
                     title = ner.title
                 if ner.authors:

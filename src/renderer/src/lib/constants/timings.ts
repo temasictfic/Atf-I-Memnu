@@ -16,3 +16,8 @@ export const SETTINGS_ERROR_FLASH_MS = 3000
 export const MIN_BROWSER_ZOOM = 0.5
 export const MAX_BROWSER_ZOOM = 3
 export const BROWSER_ZOOM_STEP = 1.1
+
+// Debounce on the parsing-page field-extraction request. Selecting a source
+// fires off a backend extract_fields call; the debounce keeps rapid
+// arrow-key cycling through cards from spawning a request per card.
+export const PARSE_FIELD_DEBOUNCE_MS = 300

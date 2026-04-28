@@ -10,6 +10,7 @@ from models.settings import DatabaseConfig
 from models.source import SourceRectangle, ParsedSource
 from models.verification_result import VerificationResult, MatchResult
 from services.match_scorer import classify_trust, determine_verification_status
+from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
 from services.search_settings import (
     get_max_concurrent_apis,
     get_max_concurrent_sources_per_pdf,
@@ -298,7 +299,7 @@ async def _verify_source(
         # parse confidence is low we warn but do NOT overwrite the title with
         # cleaned raw text — the user has explicitly required that every DB
         # query use the NER title, falling back only when it is genuinely empty.
-        if parsed.parse_confidence < 0.3:
+        if parsed.parse_confidence < LOW_PARSE_CONFIDENCE_THRESHOLD:
             await manager.send_log(
                 "warning",
                 f"Low parse confidence ({parsed.parse_confidence:.2f}), searching with extracted title only",

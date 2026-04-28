@@ -15,8 +15,8 @@
 
 import { PDFDocument, PDFName, PDFString, PDFArray, PDFNumber, PDFDict, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
-import { STATUS_FOUND_THRESHOLD, STATUS_PROBLEMATIC_THRESHOLD } from '../constants/scoring'
-import { DB_SCORE_RGB, STATUS_RGB, TRUST_RGB } from '../constants/colors'
+import { STATUS_RGB, TRUST_RGB } from '../constants/colors'
+import { dbScoreRgbTuple, verifyStatusRgbTuple } from '../utils/status-helpers'
 // @ts-expect-error Vite ?url import returns a string
 import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
 // @ts-expect-error Vite ?url import returns a string
@@ -87,16 +87,8 @@ const COLOR_KUNYE_TEXT: RGB     = tup(TRUST_RGB.kunyeText)
 const COLOR_UYDURMA_BORDER: RGB = tup(TRUST_RGB.uydurmaBorder)
 const COLOR_UYDURMA_TEXT: RGB   = tup(TRUST_RGB.uydurmaText)
 
-function statusColor(s: string): RGB {
-  if (s === 'found') return COLOR_FOUND
-  if (s === 'problematic') return COLOR_PROBLEMATIC
-  return COLOR_NOT_FOUND
-}
-function dbScoreColor(s: number): RGB {
-  if (s >= STATUS_FOUND_THRESHOLD) return tup(DB_SCORE_RGB.high)
-  if (s >= STATUS_PROBLEMATIC_THRESHOLD) return tup(DB_SCORE_RGB.medium)
-  return tup(DB_SCORE_RGB.low)
-}
+const statusColor = (s: string): RGB => tup(verifyStatusRgbTuple(s))
+const dbScoreColor = (s: number): RGB => tup(dbScoreRgbTuple(s))
 
 // --- Public interfaces ---
 

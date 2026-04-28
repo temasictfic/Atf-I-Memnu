@@ -63,3 +63,16 @@ export const TRUST_RGB: Record<keyof typeof TRUST_HEX, RgbTuple> = {
   uydurmaBorder: [0.910, 0.475, 0.976],
   uydurmaText:   [0.525, 0.098, 0.561],
 }
+
+// --- Highlight palette (Parsing page note swatches) ---
+// Pastel set used by the highlight/callout color picker. Tailwind 200-shade
+// equivalents — soft enough to overlay PDF text without obscuring it.
+export const HIGHLIGHT_PALETTE_HEX = [
+  '#fde68a', // amber
+  '#a7f3d0', // emerald
+  '#bae6fd', // sky
+  '#fbcfe8', // pink
+  '#fed7aa', // orange
+  '#ddd6fe', // violet
+  '#fecaca', // red
+] as const

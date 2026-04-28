@@ -17,6 +17,7 @@ import {
   dbScoreIcon,
   verifyStatusColor as statusColor,
 } from '../../utils/status-helpers'
+import { STATUS_HEX, TRUST_HEX } from '../../constants/colors'
 import {
   BROWSER_ZOOM_STEP,
   MAX_BROWSER_ZOOM,
@@ -1822,12 +1823,12 @@ export default function VerificationPage() {
               {t('verification.sort.name')}{pdfSortKey === 'name' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
             {([
-              { key: 'found',       color: '#22c55e', titleKey: 'verification.sort.byFound' },
-              { key: 'problematic', color: '#f59e0b', titleKey: 'verification.sort.byProblematic' },
-              { key: 'not_found',   color: '#ef4444', titleKey: 'verification.sort.byNotFound' },
-              { key: 'valid',       color: '#86efac', titleKey: 'verification.sort.byValid' },
-              { key: 'kunye',       color: '#94a3b8', titleKey: 'verification.sort.byKunye' },
-              { key: 'uydurma',     color: '#d946ef', titleKey: 'verification.sort.byUydurma' },
+              { key: 'found',       color: STATUS_HEX.found,         titleKey: 'verification.sort.byFound' },
+              { key: 'problematic', color: STATUS_HEX.problematic,   titleKey: 'verification.sort.byProblematic' },
+              { key: 'not_found',   color: STATUS_HEX.not_found,     titleKey: 'verification.sort.byNotFound' },
+              { key: 'valid',       color: TRUST_HEX.validBorder,    titleKey: 'verification.sort.byValid' },
+              { key: 'kunye',       color: TRUST_HEX.kunyeBorder,    titleKey: 'verification.sort.byKunye' },
+              { key: 'uydurma',     color: TRUST_HEX.uydurmaBorder,  titleKey: 'verification.sort.byUydurma' },
             ] as const).map(({ key, color, titleKey }) => (
               <button
                 key={key}
@@ -1920,9 +1921,9 @@ export default function VerificationPage() {
                     {pdfVerifying ? (
                       <span className={`${styles['vi-status']} ${styles['vi-spin']}`}>&#x25CC;</span>
                     ) : hasPdfResults ? (
-                      <span className={styles['vi-status']} style={{ color: '#22c55e' }}>&#x2713;</span>
+                      <span className={styles['vi-status']} style={{ color: STATUS_HEX.found }}>&#x2713;</span>
                     ) : (
-                      <span className={styles['vi-status']} style={{ color: '#a8a29e' }}>&#x25CB;</span>
+                      <span className={styles['vi-status']} style={{ color: STATUS_HEX.neutral }}>&#x25CB;</span>
                     )}
                     <span className={styles['vi-name']}>{pdf.name}</span>
                     <button
@@ -2062,9 +2063,9 @@ export default function VerificationPage() {
                 // Tint the selected-border per trust state (Geçerli/Künye/Uydurma).
                 const trust = card.result ? effectiveTrustTag(card.result) : null
                 const trustBorderColor =
-                  trust === 'clean' ? '#86efac'
-                  : trust === 'künye' ? '#94a3b8'
-                  : trust === 'uydurma' ? '#e879f9'
+                  trust === 'clean' ? TRUST_HEX.validBorder
+                  : trust === 'künye' ? TRUST_HEX.kunyeBorder
+                  : trust === 'uydurma' ? TRUST_HEX.uydurmaBorder
                   : undefined
                 const trustGlow =
                   trust === 'clean' ? 'rgba(134, 239, 172, 0.35)'
@@ -2111,7 +2112,7 @@ export default function VerificationPage() {
                           [{card.source.ref_number ?? '?'}]
                         </button>
                         {card.result?.status === 'in_progress' && (
-                          <span className={styles['status-badge']} style={{ background: '#3b82f6', color: 'white' }}>
+                          <span className={styles['status-badge']} style={{ background: STATUS_HEX.in_progress, color: 'white' }}>
                             {i18n.t('verification.status.in_progress')}
                           </span>
                         )}
@@ -2686,7 +2687,7 @@ export default function VerificationPage() {
                         const linkUrl = match?.search_url || dbCheck?.searchUrl || buildDbSearchUrl(db, searchText)
                         return (
                           <div key={db} className={styles['db-row']}>
-                            <span className={`${styles['db-icon']} ${match && dbScoreIcon(match.score) === '~' ? styles['db-icon-mediocre'] : ''} ${!match && searched ? styles['db-icon-empty'] : ''}`} style={{ color: match ? dbScoreColor(match.score) : searched ? '#a8a29e' : '#d6d3d1' }}>
+                            <span className={`${styles['db-icon']} ${match && dbScoreIcon(match.score) === '~' ? styles['db-icon-mediocre'] : ''} ${!match && searched ? styles['db-icon-empty'] : ''}`} style={{ color: match ? dbScoreColor(match.score) : searched ? STATUS_HEX.neutral : '#d6d3d1' }}>
                               {match ? dbScoreIcon(match.score) : searched ? '\u2013' : '\u25CB'}
                             </span>
                             {linkUrl ? (
@@ -2712,7 +2713,7 @@ export default function VerificationPage() {
                             <li key={url} className={styles['url-item']}>
                               <span
                                 className={styles['url-dot']}
-                                style={{ background: alive ? '#22c55e' : '#ef4444' }}
+                                style={{ background: alive ? STATUS_HEX.found : STATUS_HEX.not_found }}
                                 title={alive ? t('verification.urlReachable') : t('verification.urlDead')}
                               />
                               <button className={styles['url-link']} onClick={() => openOverlayWithUrl(url)} title={url}>
