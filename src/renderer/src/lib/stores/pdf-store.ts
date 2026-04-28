@@ -246,35 +246,14 @@ export const usePdfStore = create<PdfState>()((set, _get) => ({
 
 // --- Listeners ---
 //
-// These subscribe to backend websocket parse-* events. Client-side parsing
-// doesn't emit them, so the handlers are dormant for now — they're kept in
-// place so any lingering backend-driven parse paths (none expected) still
-// integrate. Safe to remove entirely in Phase 4 when the backend parse
-// endpoints are deleted.
+// Parsing runs entirely in the renderer (see lib/pdf/orchestrator.ts), so the
+// backend never emits parse_started / parse_progress / parse_complete /
+// parse_error. Only the approval events come over the websocket — backend
+// emits them from backend/api/parsing.py when the user approves or revokes
+// approval of a PDF's source list.
 
 export function initPdfListeners(): () => void {
   const unsubs = [
-    wsClient.on('parse_started', (data) => {
-      usePdfStore.getState().addPdf({
-        id: data.pdf_id as string,
-        name: data.pdf_name as string,
-        path: '',
-        status: 'parsing',
-        source_count: 0,
-        numbered: false,
-      })
-    }),
-    wsClient.on('parse_progress', (data) => {
-      usePdfStore.getState().updatePdfStatus(data.pdf_id as string, 'parsing')
-    }),
-    wsClient.on('parse_complete', (data) => {
-      usePdfStore.getState().updatePdfStatus(
-        data.pdf_id as string, 'parsed', data.source_count as number, data.numbered as boolean ?? false,
-      )
-    }),
-    wsClient.on('parse_error', (data) => {
-      usePdfStore.getState().updatePdfStatus(data.pdf_id as string, 'error')
-    }),
     wsClient.on('parse_approved', (data) => {
       usePdfStore.getState().updatePdfStatus(data.pdf_id as string, 'approved')
     }),
