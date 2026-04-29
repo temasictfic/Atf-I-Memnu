@@ -80,6 +80,11 @@ def _item_to_match(item: dict, source: ParsedSource) -> MatchResult | None:
     else:
         url = ""
 
+    issn_list = [
+        v for v in (item.get("journalIssn"), item.get("essn"))
+        if isinstance(v, str) and v
+    ]
+
     search_query = source.title or source.raw_text[:100]
     candidate = {
         "database": "Europe PMC",
@@ -90,6 +95,12 @@ def _item_to_match(item: dict, source: ParsedSource) -> MatchResult | None:
         "journal": journal,
         "url": url,
         "search_url": f"https://europepmc.org/search?query={quote(search_query)}",
+        "volume": item.get("journalVolume") or None,
+        "issue": item.get("issue") or None,
+        "pages": item.get("pageInfo") or None,
+        "document_type": item.get("pubType", "") or item.get("docType", "") or "",
+        "language": item.get("language", "") or "",
+        "issn": issn_list,
     }
 
     return score_match(source, candidate)

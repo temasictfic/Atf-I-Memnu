@@ -104,6 +104,24 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
         or str(item.get("id", ""))
     )
 
+    biblio = item.get("biblio", {}) or {}
+    volume = biblio.get("volume") or None
+    issue = biblio.get("issue") or None
+    first_page = biblio.get("first_page") or ""
+    last_page = biblio.get("last_page") or ""
+    if first_page and last_page:
+        pages = f"{first_page}-{last_page}"
+    else:
+        pages = first_page or last_page or None
+
+    publisher = source_info.get("host_organization_name", "") or ""
+    issn_list = [
+        s for s in (source_info.get("issn") or []) if isinstance(s, str) and s
+    ]
+    issn_l = source_info.get("issn_l")
+    if issn_l and issn_l not in issn_list:
+        issn_list.insert(0, issn_l)
+
     search_query = source.title or (source.raw_text[:100] if source.raw_text else "")
     candidate = {
         "database": "OpenAlex",
@@ -114,6 +132,13 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
         "journal": journal,
         "url": url,
         "search_url": f"https://openalex.org/works?search={quote(search_query)}",
+        "volume": volume,
+        "issue": issue,
+        "pages": pages,
+        "publisher": publisher,
+        "document_type": item.get("type", "") or "",
+        "language": item.get("language", "") or "",
+        "issn": issn_list,
     }
 
     return score_match(source, candidate)

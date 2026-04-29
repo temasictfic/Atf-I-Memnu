@@ -96,6 +96,11 @@ export interface ReportBestMatch {
   title: string; authors: string[]; year?: number; journal?: string
   doi?: string; url?: string; database: string; score: number
   titleSimilarity: number; authorMatch: number; yearMatch: number
+  // Bibliographic extras — populated when the source database returns them.
+  // Rendered as a compact "Bibliographic details" block below the URL.
+  volume?: string | null; issue?: string | null; pages?: string | null
+  publisher?: string; editor?: string[]; documentType?: string
+  language?: string; issn?: string[]; isbn?: string[]
 }
 export interface ReportSource {
   refNumber: number; text: string; status: string
@@ -115,7 +120,27 @@ export interface ReportData {
     sourcesLabel: string
     titleTag: string; validTag: string; citationTag: string; fabricatedTag?: string; citationError?: string
     tagLabel: (tag: string) => string
+    bibliographic?: string
+    volume?: string; issue?: string; pages?: string; publisher?: string
+    editor?: string; documentType?: string; language?: string
+    issn?: string; isbn?: string
   }
+}
+
+interface ExtraField { key: string; label: string; value: string }
+
+function buildExtras(m: ReportBestMatch, labels: ReportData['labels']): ExtraField[] {
+  const out: ExtraField[] = []
+  if (m.volume) out.push({ key: 'volume', label: labels.volume ?? 'Volume', value: m.volume })
+  if (m.issue) out.push({ key: 'issue', label: labels.issue ?? 'Issue', value: m.issue })
+  if (m.pages) out.push({ key: 'pages', label: labels.pages ?? 'Pages', value: m.pages })
+  if (m.publisher) out.push({ key: 'publisher', label: labels.publisher ?? 'Publisher', value: m.publisher })
+  if (m.editor && m.editor.length > 0) out.push({ key: 'editor', label: labels.editor ?? 'Editor', value: m.editor.join(', ') })
+  if (m.documentType) out.push({ key: 'documentType', label: labels.documentType ?? 'Document type', value: m.documentType })
+  if (m.language) out.push({ key: 'language', label: labels.language ?? 'Language', value: m.language })
+  if (m.issn && m.issn.length > 0) out.push({ key: 'issn', label: labels.issn ?? 'ISSN', value: m.issn.join(', ') })
+  if (m.isbn && m.isbn.length > 0) out.push({ key: 'isbn', label: labels.isbn ?? 'ISBN', value: m.isbn.join(', ') })
+  return out
 }
 
 function effectiveDecision(src: ReportSource): 'valid' | 'citation' | 'fabricated' {
@@ -355,9 +380,10 @@ function tagsRowHeight(tags: TagItem[]): number {
 interface CardMeasure {
   titleLines: string[]; authorLines: string[]; journalLines: string[]
   metaLine: string; urlLine: string; totalHeight: number
+  extras: ExtraField[]; extraLines: string[][]; extrasLabel: string
 }
 
-function measureCard(m: ReportBestMatch, src: ReportSource, rf: PDFFont, bf: PDFFont): CardMeasure {
+function measureCard(m: ReportBestMatch, src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont): CardMeasure {
   const lh = SMALL_SIZE * LH, tlh = TINY_SIZE * LH
   const titleLines = wrapText(san(m.title), bf, SMALL_SIZE, CARD_INNER_W)
   const authorLines = m.authors.length ? wrapText(san(m.authors.join(', ')), rf, SMALL_SIZE, CARD_INNER_W) : []
@@ -368,6 +394,11 @@ function measureCard(m: ReportBestMatch, src: ReportSource, rf: PDFFont, bf: PDF
   const metaLine = metaParts.join('   ')
   const urlLine = m.url ?? ''
 
+  // Bibliographic extras: each "Label: value" wrapped to fit the card.
+  const extras = buildExtras(m, labels)
+  const extraLines = extras.map(ex => wrapText(san(`${ex.label}: ${ex.value}`), rf, TINY_SIZE, CARD_INNER_W))
+  const extrasLabel = extras.length > 0 ? (labels.bibliographic ?? 'Bibliographic details') : ''
+
   let h = CARD_PAD
   h += titleLines.length * lh
   if (authorLines.length) h += 2 + authorLines.length * lh
@@ -375,16 +406,21 @@ function measureCard(m: ReportBestMatch, src: ReportSource, rf: PDFFont, bf: PDF
   if (metaLine) h += 2 + lh
   h += 3 + lh // db + score
   if (urlLine) h += 2 + tlh
+  // Bibliographic details block: small header + one wrapped row per extra.
+  if (extras.length > 0) {
+    h += 6 + tlh // gap + header
+    for (const lines of extraLines) h += lines.length * tlh
+  }
   // Google Scholar + Google Search links (side by side, one row)
   if (src.scholarUrl || src.googleUrl) h += tlh
   h += CARD_PAD
 
-  return { titleLines, authorLines, journalLines, metaLine, urlLine, totalHeight: h }
+  return { titleLines, authorLines, journalLines, metaLine, urlLine, totalHeight: h, extras, extraLines, extrasLabel }
 }
 
 function measureBottom(src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont): { tags: TagItem[]; card: CardMeasure | null; noMatch: boolean; height: number } {
   const tags = measureTags(src, labels, bf)
-  const card = src.bestMatch ? measureCard(src.bestMatch, src, rf, bf) : null
+  const card = src.bestMatch ? measureCard(src.bestMatch, src, labels, rf, bf) : null
   const noMatch = !src.bestMatch && src.status === 'low'
 
   let h = 0
@@ -629,6 +665,20 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
         w.pg.drawLine({ start: { x: ccx, y: uy - 1 }, end: { x: ccx + uw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
         w.skip(TINY_SIZE * LH)
         w.addLink(m.url, ccx, w.y, uw, TINY_SIZE * LH)
+      }
+
+      // Bibliographic details — compact second block listing every populated
+      // extra field (volume, issue, pages, publisher, editor, document type,
+      // language, ISSN, ISBN). Always rendered when at least one extra is
+      // present; missing fields are skipped.
+      if (card.extras.length > 0) {
+        w.skip(6)
+        w.text(card.extrasLabel, ccx, TINY_SIZE, bf, COLOR_MUTED)
+        for (const lines of card.extraLines) {
+          for (const line of lines) {
+            w.text(line, ccx, TINY_SIZE, rf, COLOR_SOURCE)
+          }
+        }
       }
 
       // Google Scholar + Google Search links side by side (clickable)

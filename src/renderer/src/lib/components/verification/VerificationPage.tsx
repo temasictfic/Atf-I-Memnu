@@ -489,6 +489,12 @@ export default function VerificationPage() {
 
   const [cardSearchQuery, setCardSearchQuery] = useState('')
 
+  // Best-match card "More" toggle. Reset to collapsed whenever the user
+  // selects a different source so each card opens with the same compact
+  // layout the rest of the app uses today.
+  const [matchExpanded, setMatchExpanded] = useState(false)
+  useEffect(() => { setMatchExpanded(false) }, [selectedSourceId])
+
   const filteredSourceCards = useMemo(() => {
     const q = cardSearchQuery.trim().toLowerCase()
     if (!q) return sortedSourceCards
@@ -770,6 +776,15 @@ export default function VerificationPage() {
             titleSimilarity: bm.match_details?.title_similarity ?? 0,
             authorMatch: bm.match_details?.author_match ?? 0,
             yearMatch: bm.match_details?.year_match ?? 0,
+            volume: bm.volume,
+            issue: bm.issue,
+            pages: bm.pages,
+            publisher: bm.publisher,
+            editor: bm.editor,
+            documentType: bm.document_type,
+            language: bm.language,
+            issn: bm.issn,
+            isbn: bm.isbn,
           } : undefined,
         }
       })
@@ -800,6 +815,16 @@ export default function VerificationPage() {
           fabricatedTag: t('verification.fabricatedTag'),
           citationError: t('verification.exportPdfCitationError'),
           tagLabel: (tag: string) => problemTagLabel(tag),
+          bibliographic: t('verification.bibliographic'),
+          volume: t('verification.volume'),
+          issue: t('verification.issue'),
+          pages: t('verification.pages'),
+          publisher: t('verification.publisher'),
+          editor: t('verification.editor'),
+          documentType: t('verification.documentType'),
+          language: t('verification.language'),
+          issn: t('verification.issn'),
+          isbn: t('verification.isbn'),
         },
       })
 
@@ -2652,28 +2677,66 @@ export default function VerificationPage() {
                 {hasCompletedResult && r && (
                   <>
                     {r.best_match ? (
-                      <div className={styles['match-card']}>
-                        <div className={styles['match-title']}>{r.best_match.title}</div>
-                        {r.best_match.authors.length > 0 && (
-                          <div className={styles['match-meta']}>{r.best_match.authors.join(', ')}</div>
-                        )}
-                        {r.best_match.journal && (
-                          <div className={styles['match-source']}>{r.best_match.journal}</div>
-                        )}
-                        <div className={styles['match-meta-row']}>
-                          {r.best_match.year && <span>{r.best_match.year}</span>}
-                          {r.best_match.doi && <span className={styles['match-doi']}>DOI: {r.best_match.doi}</span>}
-                        </div>
-                        <div className={styles['match-meta-row']}>
-                          <span className={styles['match-db']}>{r.best_match.database}</span>
-                          <span className={styles['match-score']} style={{ color: dbScoreColor(r.best_match.score) }}>
-                            {Math.round(r.best_match.score * 100)}%
-                          </span>
-                        </div>
-                        {r.best_match.url && (
-                          <button className={styles['match-link']} onClick={() => openOverlayWithUrl(r.best_match!.url)}>{t('verification.openSource')} &#x2197;</button>
-                        )}
-                      </div>
+                      (() => {
+                        const bm = r.best_match
+                        const extras: { key: string; label: string; value: string }[] = []
+                        if (bm.volume) extras.push({ key: 'volume', label: t('verification.volume'), value: bm.volume })
+                        if (bm.issue) extras.push({ key: 'issue', label: t('verification.issue'), value: bm.issue })
+                        if (bm.pages) extras.push({ key: 'pages', label: t('verification.pages'), value: bm.pages })
+                        if (bm.publisher) extras.push({ key: 'publisher', label: t('verification.publisher'), value: bm.publisher })
+                        if (bm.editor && bm.editor.length > 0) extras.push({ key: 'editor', label: t('verification.editor'), value: bm.editor.join(', ') })
+                        if (bm.document_type) extras.push({ key: 'documentType', label: t('verification.documentType'), value: bm.document_type })
+                        if (bm.language) extras.push({ key: 'language', label: t('verification.language'), value: bm.language })
+                        if (bm.issn && bm.issn.length > 0) extras.push({ key: 'issn', label: t('verification.issn'), value: bm.issn.join(', ') })
+                        if (bm.isbn && bm.isbn.length > 0) extras.push({ key: 'isbn', label: t('verification.isbn'), value: bm.isbn.join(', ') })
+                        const hasExtras = extras.length > 0
+                        return (
+                          <div className={styles['match-card']}>
+                            <div className={styles['match-title']}>{bm.title}</div>
+                            {bm.authors.length > 0 && (
+                              <div className={styles['match-meta']}>{bm.authors.join(', ')}</div>
+                            )}
+                            {bm.journal && (
+                              <div className={styles['match-source']}>{bm.journal}</div>
+                            )}
+                            <div className={styles['match-meta-row']}>
+                              {bm.year && <span>{bm.year}</span>}
+                              {bm.doi && <span className={styles['match-doi']}>DOI: {bm.doi}</span>}
+                            </div>
+                            <div className={styles['match-meta-row']}>
+                              <span className={styles['match-db']}>{bm.database}</span>
+                              <span className={styles['match-score']} style={{ color: dbScoreColor(bm.score) }}>
+                                {Math.round(bm.score * 100)}%
+                              </span>
+                            </div>
+                            {bm.url && (
+                              <button className={styles['match-link']} onClick={() => openOverlayWithUrl(bm.url)}>{t('verification.openSource')} &#x2197;</button>
+                            )}
+                            {hasExtras && (
+                              <>
+                                <button
+                                  type="button"
+                                  className={styles['match-toggle']}
+                                  onClick={() => setMatchExpanded(v => !v)}
+                                  aria-expanded={matchExpanded}
+                                >
+                                  {matchExpanded ? `▾ ${t('verification.lessDetails')}` : `▸ ${t('verification.moreDetails')}`}
+                                </button>
+                                {matchExpanded && (
+                                  <div className={styles['match-extras']}>
+                                    {extras.map(ex => (
+                                      <div key={ex.key} className={styles['match-extra-row']}>
+                                        <span className={styles['match-extra-label']}>{ex.label}:</span>
+                                        <span className={styles['match-extra-value']}>{ex.value}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )
+                      })()
                     ) : (
                       <div className={styles['match-empty']}>{t('verification.noMatchFound')}</div>
                     )}

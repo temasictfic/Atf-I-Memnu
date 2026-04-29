@@ -91,6 +91,20 @@ def _hit_to_match(hit: dict[str, Any], source: ParsedSource, search_url: str) ->
     if doi:
         url = f"https://doi.org/{doi}"
 
+    # Pages: prefer "page" if present, otherwise build from start/end.
+    pages: str | None = src.get("page") or None
+    if not pages:
+        sp = src.get("startPage") or ""
+        ep = src.get("endPage") or ""
+        if sp and ep:
+            pages = f"{sp}-{ep}"
+        else:
+            pages = sp or ep or None
+
+    # Language tokens are short codes like "TUR" / "ENG"; normalise lowercase.
+    lang_raw = src.get("lang") or src.get("language") or ""
+    language = str(lang_raw).strip().lower() if lang_raw else ""
+
     candidate = {
         "database": "TRDizin",
         "title": title,
@@ -100,6 +114,10 @@ def _hit_to_match(hit: dict[str, Any], source: ParsedSource, search_url: str) ->
         "journal": journal,
         "url": url,
         "search_url": search_url,
+        "volume": src.get("volume") or None,
+        "issue": src.get("issue") or None,
+        "pages": pages,
+        "language": language,
     }
 
     return score_match(source, candidate)

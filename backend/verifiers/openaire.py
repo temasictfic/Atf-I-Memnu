@@ -156,6 +156,38 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
                 url = urls[0]
                 break
 
+    # Bibliographic extras from container.{vol, iss, sp, ep, issnPrinted, issnOnline}
+    volume = (container.get("vol") if isinstance(container, dict) else None) or None
+    issue = (container.get("iss") if isinstance(container, dict) else None) or None
+    sp = container.get("sp") if isinstance(container, dict) else ""
+    ep = container.get("ep") if isinstance(container, dict) else ""
+    if sp and ep:
+        pages = f"{sp}-{ep}"
+    else:
+        pages = sp or ep or None
+
+    issn_list: list[str] = []
+    for k in ("issnPrinted", "issnOnline"):
+        v = container.get(k) if isinstance(container, dict) else ""
+        if v and v not in issn_list:
+            issn_list.append(v)
+
+    # language can be a {code, label} dict or a plain string.
+    lang_raw = item.get("language") or ""
+    if isinstance(lang_raw, dict):
+        language = lang_raw.get("code", "") or ""
+    else:
+        language = str(lang_raw) or ""
+
+    # Document type — prefer the formal instancetype name, fall back to subtypes.
+    document_type = ""
+    instances = item.get("instances") or []
+    if isinstance(instances, list) and instances:
+        first = instances[0] if isinstance(instances[0], dict) else {}
+        instype = first.get("instancetype") if isinstance(first, dict) else None
+        if isinstance(instype, dict):
+            document_type = instype.get("name", "") or ""
+
     search_query = source.title or (source.raw_text[:100] if source.raw_text else "")
     candidate = {
         "database": "OpenAIRE",
@@ -166,6 +198,12 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
         "journal": journal,
         "url": url,
         "search_url": f"https://explore.openaire.eu/search/find?fv0={quote(search_query)}&f0=q",
+        "volume": volume,
+        "issue": issue,
+        "pages": pages,
+        "language": language,
+        "document_type": document_type,
+        "issn": issn_list,
     }
 
     return score_match(source, candidate)

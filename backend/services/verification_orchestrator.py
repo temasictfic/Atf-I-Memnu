@@ -46,6 +46,7 @@ _DB_ID_TO_HOST = {
     "trdizin": "search.trdizin.gov.tr",
     "pubmed": "eutils.ncbi.nlm.nih.gov",
     "open_library": "openlibrary.org",
+    "base": "api.base-search.net",
 }
 
 
@@ -89,6 +90,7 @@ def _build_search_url(db_name: str, parsed: ParsedSource) -> str:
         "PubMed": f"https://pubmed.ncbi.nlm.nih.gov/?term={quote(query)}",
         "OpenAIRE": f"https://explore.openaire.eu/search/find?fv0={quote(query)}&f0=q",
         "Open Library": f"https://openlibrary.org/search?q={quote(query)}",
+        "BASE": f"https://www.base-search.net/Search/Results?lookfor={quote(query)}",
     }
     return urls.get(db_name, "")
 
@@ -444,6 +446,7 @@ async def _run_tier1_apis(
     from verifiers.trdizin import search as trdizin_search
     from verifiers.pubmed import search as pubmed_search
     from verifiers.open_library import search as open_library_search
+    from verifiers.base import search as base_search
 
     # Map database id → (display name, search function)
     verifier_registry = {
@@ -456,6 +459,7 @@ async def _run_tier1_apis(
         "trdizin": ("TRDizin", trdizin_search),
         "pubmed": ("PubMed", pubmed_search),
         "open_library": ("Open Library", open_library_search),
+        "base": ("BASE", base_search),
     }
 
     # Build verifier list in the order defined by user settings. The
@@ -500,6 +504,7 @@ async def _run_tier1_apis(
                     "openalex": "openalex",
                     "semantic_scholar": "semantic_scholar",
                     "pubmed": "pubmed",
+                    "base": "base",
                 }
                 api_key_name = api_key_names.get(db_id)
                 api_key = (api_keys.get(api_key_name, "") or "").strip() if api_key_name else None

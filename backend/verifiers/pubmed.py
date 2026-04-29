@@ -123,6 +123,15 @@ def _item_to_match(item: dict, pmid: str, source: ParsedSource) -> MatchResult |
     journal = item.get("fulljournalname", "") or item.get("source", "")
     url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
 
+    issn_list = [
+        v for v in (item.get("issn", ""), item.get("essn", ""))
+        if isinstance(v, str) and v
+    ]
+    pubtypes = item.get("pubtype") or []
+    document_type = ""
+    if isinstance(pubtypes, list) and pubtypes:
+        document_type = str(pubtypes[0]) if pubtypes[0] else ""
+
     search_query = source.title or source.raw_text[:100]
     candidate = {
         "database": "PubMed",
@@ -133,6 +142,11 @@ def _item_to_match(item: dict, pmid: str, source: ParsedSource) -> MatchResult |
         "journal": journal,
         "url": url,
         "search_url": f"https://pubmed.ncbi.nlm.nih.gov/?term={quote(search_query)}",
+        "volume": item.get("volume") or None,
+        "issue": item.get("issue") or None,
+        "pages": item.get("pages") or None,
+        "document_type": document_type,
+        "issn": issn_list,
     }
 
     return score_match(source, candidate)

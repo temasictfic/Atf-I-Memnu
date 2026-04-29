@@ -83,10 +83,15 @@ def _item_to_match(item: dict, source: ParsedSource) -> MatchResult | None:
     key = item.get("key", "")
     url = f"https://openlibrary.org{key}" if key else ""
 
-    journal = ""
     publishers = item.get("publisher", [])
-    if isinstance(publishers, list) and publishers:
-        journal = publishers[0]
+    if not isinstance(publishers, list):
+        publishers = []
+    publisher = publishers[0] if publishers else ""
+    # journal is a no-op for books; keep field present so scoring sees ""
+    journal = ""
+
+    raw_isbns = item.get("isbn", []) or []
+    isbn_list = [s for s in raw_isbns if isinstance(s, str) and s]
 
     search_query = source.title or source.raw_text[:100]
     candidate = {
@@ -98,6 +103,9 @@ def _item_to_match(item: dict, source: ParsedSource) -> MatchResult | None:
         "journal": journal,
         "url": url,
         "search_url": f"https://openlibrary.org/search?q={quote(search_query)}",
+        "publisher": publisher,
+        "document_type": "book",
+        "isbn": isbn_list,
     }
 
     return score_match(source, candidate)

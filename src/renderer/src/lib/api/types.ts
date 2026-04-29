@@ -78,6 +78,17 @@ export interface MatchResult {
     year_match: number
     url_match: boolean
   }
+  // Bibliographic extras — populated when the underlying database returns
+  // them. All optional; missing/empty fields mean "field unavailable".
+  volume?: string | null
+  issue?: string | null
+  pages?: string | null
+  publisher?: string
+  editor?: string[]
+  document_type?: string
+  language?: string
+  issn?: string[]
+  isbn?: string[]
 }
 
 export interface VerificationResult {

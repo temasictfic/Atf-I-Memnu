@@ -1156,6 +1156,46 @@
 .match-link:hover { text-decoration: underline; }
 .match-empty { font-size: 11px; color: #a8a29e; }
 
+.match-toggle {
+  font-size: 10px;
+  color: #78716c;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 0;
+  font-weight: 500;
+  margin-top: 2px;
+}
+.match-toggle:hover { color: #44403c; }
+.match-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  margin-top: 2px;
+  background: #fafaf9;
+  border: 1px solid #e7e5e4;
+  border-radius: 6px;
+}
+.match-extra-row {
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #57534e;
+  flex-wrap: wrap;
+}
+.match-extra-label {
+  font-weight: 600;
+  color: #78716c;
+  flex-shrink: 0;
+}
+.match-extra-value {
+  color: #44403c;
+  word-break: break-word;
+}
+
 /* Database list */
 .detail-db-list { display: flex; flex-direction: column; gap: 2px; }
 .db-row {

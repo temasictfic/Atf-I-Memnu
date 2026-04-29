@@ -216,6 +216,8 @@ def _parse_atom_response(xml_text: str, source: ParsedSource) -> MatchResult | N
             "journal": "arXiv",
             "url": link,
             "search_url": f"https://arxiv.org/search/?query={quote(search_query)}&searchtype=all",
+            "document_type": "preprint",
+            "language": "en",
         }
 
         match = score_match(source, candidate)

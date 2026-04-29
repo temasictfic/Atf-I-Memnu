@@ -30,7 +30,7 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     params: dict[str, str] = {
         "query": query,
         "limit": "5",
-        "fields": "title,authors,year,externalIds,url,venue",
+        "fields": "title,authors,year,externalIds,url,venue,journal,publicationTypes",
     }
 
     # Semantic Scholar Graph API supports year=YYYY-YYYY range filtering.
@@ -84,6 +84,17 @@ def _paper_to_match(paper: dict[str, Any], source: ParsedSource) -> MatchResult 
     # Prefer a DOI-based URL (direct paper link) over the S2 paper page.
     url = f"https://doi.org/{doi}" if doi else paper.get("url", "")
 
+    journal_obj = paper.get("journal") or {}
+    if not isinstance(journal_obj, dict):
+        journal_obj = {}
+    volume = journal_obj.get("volume") or None
+    pages = journal_obj.get("pages") or None
+
+    pub_types = paper.get("publicationTypes") or []
+    document_type = ""
+    if isinstance(pub_types, list) and pub_types:
+        document_type = str(pub_types[0]) if pub_types[0] else ""
+
     search_query = source.title or (source.raw_text[:100] if source.raw_text else "")
     candidate = {
         "database": "Semantic Scholar",
@@ -94,6 +105,9 @@ def _paper_to_match(paper: dict[str, Any], source: ParsedSource) -> MatchResult 
         "journal": paper.get("venue", ""),
         "url": url,
         "search_url": f"https://www.semanticscholar.org/search?q={quote(search_query)}",
+        "volume": volume,
+        "pages": pages,
+        "document_type": document_type,
     }
 
     return score_match(source, candidate)

@@ -19,6 +19,17 @@ class MatchResult(BaseModel):
     search_url: str = ""
     score: float = 0.0
     match_details: MatchDetails = MatchDetails()
+    # Bibliographic extras — populated by verifiers when the underlying API
+    # returns the field. Display-only; never used in scoring.
+    volume: str | None = None
+    issue: str | None = None
+    pages: str | None = None
+    publisher: str = ""
+    editor: list[str] = []
+    document_type: str = ""  # article / book / chapter / thesis / preprint / report
+    language: str = ""  # ISO 639-1
+    issn: list[str] = []
+    isbn: list[str] = []
 
 
 class VerificationResult(BaseModel):

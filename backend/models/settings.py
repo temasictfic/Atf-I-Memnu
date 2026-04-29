@@ -49,6 +49,10 @@ class AppSettings(BaseModel):
                 DatabaseConfig(id="semantic_scholar", name="Semantic Scholar"),
                 DatabaseConfig(id="trdizin", name="TRDizin"),
                 DatabaseConfig(id="open_library", name="Open Library"),
+                # BASE requires IP allowlist via base-search.net/about/en/contact.php
+                # ("Access BASE's HTTP API"), so it's off by default. Users opt in
+                # from Settings once they have allowlist access.
+                DatabaseConfig(id="base", name="BASE", enabled=False),
             ],
             search_timeout=app_config.search_timeout,
             max_concurrent_apis=app_config.max_concurrent_apis,

@@ -105,6 +105,15 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
         search_url=candidate.get("search_url", ""),
         score=round(composite, 4),
         match_details=details,
+        volume=candidate.get("volume"),
+        issue=candidate.get("issue"),
+        pages=candidate.get("pages"),
+        publisher=candidate.get("publisher", ""),
+        editor=candidate.get("editor", []),
+        document_type=candidate.get("document_type", ""),
+        language=candidate.get("language", ""),
+        issn=candidate.get("issn", []),
+        isbn=candidate.get("isbn", []),
     )
 
 

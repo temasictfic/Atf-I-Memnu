@@ -199,6 +199,17 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
     journal_parts = item.get("container-title", [])
     journal = journal_parts[0] if journal_parts else ""
 
+    editors: list[str] = []
+    for ed in item.get("editor", []) or []:
+        if not isinstance(ed, dict):
+            continue
+        name = f"{ed.get('family', '')}, {ed.get('given', '')}".strip(", ")
+        if name:
+            editors.append(name)
+
+    issn_list = [s for s in (item.get("ISSN") or []) if isinstance(s, str) and s]
+    isbn_list = [s for s in (item.get("ISBN") or []) if isinstance(s, str) and s]
+
     candidate = {
         "database": "Crossref",
         "title": title,
@@ -208,6 +219,15 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
         "journal": journal,
         "url": f"https://doi.org/{doi}" if doi else "",
         "search_url": f"https://search.crossref.org/search/works?q={quote_plus(source.title or source.raw_text[:100])}&from_ui=yes",
+        "volume": item.get("volume") or None,
+        "issue": item.get("issue") or None,
+        "pages": item.get("page") or None,
+        "publisher": item.get("publisher", "") or "",
+        "editor": editors,
+        "document_type": item.get("type", "") or "",
+        "language": item.get("language", "") or "",
+        "issn": issn_list,
+        "isbn": isbn_list,
     }
 
     return score_match(source, candidate)
