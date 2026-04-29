@@ -849,9 +849,13 @@ export default function VerificationPage() {
   useEffect(() => { findBarOpenRef.current = findBarOpen }, [findBarOpen])
 
   // Plain-Chrome UA so Cloudflare/WAFs (e.g. IEEE Xplore) don't 418 our
-  // scholar-panel webviews for advertising "Electron/..." in the UA.
-  const scholarPanelUserAgent =
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+  // scholar-panel webviews for advertising "Electron/..." in the UA. Pulled
+  // from main so the Chrome version stays in sync with the bundled Chromium —
+  // a stale literal here desyncs from sec-ch-ua and trips bot detectors.
+  const [scholarPanelUserAgent, setScholarPanelUserAgent] = useState<string>('')
+  useEffect(() => {
+    window.electronAPI.getScholarUserAgent().then(setScholarPanelUserAgent).catch(() => {})
+  }, [])
 
   // --- Scholar scan ---
   const scholarStatus = useScholarScanStore(s => s.status)
@@ -2453,8 +2457,7 @@ export default function VerificationPage() {
                     className={styles['scholar-overlay-webview']}
                     src={browserOverlayUrl}
                     partition="persist:scholar-panel"
-                    useragent={scholarPanelUserAgent}
-                    {...({ allowpopups: 'true' } as Record<string, string>)}
+                    {...({ allowpopups: 'true', ...(scholarPanelUserAgent ? { useragent: scholarPanelUserAgent } : {}) } as Record<string, string>)}
                   />
                   {/* Transparent shield covers the webview during resize so mouseup reaches
                       the host window — the webview's guest process otherwise swallows it
@@ -2544,7 +2547,7 @@ export default function VerificationPage() {
               ref={scholarScanWebviewRef}
               src="about:blank"
               partition="persist:scholar-panel"
-              useragent={scholarPanelUserAgent}
+              {...(scholarPanelUserAgent ? ({ useragent: scholarPanelUserAgent } as Record<string, string>) : {})}
               style={{ position: 'fixed', left: '-9999px', top: '0', width: '1280px', height: '800px', opacity: 0, pointerEvents: 'none' } as React.CSSProperties}
             />
           </>

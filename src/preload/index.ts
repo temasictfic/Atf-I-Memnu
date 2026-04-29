@@ -23,6 +23,9 @@ const electronAPI = {
   clearScholarSession: (): Promise<{ ok: boolean }> => {
     return ipcRenderer.invoke('scholar:clearSession')
   },
+  getScholarUserAgent: (): Promise<string> => {
+    return ipcRenderer.invoke('scholar:getUserAgent')
+  },
   readPdfFile: (filePath: string): Promise<Uint8Array> => {
     return ipcRenderer.invoke('pdf:read', filePath)
   },

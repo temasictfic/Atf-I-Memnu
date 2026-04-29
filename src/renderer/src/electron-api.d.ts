@@ -9,6 +9,7 @@ declare global {
       openExternal: (url: string) => Promise<void>
       openCacheFolder: () => Promise<{ ok: boolean; path: string; error: string | null }>
       clearScholarSession: () => Promise<{ ok: boolean }>
+      getScholarUserAgent: () => Promise<string>
       getBackendPort: () => Promise<number>
       readPdfFile: (filePath: string) => Promise<Uint8Array>
       writePdfFile: (filePath: string, bytes: Uint8Array) => Promise<void>

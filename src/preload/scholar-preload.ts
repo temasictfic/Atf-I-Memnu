@@ -10,15 +10,26 @@
 // so the two stay consistent.
 
 (() => {
-  const chromeVersion = (() => {
-    const match = navigator.userAgent.match(/Chrome\/(\d+)/)
-    return match ? match[1] : '131'
-  })()
+  // Pull both the major and the full build out of the UA. Main builds the UA
+  // from process.versions.chrome (e.g. "146.0.7480.65"), so the full string is
+  // available here even though we can't reach `process` from a frame preload.
+  // brands/sec-ch-ua want the major only; uaFullVersion/fullVersionList need
+  // the real build — emitting "X.0.0.0" there is a Cloudflare giveaway because
+  // real Chrome always has meaningful sub-version digits.
+  const fullMatch = navigator.userAgent.match(/Chrome\/([\d.]+)/)
+  const chromeFullVersion = fullMatch ? fullMatch[1] : '146.0.0.0'
+  const chromeVersion = chromeFullVersion.split('.')[0]
 
   const fakeBrands = [
     { brand: 'Chromium', version: chromeVersion },
     { brand: 'Google Chrome', version: chromeVersion },
     { brand: 'Not?A_Brand', version: '24' },
+  ]
+
+  const fakeFullVersionList = [
+    { brand: 'Chromium', version: chromeFullVersion },
+    { brand: 'Google Chrome', version: chromeFullVersion },
+    { brand: 'Not?A_Brand', version: '24.0.0.0' },
   ]
 
   const fakeUaData = {
@@ -37,8 +48,8 @@
           case 'bitness': result.bitness = '64'; break
           case 'model': result.model = ''; break
           case 'platformVersion': result.platformVersion = '15.0.0'; break
-          case 'uaFullVersion': result.uaFullVersion = `${chromeVersion}.0.0.0`; break
-          case 'fullVersionList': result.fullVersionList = fakeBrands.map(b => ({ ...b, version: `${b.version}.0.0.0` })); break
+          case 'uaFullVersion': result.uaFullVersion = chromeFullVersion; break
+          case 'fullVersionList': result.fullVersionList = fakeFullVersionList; break
           case 'wow64': result.wow64 = false; break
         }
       }

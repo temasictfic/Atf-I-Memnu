@@ -11,6 +11,7 @@ export interface ElectronAPI {
   getPathForFile: (file: File) => string
   openExternal: (url: string) => Promise<void>
   clearScholarSession: () => Promise<{ ok: boolean }>
+  getScholarUserAgent: () => Promise<string>
   openCacheFolder: () => Promise<{ ok: boolean; path: string; error: string | null }>
   getBackendPort: () => Promise<number>
   readPdfFile: (filePath: string) => Promise<Uint8Array>

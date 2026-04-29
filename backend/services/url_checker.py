@@ -10,12 +10,19 @@ import logging
 
 import aiohttp
 
+from services.search_settings import get_polite_pool_email
+
 logger = logging.getLogger(__name__)
 
-_HEADERS = {
-    "User-Agent": "AtfiMemnu/1.0 (Citation Verification; mailto:atfimemnu@example.com)",
-    "Accept": "*/*",
-}
+
+def _build_headers() -> dict[str, str]:
+    """Return liveness-check headers; includes polite-pool mailto when set."""
+    email = get_polite_pool_email()
+    if email:
+        ua = f"AtfiMemnu/1.0 (Citation Verification; mailto:{email})"
+    else:
+        ua = "AtfiMemnu/1.0 (Citation Verification)"
+    return {"User-Agent": ua, "Accept": "*/*"}
 
 
 def is_doi_or_arxiv_url(url: str) -> bool:
@@ -75,7 +82,7 @@ async def check_urls(urls: list[str], timeout: float = 10.0) -> dict[str, bool]:
         return {}
 
     client_timeout = aiohttp.ClientTimeout(total=timeout)
-    async with aiohttp.ClientSession(timeout=client_timeout, headers=_HEADERS) as session:
+    async with aiohttp.ClientSession(timeout=client_timeout, headers=_build_headers()) as session:
         results = await asyncio.gather(
             *(_check_url_with_session(session, u) for u in targets),
             return_exceptions=True,
