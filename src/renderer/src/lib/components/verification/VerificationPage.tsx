@@ -94,6 +94,7 @@ export default function VerificationPage() {
   const cardSortAsc = useVerificationStore(s => s.cardSortAsc)
   const pdfSortKey = useVerificationStore(s => s.pdfSortKey)
   const pdfSortAsc = useVerificationStore(s => s.pdfSortAsc)
+  const pdfOrder = useVerificationStore(s => s.pdfOrder)
   const verifyCutoffIndex = useVerificationStore(s => s.verifyCutoffIndex)
   const setVerifyCutoffIndex = useVerificationStore(s => s.setVerifyCutoffIndex)
 
@@ -204,18 +205,6 @@ export default function VerificationPage() {
       const summary = summaries[pdfId]
       if (!summary || !summary.completed || summary.in_progress > 0) continue
       pendingVerifyPdfIdsRef.current.delete(pdfId)
-
-      // Under status sort, slide the cutoff bar up by one as each PDF
-      // finishes — the PDF has just moved from the in-progress tier at the
-      // top of the list to the completed tier at the bottom, so a matching
-      // bar shift keeps the "remaining queue" framing intact.
-      {
-        const store = useVerificationStore.getState()
-        if (store.pdfSortKey === 'status') {
-          const current = Math.min(store.verifyCutoffIndex, pdfs.length)
-          store.setVerifyCutoffIndex(Math.max(0, current - 1))
-        }
-      }
 
       const pdf = allPdfs.find(p => p.id === pdfId)
       const name = pdf?.name ?? 'PDF'
@@ -368,6 +357,20 @@ export default function VerificationPage() {
   }, [resultsByPdf])
 
   const sortedPdfs = useMemo(() => {
+    // Free mode: read order from pdfOrder, append any new PDFs at the end,
+    // skip ids that no longer exist. Doesn't depend on summaries, so the
+    // list stays put while verifications finish.
+    if (pdfSortKey === 'free') {
+      const byId = new Map(pdfs.map(p => [p.id, p]))
+      const out: typeof pdfs = []
+      const seen = new Set<string>()
+      for (const id of pdfOrder) {
+        const pdf = byId.get(id)
+        if (pdf) { out.push(pdf); seen.add(id) }
+      }
+      for (const pdf of pdfs) if (!seen.has(pdf.id)) out.push(pdf)
+      return out
+    }
     const list = [...pdfs]
     const dir = pdfSortAsc ? 1 : -1
     // Mirror of the render-time freeze: if a PDF is currently re-verifying
@@ -421,7 +424,7 @@ export default function VerificationPage() {
       return 0
     })
     return list
-  }, [pdfs, pdfSortKey, pdfSortAsc, summaries, decisionCountsByPdf, resultsByPdf])
+  }, [pdfs, pdfSortKey, pdfSortAsc, pdfOrder, summaries, decisionCountsByPdf, resultsByPdf])
 
   // --- Center panel sorting (persisted in store) ---
   const { toggleCardSort } = useVerificationStore.getState()
@@ -517,6 +520,11 @@ export default function VerificationPage() {
   const [dragSourceId, setDragSourceId] = useState<string | null>(null)
   const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null)
 
+  // PDF row drag-drop state (left panel). Kept separate from source-card
+  // drag state so the two systems don't interfere.
+  const [pdfDragId, setPdfDragId] = useState<string | null>(null)
+  const [pdfDropTargetIdx, setPdfDropTargetIdx] = useState<number | null>(null)
+
   function onDragStart(e: React.DragEvent, sourceId: string) {
     setDragSourceId(sourceId)
     e.dataTransfer.effectAllowed = 'move'
@@ -543,6 +551,36 @@ export default function VerificationPage() {
   function onDragEnd() {
     setDragSourceId(null)
     setDropTargetIdx(null)
+  }
+
+  function onPdfDragStart(e: React.DragEvent, pdfId: string) {
+    setPdfDragId(pdfId)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', pdfId)
+  }
+
+  function onPdfDragOver(e: React.DragEvent, idx: number) {
+    if (!pdfDragId) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setPdfDropTargetIdx(idx)
+  }
+
+  function onPdfDrop(e: React.DragEvent, toIdx: number) {
+    e.preventDefault()
+    if (!pdfDragId) return
+    const baseOrder = sortedPdfs.map(p => p.id)
+    const fromIdx = baseOrder.indexOf(pdfDragId)
+    if (fromIdx >= 0 && fromIdx !== toIdx) {
+      useVerificationStore.getState().reorderPdfs(fromIdx, toIdx, baseOrder)
+    }
+    setPdfDragId(null)
+    setPdfDropTargetIdx(null)
+  }
+
+  function onPdfDragEnd() {
+    setPdfDragId(null)
+    setPdfDropTargetIdx(null)
   }
 
   // Verify-All cutoff divider: refs to each PDF item so we can compute which
@@ -630,6 +668,7 @@ export default function VerificationPage() {
       const cutoff = Math.min(verifyCutoffIndex, sortedPdfs.length)
       const ids = sortedPdfs.slice(0, cutoff).map(p => p.id)
       if (ids.length > 0) {
+        useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
         verifyAllModeRef.current = mode
         verifyAllQueueRef.current = [...ids]
         verifyAllActiveRef.current = true
@@ -654,6 +693,7 @@ export default function VerificationPage() {
       pendingVerifyPdfIdsRef.current.delete(pdfId)
       await useVerificationStore.getState().cancelPdf(pdfId)
     } else {
+      useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
       autoGsPdfIdsRef.current.add(pdfId)
       pendingVerifyPdfIdsRef.current.add(pdfId)
       await useVerificationStore.getState().startVerification([pdfId])
@@ -662,6 +702,7 @@ export default function VerificationPage() {
 
   async function handleVerifyNonHighPdf(pdfId: string) {
     if (isPdfVerifying(pdfId)) return
+    useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
     await loadSourcesFn(pdfId)
     const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
     useVerificationStore.getState().initSourceVerifyState(pdfId, src)
@@ -676,6 +717,7 @@ export default function VerificationPage() {
       pendingSingleSourceGsRef.current.delete(selectedSourceId)
       await useVerificationStore.getState().cancelSource(selectedSourceId)
     } else {
+      useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
       const text = useVerificationStore.getState().verifyTexts[selectedSourceId]
       pendingSingleSourceGsRef.current.set(selectedSourceId, effectivePdfId)
       await useVerificationStore.getState().reverifySource(effectivePdfId, selectedSourceId, text)
@@ -1766,12 +1808,23 @@ export default function VerificationPage() {
       return n
     }
 
+    // Snapshot the visible order and switch to free mode on the first
+    // movement that actually changes the cutoff slot, so a stray
+    // mousedown that doesn't drag won't switch sort modes.
+    let didFreeze = false
+    const startCutoff = Math.min(verifyCutoffIndex, sortedPdfs.length)
+
     const onMouseMove = (e: MouseEvent) => {
       if (e.buttons === 0) {
         setCutoffDragging(false)
         return
       }
-      setVerifyCutoffIndex(computeSlotFromY(e.clientY))
+      const next = computeSlotFromY(e.clientY)
+      if (!didFreeze && next !== startCutoff) {
+        didFreeze = true
+        useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
+      }
+      setVerifyCutoffIndex(next)
     }
     const stop = () => setCutoffDragging(false)
 
@@ -1783,7 +1836,7 @@ export default function VerificationPage() {
       window.removeEventListener('mouseup', stop)
       window.removeEventListener('blur', stop)
     }
-  }, [cutoffDragging, sortedPdfs, setVerifyCutoffIndex])
+  }, [cutoffDragging, sortedPdfs, verifyCutoffIndex, setVerifyCutoffIndex])
 
   return (
     <div className={styles['verify-page']}>
@@ -1848,9 +1901,14 @@ export default function VerificationPage() {
             <button className={`${styles['sort-btn']} ${styles['sort-btn-status']} ${pdfSortKey === 'status' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('status')} title={t('verification.sort.byStatus')}>
               &#x25CF;{pdfSortKey === 'status' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
-            <button className={`${styles['sort-btn']} ${styles['sort-btn-grow']} ${pdfSortKey === 'name' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('name')} title={t('verification.sort.byName')}>
+            <button className={`${styles['sort-btn']} ${pdfSortKey === 'name' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('name')} title={t('verification.sort.byName')}>
               {t('verification.sort.name')}{pdfSortKey === 'name' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
+            <span className={styles['sort-spacer']} aria-hidden="true" />
+            <button className={`${styles['sort-btn']} ${pdfSortKey === 'free' ? styles['sort-active'] : ''}`} onClick={() => togglePdfSort('free')} title={t('verification.sort.byFree')}>
+              {t('verification.sort.free')}
+            </button>
+            <span className={styles['sort-spacer']} aria-hidden="true" />
             {([
               { key: 'high',       color: STATUS_HEX.high,             titleKey: 'verification.sort.byHigh' },
               { key: 'medium',     color: STATUS_HEX.medium,           titleKey: 'verification.sort.byMedium' },
@@ -1926,7 +1984,12 @@ export default function VerificationPage() {
                 <div
                   key={pdf.id}
                   ref={setPdfItemRef(pdf.id)}
-                  className={`${styles['verify-item']} ${effectivePdfId === pdf.id ? styles['verify-selected'] : ''}`}
+                  className={`${styles['verify-item']} ${effectivePdfId === pdf.id ? styles['verify-selected'] : ''} ${pdfDropTargetIdx === i && pdfDragId !== null && pdfDragId !== pdf.id ? styles['verify-item-dragover'] : ''}`}
+                  draggable
+                  onDragStart={(e) => onPdfDragStart(e, pdf.id)}
+                  onDragEnd={onPdfDragEnd}
+                  onDragOver={(e) => onPdfDragOver(e, i)}
+                  onDrop={(e) => onPdfDrop(e, i)}
                   onClick={() => selectPdf(pdf.id)}
                   onContextMenu={(e) => {
                     e.preventDefault()
@@ -1957,6 +2020,8 @@ export default function VerificationPage() {
                     <span className={styles['vi-name']}>{pdf.name}</span>
                     <button
                       className={styles['vi-verify-btn']}
+                      draggable={false}
+                      onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => { e.stopPropagation(); handleVerifyOrCancelPdf(pdf.id) }}
                       title={isPdfVerifying(pdf.id) ? t('verification.stopVerification') : t('verification.verifyThisPdf')}
                     >{isPdfVerifying(pdf.id) ? '\u25A0' : '\u25B6'}</button>

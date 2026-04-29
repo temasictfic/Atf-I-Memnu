@@ -12,7 +12,7 @@ import { effectiveTagOn, effectiveDecisionTag } from '../verification/tagState'
 import { usePdfStore } from './pdf-store'
 
 type CardSortKey = 'status' | 'ref' | 'enabled' | 'decision'
-type PdfSortKey = 'name' | 'status' | 'high' | 'medium' | 'low' | 'valid' | 'citation' | 'fabricated'
+type PdfSortKey = 'name' | 'status' | 'high' | 'medium' | 'low' | 'valid' | 'citation' | 'fabricated' | 'free'
 
 interface VerificationState {
   resultsByPdf: Record<string, Record<string, VerificationResult>>
@@ -33,6 +33,7 @@ interface VerificationState {
   cardSortAsc: boolean
   pdfSortKey: PdfSortKey
   pdfSortAsc: boolean
+  pdfOrder: string[]
   verifyCutoffIndex: number
 
   selectSource: (id: string | null) => void
@@ -42,6 +43,8 @@ interface VerificationState {
   toggleSourceEnabled: (sourceId: string) => void
   setAllEnabled: (pdfId: string, enabled: boolean) => void
   reorderSources: (pdfId: string, fromIndex: number, toIndex: number) => void
+  reorderPdfs: (fromIndex: number, toIndex: number, baseOrder: string[]) => void
+  freezePdfOrder: (baseOrder: string[]) => void
   toggleCardSort: (key: CardSortKey) => void
   togglePdfSort: (key: PdfSortKey) => void
   initSourceVerifyState: (pdfId: string, sources: SourceRectangle[]) => void
@@ -235,6 +238,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   cardSortAsc: true,
   pdfSortKey: 'name' as PdfSortKey,
   pdfSortAsc: true,
+  pdfOrder: [],
   verifyCutoffIndex: Number.POSITIVE_INFINITY,
 
   selectSource: (id) => set({ selectedSourceId: id }),
@@ -275,6 +279,17 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       order.splice(toIndex, 0, moved)
       return { sourceOrder: { ...state.sourceOrder, [pdfId]: order } }
     }),
+
+  reorderPdfs: (fromIndex, toIndex, baseOrder) =>
+    set(() => {
+      const order = [...baseOrder]
+      const [moved] = order.splice(fromIndex, 1)
+      order.splice(toIndex, 0, moved)
+      return { pdfOrder: order, pdfSortKey: 'free' }
+    }),
+
+  freezePdfOrder: (baseOrder) =>
+    set(() => ({ pdfOrder: [...baseOrder], pdfSortKey: 'free' })),
 
   toggleCardSort: (key) =>
     set(state => {

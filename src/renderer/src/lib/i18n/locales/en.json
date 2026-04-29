@@ -277,6 +277,7 @@
     "sort": {
       "byStatus": "Sort by status",
       "byName": "Sort by name",
+      "byFree": "Sort manually (drag to reorder)",
       "byHigh": "Sort by High count",
       "byMedium": "Sort by Medium count",
       "byLow": "Sort by Low count",
@@ -284,6 +285,7 @@
       "byCitation": "Sort by Citation count",
       "byFabricated": "Sort by Fabricated count",
       "name": "Name",
+      "free": "Free",
       "status": "Match",
       "ref": "Number",
       "enabled": "Enabled",

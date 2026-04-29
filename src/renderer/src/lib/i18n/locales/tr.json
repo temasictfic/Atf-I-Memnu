@@ -277,6 +277,7 @@
     "sort": {
       "byStatus": "Duruma göre sırala",
       "byName": "Ada göre sırala",
+      "byFree": "Elle sırala (sürükleyerek düzenle)",
       "byHigh": "Yüksek sayısına göre sırala",
       "byMedium": "Orta sayısına göre sırala",
       "byLow": "Düşük sayısına göre sırala",
@@ -284,6 +285,7 @@
       "byCitation": "Künye sayısına göre sırala",
       "byFabricated": "Uydurma sayısına göre sırala",
       "name": "Ad",
+      "free": "Serbest",
       "status": "Eşleşme",
       "ref": "Numara",
       "enabled": "Etkin",
