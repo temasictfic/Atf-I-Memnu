@@ -1,8 +1,8 @@
-import { sanitizeReferenceText } from './reference-text'
+import { sanitizeSourceText } from './source-text'
 
 // FNV-1a 64-bit. Synchronous, no deps, ~10 lines. 48-bit truncation
 // gives ~10⁻⁹ birthday-collision probability at 1000 refs per PDF —
-// collisions inside a single PDF's reference list are then handled
+// collisions inside a single PDF's source list are then handled
 // by the deterministic `_2` / `_3` disambiguator in renumberSources.
 function fnv1a64Hex(s: string): string {
   const bytes = new TextEncoder().encode(s)
@@ -17,6 +17,6 @@ function fnv1a64Hex(s: string): string {
 }
 
 export function makeSourceId(pdfId: string, text: string): string {
-  const canonical = sanitizeReferenceText(text)
+  const canonical = sanitizeSourceText(text)
   return `${pdfId}_${fnv1a64Hex(canonical).slice(0, 12)}`
 }

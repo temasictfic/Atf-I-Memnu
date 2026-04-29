@@ -1,14 +1,14 @@
 // Build highlight + callout notes automatically from verification results
-// for a single trust-tag category (`uydurma` or `künye`).
+// for a single decision-tag category (`fabricated` or `citation`).
 //
-// For every SourceRectangle whose effective trust tag matches the requested
+// For every SourceRectangle whose effective decision tag matches the requested
 // category, we drop:
 //   1. A highlight over each of its bboxes (primary + continuation bboxes
 //      for multi-page refs) using the user's persisted highlight color.
-//   2. A compact callout directly below the FIRST bbox of the reference,
+//   2. A compact callout directly below the FIRST bbox of the source,
 //      carrying the user-supplied explanation text. Consecutive refs
 //      alternate between left-aligned and right-aligned under the
-//      reference so they have less chance of stacking horizontally.
+//      source so they have less chance of stacking horizontally.
 //
 // Per-category idempotency: re-running the same category replaces its
 // previous batch without touching the OTHER category's auto notes.
@@ -20,11 +20,11 @@ import type {
 } from '../api/types'
 import {
   addNote,
-  removeAutoNotesForPdfByTrustTag,
+  removeAutoNotesForPdfByDecisionTag,
   useNotesStore,
-  type AutoTrustTag,
+  type AutoDecisionTag,
 } from '../stores/notes-store'
-import { effectiveTrustTag } from '../verification/tagState'
+import { effectiveDecisionTag } from '../verification/tagState'
 import { SCALE } from '../pdf/types'
 // Load the exact same TTFs that annotation-writer embeds into the
 // exported PDF. The `?url` asset import gives us a URL we can feed into
@@ -36,12 +36,12 @@ import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf
 // @ts-expect-error Vite ?url import returns a string
 import boldFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Bold.ttf?url'
 
-// Whitespace padding between the reference and the callout, in SCALE pixels.
+// Whitespace padding between the source and the callout, in SCALE pixels.
 const CALLOUT_GAP_PX = 6
 // Horizontal padding inside the callout box — matches annotation-writer.
 const CALLOUT_INNER_PAD_PX = 4 * SCALE
 // Private family name we register the TTFs under so the canvas can
-// reference them without colliding with any OS-installed Liberation.
+// source them without colliding with any OS-installed Liberation.
 const MEASURE_FONT_FAMILY = '__atfi_liberation_measure__'
 // Once-per-session font load. Kicked off at module import so the first
 // auto-annotate click (after the app has been open for a moment) doesn't
@@ -55,9 +55,9 @@ interface GenerateArgs {
   resultsBySourceId: Record<string, VerificationResult>
   pageHeightFor: (pageNum: number) => number
   pageWidthFor: (pageNum: number) => number
-  // Which trust category this run targets. Only refs whose
-  // effectiveTrustTag() equals this value receive highlights/callouts.
-  trustTag: AutoTrustTag
+  // Which decision category this run targets. Only refs whose
+  // effectiveDecisionTag() equals this value receive highlights/callouts.
+  decisionTag: AutoDecisionTag
   // Text stamped into every callout this run. Comes from the user's
   // editable, persisted text box for the corresponding button.
   calloutText: string
@@ -75,7 +75,7 @@ export async function generateAutoNotesForPdf({
   resultsBySourceId,
   pageHeightFor,
   pageWidthFor,
-  trustTag,
+  decisionTag,
   calloutText,
 }: GenerateArgs): Promise<GenerateStats> {
   // Wait for Liberation Sans to be available to the canvas measurer
@@ -84,7 +84,7 @@ export async function generateAutoNotesForPdf({
   // below); otherwise widths match the exporter exactly.
   await measureFontReady.catch(() => undefined)
 
-  removeAutoNotesForPdfByTrustTag(pdfId, trustTag)
+  removeAutoNotesForPdfByDecisionTag(pdfId, decisionTag)
 
   // Pull the user's persisted defaults (colors, text color, font size,
   // boldness) from the notes-store so Auto-annotate uses the same palette
@@ -111,7 +111,7 @@ export async function generateAutoNotesForPdf({
   for (const source of sources) {
     const result = resultsBySourceId[source.id]
     if (!result) continue
-    if (effectiveTrustTag(result) !== trustTag) continue
+    if (effectiveDecisionTag(result) !== decisionTag) continue
 
     const bboxes: BoundingBox[] =
       source.bboxes && source.bboxes.length > 0 ? source.bboxes : [source.bbox]
@@ -126,7 +126,7 @@ export async function generateAutoNotesForPdf({
         text: source.text,
         color: highlightColor,
         autoForSourceId: source.id,
-        autoTrustTag: trustTag,
+        autoDecisionTag: decisionTag,
       })
       highlightsAdded++
     }
@@ -171,7 +171,7 @@ export async function generateAutoNotesForPdf({
       bold: calloutBold,
       opacity: calloutOpacity,
       autoForSourceId: source.id,
-      autoTrustTag: trustTag,
+      autoDecisionTag: decisionTag,
     })
     calloutsAdded++
   }

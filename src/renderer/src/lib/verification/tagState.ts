@@ -1,6 +1,6 @@
-import type { TagKey, TrustTag, VerificationResult } from '../api/types'
+import type { TagKey, DecisionTag, VerificationResult } from '../api/types'
 
-export const TAG_ORDER: TagKey[] = ['authors', 'year', 'title', 'source', 'doi/arXiv']
+export const TAG_ORDER: TagKey[] = ['authors', 'year', 'title', 'journal', 'doi/arXiv']
 
 export interface TagStateResultLike {
   problem_tags?: string[]
@@ -11,8 +11,8 @@ export interface TagStateResultLike {
     doi?: string | null
   }
   tag_overrides?: Record<string, boolean>
-  trust_tag?: TrustTag
-  trust_tag_override?: TrustTag | null
+  decision_tag?: DecisionTag
+  decision_tag_override?: DecisionTag | null
 }
 
 export function defaultTagOn(result: TagStateResultLike | undefined, tag: TagKey): boolean {
@@ -22,11 +22,11 @@ export function defaultTagOn(result: TagStateResultLike | undefined, tag: TagKey
   // Pure pass-through from the backend's problem_tags. The backend is
   // authoritative: it already fires a tag when the source has the field
   // but the candidate is missing it or disagrees, which is exactly the
-  // signal the user needs to see for Künye/Uydurma reasoning.
+  // signal the user needs to see for Citation/Fabricated reasoning.
   switch (tag) {
     case 'authors':  return probs.includes('!authors') && !!bm
     case 'year':     return probs.includes('!year') && !!bm
-    case 'source':   return probs.includes('!source') && !!bm
+    case 'journal':  return probs.includes('!journal') && !!bm
     case 'doi/arXiv':return probs.includes('!doi/arXiv') && !!bm
     case 'title':    return probs.includes('!title') && !!bm
   }
@@ -42,36 +42,36 @@ export function anyTagOn(result: TagStateResultLike | undefined): boolean {
   return TAG_ORDER.some(t => effectiveTagOn(result, t))
 }
 
-/** Classify trust from the currently-effective chip states, using the rule
- *  mirrored from the backend's classify_trust(). A chip OFF means the signal
- *  matches; a chip ON means it disagrees or is missing on one side. */
-export function classifyTrustFromTags(result: TagStateResultLike | undefined): TrustTag {
-  if (!result || !result.best_match) return 'uydurma'
+/** Classify the decision from the currently-effective chip states, using the
+ *  rule mirrored from the backend's classify_decision(). A chip OFF means the
+ *  signal matches; a chip ON means it disagrees or is missing on one side. */
+export function classifyDecisionFromTags(result: TagStateResultLike | undefined): DecisionTag {
+  if (!result || !result.best_match) return 'fabricated'
   const authorsOn = effectiveTagOn(result, 'authors')
   const yearOn    = effectiveTagOn(result, 'year')
   const titleOn   = effectiveTagOn(result, 'title')
-  const sourceOn  = effectiveTagOn(result, 'source')
+  const journalOn = effectiveTagOn(result, 'journal')
   const doiOn     = effectiveTagOn(result, 'doi/arXiv')
 
   // OFF = matches
-  const authorMatches = !authorsOn
-  const yearMatches   = !yearOn
-  const titleMatches  = !titleOn
-  const sourceMatches = !sourceOn
-  const doiMatches    = !doiOn
+  const authorMatches  = !authorsOn
+  const yearMatches    = !yearOn
+  const titleMatches   = !titleOn
+  const journalMatches = !journalOn
+  const doiMatches     = !doiOn
 
-  if (authorMatches && yearMatches && titleMatches && sourceMatches) return 'clean'
-  if (titleMatches || (authorMatches && (yearMatches || sourceMatches || doiMatches))) return 'künye'
-  return 'uydurma'
+  if (authorMatches && yearMatches && titleMatches && journalMatches) return 'valid'
+  if (titleMatches || (authorMatches && (yearMatches || journalMatches || doiMatches))) return 'citation'
+  return 'fabricated'
 }
 
-export function effectiveTrustTag(result: TagStateResultLike | undefined): TrustTag {
-  if (!result) return 'clean'
-  // A manual pill cycle (trust_tag_override) always wins. Otherwise the pill
+export function effectiveDecisionTag(result: TagStateResultLike | undefined): DecisionTag {
+  if (!result) return 'valid'
+  // A manual pill cycle (decision_tag_override) always wins. Otherwise the pill
   // reflects the current chip states — so toggling a chip immediately
-  // re-classifies the reference.
-  if (result.trust_tag_override) return result.trust_tag_override
-  return classifyTrustFromTags(result)
+  // re-classifies the source.
+  if (result.decision_tag_override) return result.decision_tag_override
+  return classifyDecisionFromTags(result)
 }
 
 export type { VerificationResult }

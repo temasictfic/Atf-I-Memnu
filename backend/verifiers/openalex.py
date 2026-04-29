@@ -24,8 +24,7 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     A ±1-year publication-date filter is added when the source year is known.
 
     Polite-pool access: we attach a ``mailto`` only when the user has
-    configured a real contact email (via ``polite_pool_email`` setting, or
-    the legacy ``api_keys['openalex']`` slot forwarded as ``api_key``).
+    configured a real contact email (via ``polite_pool_email`` setting).
     Sending a fake mailto kept us in the anonymous pool *and* looked like
     spam, which is exactly what happened to our shared office IP.
     """

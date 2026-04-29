@@ -13,7 +13,7 @@
     "delete": "Delete"
   },
   "app": {
-    "windowTitle": "ARDEB · Reference Control System",
+    "windowTitle": "ARDEB · Source Control System",
     "tabs": {
       "parsing": "Parsing",
       "verification": "Verification",
@@ -94,9 +94,9 @@
       "maxApisLabel": "Max Concurrent API Calls",
       "maxApisDesc": "Parallel API requests limit",
       "concurrentSourcesLabel": "Concurrent Sources per PDF",
-      "concurrentSourcesDesc": "How many references verify in parallel for one PDF",
+      "concurrentSourcesDesc": "How many sources verify in parallel for one PDF",
       "autoScholarLabel": "Auto Google Scholar after verify",
-      "autoScholarDesc": "Automatically run Google Scholar scan for non-found sources after verification finishes"
+      "autoScholarDesc": "Automatically run Google Scholar scan for non-high sources after verification finishes"
     },
     "notes": {
       "title": "Export as PDF",
@@ -179,13 +179,13 @@
     "calloutTextColor": "Callout text color",
     "calloutFontSize": "Callout font size",
     "toggleBold": "Toggle bold",
-    "autoAnnotateUydurma": "Annotate Fabricated References",
-    "autoAnnotateUydurmaTitle": "Annotate every reference classified as Uydurma and add the callout text above below each",
-    "autoAnnotateUydurmaLabel": "Fabricated",
-    "autoAnnotateKunye": "Annotate Citation References",
-    "autoAnnotateKunyeTitle": "Annotate every reference classified as Künye and add the callout text above below each",
-    "autoAnnotateKunyeLabel": "Citation",
-    "autoAnnotateNoneMatched": "No matching references in this category.",
+    "autoAnnotateFabricated": "Annotate Fabricated Sources",
+    "autoAnnotateFabricatedTitle": "Annotate every source classified as Fabricated and add the callout text above below each",
+    "autoAnnotateFabricatedLabel": "Fabricated",
+    "autoAnnotateCitation": "Annotate Citation Sources",
+    "autoAnnotateCitationTitle": "Annotate every source classified as Citation and add the callout text above below each",
+    "autoAnnotateCitationLabel": "Citation",
+    "autoAnnotateNoneMatched": "No matching sources in this category.",
     "deleteNote": "Delete note",
     "export": "Export PDF",
     "exporting": "Exporting…",
@@ -206,7 +206,7 @@
       "title": "Title",
       "authors": "Authors",
       "year": "Year",
-      "source": "Source",
+      "journal": "Journal",
       "url": "URL",
       "method": "Method"
     },
@@ -238,13 +238,13 @@
     "urlStatus": "URL Status",
     "openSource": "Open source",
     "scrollToCard": "Scroll to card",
-    "markAsFound": "Mark as High",
-    "markAsProblematic": "Mark as Medium",
-    "markAsNotFound": "Mark as Low",
-    "enableRef": "Click to enable this reference",
-    "disableRef": "Click to disable this reference",
-    "verifyNonFound": "Verify only non-High sources",
-    "scholarScanNonFound": "Google Scholar scan for non-Found sources",
+    "markAsHigh": "Mark as High",
+    "markAsMedium": "Mark as Medium",
+    "markAsLow": "Mark as Low",
+    "enableRef": "Click to enable this source",
+    "disableRef": "Click to disable this source",
+    "verifyNonHigh": "Verify only non-High sources",
+    "scholarScanNonHigh": "Google Scholar scan for non-High sources",
     "scholarPreparing": "Preparing…",
     "scholarScanLabel": "Google Scholar Scan",
     "scholarVerified": "verified",
@@ -262,25 +262,25 @@
     "sort": {
       "byStatus": "Sort by status",
       "byName": "Sort by name",
-      "byFound": "Sort by High count",
-      "byProblematic": "Sort by Medium count",
-      "byNotFound": "Sort by Low count",
+      "byHigh": "Sort by High count",
+      "byMedium": "Sort by Medium count",
+      "byLow": "Sort by Low count",
       "byValid": "Sort by Valid count",
-      "byKunye": "Sort by Citation count",
-      "byUydurma": "Sort by Fabricated count",
+      "byCitation": "Sort by Citation count",
+      "byFabricated": "Sort by Fabricated count",
       "name": "Name",
       "status": "Match",
       "ref": "Number",
       "enabled": "Enabled",
       "label": "Sort",
-      "trust": "Decision"
+      "decision": "Decision"
     },
     "verify": "Verify",
     "verifyAll": "Verify All",
     "verifyAllMenu": "Verify All options",
     "verifyAllModes": {
       "all": "Verify all",
-      "nonFound": "Verify all non-High (~X)"
+      "nonHigh": "Verify all non-High (~X)"
     },
     "cutoff": {
       "labelAll": "All will run",
@@ -297,7 +297,7 @@
     "enableAll": "Enable All",
     "disableAll": "Disable All",
     "enabledCount": "{{count}}/{{total}} enabled",
-    "searchPlaceholder": "Search references...",
+    "searchPlaceholder": "Search sources...",
     "searchPlaceholderPdf": "Search {{name}}",
     "verificationComplete": "Verification complete: {{name}}",
     "browser": {
@@ -319,9 +319,9 @@
       "findClose": "Close find (Esc)"
     },
     "status": {
-      "found": "High",
-      "problematic": "Medium",
-      "not_found": "Low",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low",
       "pending": "Pending",
       "in_progress": "Searching…"
     },
@@ -330,20 +330,20 @@
     "validTagTooltip": "Citation metadata matches the discovered record",
     "citationTag": "Citation",
     "citationTagTooltip": "Real match found but citation details are off",
-    "uydurmaTag": "Fabricated",
-    "uydurmaTagTooltip": "No credible match — likely fabricated",
+    "fabricatedTag": "Fabricated",
+    "fabricatedTagTooltip": "No credible match — likely fabricated",
     "problemTag": {
       "!authors": "authors",
       "!doi/arXiv": "doi/arXiv",
       "!year": "year",
-      "!source": "source",
+      "!journal": "journal",
       "!title": "title"
     },
     "problemDesc": {
       "authors": "Authors disagree or missing on one side",
       "doi": "DOI/arXiv disagrees or missing on one side",
       "year": "Year disagrees (>1 yr) or missing on one side",
-      "source": "Venue (journal / conference / book) disagrees or missing on one side",
+      "journal": "Journal (journal / conference / book) disagrees or missing on one side",
       "title": "Title similarity below 85%"
     },
     "exportPdf": "Export Verification Results to PDF",
@@ -352,7 +352,7 @@
     "exportPdfBestMatch": "Best Match",
     "exportPdfProblems": "Problems",
     "exportPdfNoMatch": "No match found",
-    "exportPdfReferences": "references",
+    "exportPdfSources": "sources",
     "exportPdfCitationError": "CITATION ERROR"
   }
 }

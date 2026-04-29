@@ -1,6 +1,6 @@
 # Citation NER training pipeline
 
-Double fine-tunes `SIRIS-Lab/citation-parser-ENTITY` on the public SIRIS corpus plus a focused set of non-APA references labeled from the app's own parse cache, then exports the result to INT8 ONNX for fast CPU inference in the desktop backend.
+Double fine-tunes `SIRIS-Lab/citation-parser-ENTITY` on the public SIRIS corpus plus a focused set of non-APA sources labeled from the app's own parse cache, then exports the result to INT8 ONNX for fast CPU inference in the desktop backend.
 
 Why non-APA only: SIRIS's reported F1 is 0.99 on TITLE and 0.95 on AUTHORS because its training set is APA-heavy. Labeling more APA examples would be wasted effort. Non-APA formats (IEEE, Vancouver, Chicago notes, book chapters, informal Turkish styles) are where it loses points, and that is exactly what we target.
 
@@ -19,7 +19,7 @@ Why non-APA only: SIRIS's reported F1 is 0.99 on TITLE and 0.95 on AUTHORS becau
 backend/training/data/kaynaklar/input/<pdf_name>.json
 ```
 
-Each file is the app's per-PDF parse cache. The filter script reads whatever shape it finds as long as each reference has a `raw_text` field — it duck-types common wrappers (`sources`, `references`, top-level list).
+Each file is the app's per-PDF parse cache. The filter script reads whatever shape it finds as long as each source has a `raw_text` field — it duck-types common wrappers (`sources`, `sources`, top-level list).
 
 ### 2. Filter candidates
 
@@ -27,9 +27,9 @@ Each file is the app's per-PDF parse cache. The filter script reads whatever sha
 python -m backend.training.scripts.filter_candidates
 ```
 
-Applies `strip_reference_noise` (from `backend/utils/text_cleaning.py` — the same function the live app uses) to every reference, buckets each stripped text as `apa_like` or `non_apa`, and writes:
+Applies `strip_source_noise` (from `backend/utils/text_cleaning.py` — the same function the live app uses) to every source, buckets each stripped text as `apa_like` or `non_apa`, and writes:
 - `data/kaynaklar/to_label.jsonl` — non-APA candidates for labeling
-- `data/kaynaklar/skipped_apa.jsonl` — APA-bucket references, for your audit
+- `data/kaynaklar/skipped_apa.jsonl` — APA-bucket sources, for your audit
 
 Sanity-check the split by eyeballing 10 random lines from each file. If APA is eating non-APA cases, tighten the regex in `filter_candidates.py` and rerun.
 

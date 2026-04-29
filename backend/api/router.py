@@ -30,11 +30,11 @@ async def health():
 async def ready():
     """Readiness probe: 200 once preload_pipeline() has finished trying.
 
-    Covers the first-launch-after-auto-update window where DirectML and
-    the 125 MB ONNX model are still warming up. The main process polls
-    this endpoint before unblocking the UI so the user never sees the
-    verify button while NER extraction would silently fall through to
-    regex on garbage queries.
+    Covers the first-launch-after-auto-update window where the 125 MB
+    ONNX model is still warming up. The main process polls this endpoint
+    before unblocking the UI so the user never sees the verify button
+    while NER extraction would silently fall through to regex on garbage
+    queries.
 
     Returns 200 with a descriptive `ner` state field when preload is
     done, 503 while it is still loading. The caller can surface the

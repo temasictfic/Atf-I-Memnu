@@ -1,6 +1,6 @@
 """Labeling helper (internal tool, not part of the runbook).
 
-Takes a dict mapping reference id -> list of (substring, label) annotations,
+Takes a dict mapping source id -> list of (substring, label) annotations,
 looks each substring up in the pre-stripped text of `to_label.jsonl`,
 computes offsets, ensures no overlap, and appends validator-clean records
 to `labeled.jsonl`. Run the validator on the output file at the end.

@@ -26,13 +26,13 @@ _ARXIV_FROM_URL = re.compile(r"https?://arxiv\.org/abs/([\w./-]+)")
 
 
 class ParsedSource(BaseModel):
-    """Structured fields extracted from raw reference text."""
+    """Structured fields extracted from raw source text."""
     raw_text: str
     title: str = ""
     authors: list[str] = []
     year: int | None = None
     url: str | None = None  # doi/arxiv built URL or first extracted URL
-    source: str | None = None  # journal/conference/publisher name
+    journal: str | None = None  # journal/conference/publisher name
     citation_format: str | None = None  # "APA", "MLA", "Chicago", "Harvard", "Vancouver", "IEEE"
     extraction_method: str = "regex"  # "regex" or "ner"
     parse_confidence: float = 0.0

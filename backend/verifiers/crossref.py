@@ -104,14 +104,14 @@ async def search(source: ParsedSource) -> MatchResult | None:
     if (
         author_query
         and source.parse_confidence >= HIGH_PARSE_CONFIDENCE_THRESHOLD
-        and not _looks_like_editor_reference(source.raw_text)
+        and not _looks_like_editor_source(source.raw_text)
     ):
         params["query.author"] = author_query
 
     # Add container-title to separate editions published by different houses
     # under slightly different encyclopedia/journal titles.
-    if source.source and _is_specific_container_title(source.source):
-        params["query.container-title"] = source.source
+    if source.journal and _is_specific_container_title(source.journal):
+        params["query.container-title"] = source.journal
 
     # Year-range filter (±1 year) excludes papers from other editions whose
     # publication year differs from the cited one.  A tolerance of one year
@@ -139,7 +139,7 @@ async def search(source: ParsedSource) -> MatchResult | None:
     # threshold the orchestrator uses to cancel sibling verifiers, and
     # it covers the common case where the very first variant already
     # returns a perfect match via Crossref's own relevance ranker. On
-    # ambiguous references where no variant crosses the bar, every
+    # ambiguous sources where no variant crosses the bar, every
     # variant still runs and the best scoring result wins — exactly the
     # behaviour we had before, just skipped for the easy cases.
     best: MatchResult | None = None
@@ -260,7 +260,7 @@ def _extract_family_name(author: str) -> str:
     return candidate
 
 
-def _looks_like_editor_reference(raw_text: str) -> bool:
+def _looks_like_editor_source(raw_text: str) -> bool:
     """Detect book/editor citations where author filtering is unreliable."""
     text = (raw_text or "").lower()
     return bool(re.search(r"\b(?:ed\.|eds\.|editor|editors)\b", text))

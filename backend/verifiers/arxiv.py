@@ -38,7 +38,7 @@ def _build_arxiv_query(source: ParsedSource) -> str:
 
     Title-only by design. The previous implementation optionally ANDed
     ``au:{lastname}`` onto the query, but our author extraction depends
-    on NER output being in ``"Family, Given"`` shape; for references
+    on NER output being in ``"Family, Given"`` shape; for sources
     parsed as ``"Given Family"`` the splitter returns the whole string
     and arXiv's strict ``au:`` operator filters out what would otherwise
     be correct matches. On distinctive arXiv titles the author filter
@@ -81,14 +81,14 @@ def _strip_arxiv_version(url: str) -> str:
 async def search(source: ParsedSource) -> MatchResult | None:
     """Search arXiv — direct ID lookup first, title search as fallback.
 
-    When the reference text already contains an arXiv URL
+    When the source text already contains an arXiv URL
     (e.g. https://arxiv.org/abs/2010.11929) we extract the ID and call the
     arXiv API with ``id_list`` for a guaranteed exact match, bypassing the
     fragile title-based Lucene query entirely.  This is by far the most
     common case for arXiv citations and produces a score of 1.0 via the
     arXiv-ID branch of ``_url_match_score`` in match_scorer.py.
 
-    The title search is kept as a fallback for references that cite an arXiv
+    The title search is kept as a fallback for sources that cite an arXiv
     paper without including its URL.
 
     Rate limiting: arXiv recommends ≤ 3 req/s.  With up to 3 sources

@@ -67,7 +67,7 @@ def find_first_url(text: str | None) -> str | None:
 def find_best_url(text: str | None) -> str | None:
     """Find the most specific URL in free text.
 
-    A reference often contains multiple URLs (a bare domain followed by a
+    A source often contains multiple URLs (a bare domain followed by a
     deeper link, or several archive copies). The longest one is almost
     always the most useful — bare domains contribute nothing the deeper
     link doesn't.

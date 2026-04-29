@@ -1,4 +1,4 @@
-"""Read cached per-PDF JSONs, strip reference noise, and bucket each reference
+"""Read cached per-PDF JSONs, strip source noise, and bucket each source
 as APA-like (skip) or non-APA (candidate for labeling).
 
 Writes `to_label.jsonl` (non-APA) and `skipped_apa.jsonl` (audit trail) under
@@ -15,20 +15,20 @@ from pathlib import Path
 from typing import Iterator
 
 try:
-    from backend.utils.text_cleaning import strip_reference_noise
+    from backend.utils.text_cleaning import strip_source_noise
 except ModuleNotFoundError:
     # Allow running with cwd = repo root even if backend isn't installed as package
     repo_root = Path(__file__).resolve().parents[3]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    from backend.utils.text_cleaning import strip_reference_noise  # type: ignore
+    from backend.utils.text_cleaning import strip_source_noise  # type: ignore
 
 
 DEFAULT_INPUT_DIR = Path("backend/training/data/kaynaklar/input")
 DEFAULT_OUTPUT_DIR = Path("backend/training/data/kaynaklar")
 
 # APA-like signals — a parenthesized 4-digit year appearing reasonably early
-# in the (already pre-stripped) reference text. Conservative: we only bucket
+# in the (already pre-stripped) source text. Conservative: we only bucket
 # into apa_like when we positively match this, otherwise default to non_apa.
 _APA_PAREN_YEAR = re.compile(r"\([12]\d{3}[a-z]?\)")
 _APA_WINDOW_CHARS = 200
@@ -39,7 +39,7 @@ _MIN_REF_TEXT_LEN = 20
 
 
 def _get_ref_text(d: dict) -> str | None:
-    """Return the first non-empty reference-text-like field, or None."""
+    """Return the first non-empty source-text-like field, or None."""
     for key in _TEXT_KEYS:
         v = d.get(key)
         if isinstance(v, str) and len(v.strip()) >= _MIN_REF_TEXT_LEN:
@@ -47,10 +47,10 @@ def _get_ref_text(d: dict) -> str | None:
     return None
 
 
-def walk_references(obj: object) -> Iterator[dict]:
-    """Yield every dict in the tree that looks like a reference record.
+def walk_sources(obj: object) -> Iterator[dict]:
+    """Yield every dict in the tree that looks like a source record.
 
-    A reference record is a dict with a `raw_text` or `text` field containing
+    A source record is a dict with a `raw_text` or `text` field containing
     a string at least 20 characters long. The length threshold keeps us from
     accidentally picking up nested structures (bboxes, metadata) that happen
     to carry a `text` key.
@@ -60,14 +60,14 @@ def walk_references(obj: object) -> Iterator[dict]:
             yield obj
             return  # don't recurse into a record's own children
         for v in obj.values():
-            yield from walk_references(v)
+            yield from walk_sources(v)
     elif isinstance(obj, list):
         for item in obj:
-            yield from walk_references(item)
+            yield from walk_sources(item)
 
 
 def classify(stripped_text: str) -> tuple[str, str]:
-    """Return (bucket, reason) for a pre-stripped reference text."""
+    """Return (bucket, reason) for a pre-stripped source text."""
     window = stripped_text[:_APA_WINDOW_CHARS]
     if _APA_PAREN_YEAR.search(window):
         return "apa_like", "paren_year_early"
@@ -90,11 +90,11 @@ def process_file(
     dupes = 0
     pdf_name = json_path.stem
 
-    for idx, ref in enumerate(walk_references(data)):
+    for idx, ref in enumerate(walk_sources(data)):
         raw = _get_ref_text(ref)
         if raw is None:
             continue
-        stripped = strip_reference_noise(raw)
+        stripped = strip_source_noise(raw)
         if not stripped or len(stripped) < 10:
             continue
 

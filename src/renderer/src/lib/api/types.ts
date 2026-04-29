@@ -47,20 +47,20 @@ export interface ParsedSource {
   authors: string[]
   year?: number
   url?: string
-  source?: string
+  journal?: string
   citation_format?: string
   extraction_method: string
   parse_confidence: number
 }
 
 // Verification types
-export type VerifyStatus = 'found' | 'problematic' | 'not_found' | 'pending' | 'in_progress'
+export type VerifyStatus = 'high' | 'medium' | 'low' | 'pending' | 'in_progress'
 
-export type ProblemTag = '!authors' | '!doi/arXiv' | '!year' | '!source' | '!title'
+export type ProblemTag = '!authors' | '!doi/arXiv' | '!year' | '!journal' | '!title'
 
-export type TrustTag = 'clean' | 'künye' | 'uydurma'
+export type DecisionTag = 'valid' | 'citation' | 'fabricated'
 
-export type TagKey = 'authors' | 'year' | 'title' | 'source' | 'doi/arXiv'
+export type TagKey = 'authors' | 'year' | 'title' | 'journal' | 'doi/arXiv'
 
 export interface MatchResult {
   database: string
@@ -84,9 +84,9 @@ export interface VerificationResult {
   source_id: string
   status: VerifyStatus
   problem_tags: string[]
-  trust_tag?: TrustTag
-  // Three-state user override for the trust pill. null = use trust_tag.
-  trust_tag_override?: TrustTag | null
+  decision_tag?: DecisionTag
+  // Three-state user override for the decision pill. null = use decision_tag.
+  decision_tag_override?: DecisionTag | null
   tag_overrides?: Record<string, boolean>
   url_liveness: Record<string, boolean>
   best_match?: MatchResult
@@ -99,9 +99,9 @@ export interface VerificationResult {
 
 export interface PdfVerificationSummary {
   pdf_id: string
-  found: number
-  problematic: number
-  not_found: number
+  high: number
+  medium: number
+  low: number
   in_progress: number
   total: number
   completed: boolean
@@ -128,8 +128,8 @@ export interface AppSettings {
   max_concurrent_sources_per_pdf: number
   auto_scholar_after_verify?: boolean
   language?: 'tr' | 'en'
-  auto_callout_text_uydurma?: string
-  auto_callout_text_kunye?: string
+  auto_callout_text_fabricated?: string
+  auto_callout_text_citation?: string
 }
 
 // WebSocket event types
@@ -150,7 +150,7 @@ export interface LogEntry {
 }
 
 // Verification progress tracking
-export type DbCheckStatus = 'checking' | 'found' | 'not_found' | 'timeout' | 'error' | 'rate_limited' | 'skipped'
+export type DbCheckStatus = 'checking' | 'high' | 'low' | 'timeout' | 'error' | 'rate_limited' | 'skipped'
 
 export interface DbCheckEntry {
   name: string

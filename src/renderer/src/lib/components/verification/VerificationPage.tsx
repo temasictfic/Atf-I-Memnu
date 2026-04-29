@@ -9,15 +9,15 @@ import { useScholarScanStore } from '../../stores/scholar-scan-store'
 import { scholarScanner, PROBE_PAGE_STATE_SCRIPT, buildSearchUrl } from '../../services/scholar-scanner'
 import type { VerificationResult, MatchResult, DbCheckEntry, TagKey } from '../../api/types'
 import { api } from '../../api/rest-client'
-import { TAG_ORDER, effectiveTagOn, effectiveTrustTag } from '../../verification/tagState'
-import { sanitizeReferenceText, sanitizeReferenceTextForSearch } from '../../utils/reference-text'
+import { TAG_ORDER, effectiveTagOn, effectiveDecisionTag } from '../../verification/tagState'
+import { sanitizeSourceText, sanitizeSourceTextForSearch } from '../../utils/source-text'
 import { buildDefaultSavePath } from '../../utils/path'
 import {
   dbScoreColor,
   dbScoreIcon,
   verifyStatusColor as statusColor,
 } from '../../utils/status-helpers'
-import { STATUS_HEX, TRUST_HEX } from '../../constants/colors'
+import { STATUS_HEX, DECISION_HEX } from '../../constants/colors'
 import {
   BROWSER_ZOOM_STEP,
   MAX_BROWSER_ZOOM,
@@ -31,7 +31,7 @@ function problemTagDescription(tag: string): string {
     case '!authors': return i18n.t('verification.problemDesc.authors')
     case '!doi/arXiv': return i18n.t('verification.problemDesc.doi')
     case '!year': return i18n.t('verification.problemDesc.year')
-    case '!source': return i18n.t('verification.problemDesc.source')
+    case '!journal': return i18n.t('verification.problemDesc.journal')
     case '!title': return i18n.t('verification.problemDesc.title')
     default: return tag
   }
@@ -45,12 +45,12 @@ function problemTagLabel(tag: string): string {
 
 
 function googleSearchUrl(text: string): string {
-  const cleaned = sanitizeReferenceTextForSearch(text)
+  const cleaned = sanitizeSourceTextForSearch(text)
   return `https://www.google.com/search?q=${encodeURIComponent(cleaned)}`
 }
 
 function buildDbSearchUrl(db: string, text: string): string {
-  const cleaned = sanitizeReferenceTextForSearch(text)
+  const cleaned = sanitizeSourceTextForSearch(text)
   if (!cleaned) return ''
   const q = encodeURIComponent(cleaned)
   const qPlus = q.replace(/%20/g, '+')
@@ -69,8 +69,8 @@ function buildDbSearchUrl(db: string, text: string): string {
   return urls[db] ?? ''
 }
 
-const statusOrder: Record<string, number> = { found: 0, problematic: 1, not_found: 2, in_progress: 3, pending: 4 }
-type CardSortMode = 'status' | 'ref' | 'enabled' | 'trust'
+const statusOrder: Record<string, number> = { high: 0, medium: 1, low: 2, in_progress: 3, pending: 4 }
+type CardSortMode = 'status' | 'ref' | 'enabled' | 'decision'
 
 export default function VerificationPage() {
   const { t } = useTranslation()
@@ -127,15 +127,15 @@ export default function VerificationPage() {
   // Snapshot of the left-panel count pills captured whenever a PDF finishes a
   // complete verification run. While a re-verify is in flight on a PDF that
   // already has a complete snapshot, we render this snapshot instead of the
-  // live (in-progress, decrementing) counts so the user's reference point
+  // live (in-progress, decrementing) counts so the user's source point
   // doesn't jitter until the new run finishes or is stopped.
   const frozenPdfCountsRef = useRef<Record<string, {
-    found: number
-    problematic: number
-    not_found: number
-    trustValid: number
-    trustKunye: number
-    trustUydurma: number
+    high: number
+    medium: number
+    low: number
+    decisionValid: number
+    decisionCitation: number
+    decisionFabricated: number
   }>>({})
   const currentSummary = useMemo(() => (effectivePdfId ? summaries[effectivePdfId] : undefined), [summaries, effectivePdfId])
   const orderedSourceIds = useMemo(() => (effectivePdfId ? (sourceOrder[effectivePdfId] ?? []) : []), [sourceOrder, effectivePdfId])
@@ -177,7 +177,7 @@ export default function VerificationPage() {
   // PDFs started via single-PDF verify (not Verify All) — auto-run GS when done
   const autoGsPdfIdsRef = useRef<Set<string>>(new Set())
   // PDFs for which GS scan must run unconditionally after verification (ignoring setting).
-  // Used by the "~X" (verify non-found) button.
+  // Used by the "~X" (verify non-high) button.
   const forceGsPdfIdsRef = useRef<Set<string>>(new Set())
   // Single-source reverify runs awaiting completion to trigger a per-source GS scan.
   // Maps sourceId -> pdfId.
@@ -189,9 +189,9 @@ export default function VerificationPage() {
   const verifyAllQueueRef = useRef<string[]>([])
   const verifyAllCurrentRef = useRef<string | null>(null)
   const verifyAllActiveRef = useRef(false)
-  const verifyAllModeRef = useRef<'all' | 'nonFound'>('all')
+  const verifyAllModeRef = useRef<'all' | 'nonHigh'>('all')
   const [verifyAllActive, setVerifyAllActive] = useState(false)
-  const [lastVerifyAllMode, setLastVerifyAllMode] = useState<'all' | 'nonFound'>('all')
+  const [lastVerifyAllMode, setLastVerifyAllMode] = useState<'all' | 'nonHigh'>('all')
   const [exportingReport, setExportingReport] = useState(false)
 
   // Fire completion-time side effects (toast + auto Scholar scan) when a
@@ -277,7 +277,7 @@ export default function VerificationPage() {
       const src = useSourcesStore.getState().sourcesByPdf[next] ?? []
       if (src.length === 0) continue
 
-      if (verifyAllModeRef.current === 'nonFound') {
+      if (verifyAllModeRef.current === 'nonHigh') {
         const store = useVerificationStore.getState()
         // Ensure cached results are in memory before filtering — a PDF the user
         // hasn't opened this session may have empty resultsByPdf, racing the
@@ -285,18 +285,18 @@ export default function VerificationPage() {
         await store.loadResults(next)
         const { resultsByPdf, enabledSources } = useVerificationStore.getState()
         const pdfResults = resultsByPdf[next] ?? {}
-        const hasNonFound = src.some(s => {
+        const hasNonHigh = src.some(s => {
           if (enabledSources[s.id] === false) return false
-          return pdfResults[s.id]?.status !== 'found'
+          return pdfResults[s.id]?.status !== 'high'
         })
-        if (!hasNonFound) continue
+        if (!hasNonHigh) continue
 
         store.initSourceVerifyState(next, src)
         verifyAllCurrentRef.current = next
         selectPdf(next)
         pendingVerifyPdfIdsRef.current.add(next)
         forceGsPdfIdsRef.current.add(next)
-        await useVerificationStore.getState().startVerificationNonFoundForPdf(next)
+        await useVerificationStore.getState().startVerificationNonHighForPdf(next)
         return
       }
 
@@ -337,32 +337,32 @@ export default function VerificationPage() {
   // --- Left panel sorting (persisted in store) ---
   const { togglePdfSort } = useVerificationStore.getState()
 
-  // Per-PDF trust counts, computed from the in-memory results map.
-  // Kept in sync with the left-panel count pills and the new trust sorts.
-  const trustCountsByPdf = useMemo(() => {
-    const out: Record<string, { valid: number; kunye: number; uydurma: number }> = {}
+  // Per-PDF decision counts, computed from the in-memory results map.
+  // Kept in sync with the left-panel count pills and the new decision sorts.
+  const decisionCountsByPdf = useMemo(() => {
+    const out: Record<string, { valid: number; citation: number; fabricated: number }> = {}
     for (const pdfId of Object.keys(resultsByPdf)) {
-      let v = 0, k = 0, u = 0
+      let v = 0, c = 0, f = 0
       for (const r of Object.values(resultsByPdf[pdfId] ?? {})) {
         // Skip sources still mid-verification — they'd otherwise get
-        // classified as Uydurma before the best match lands.
+        // classified as Fabricated before the best match lands.
         if (r.status === 'in_progress' || r.status === 'pending') continue
         // Cancelling a Verify All run flips every in-flight source to
-        // not_found optimistically. Sources the backend never got to touch
+        // low optimistically. Sources the backend never got to touch
         // arrive with an empty databases_searched and no best_match, which
-        // would otherwise inflate the Uydurma pill to the full ref count
+        // would otherwise inflate the Fabricated pill to the full ref count
         // until the PDF is reopened and loadResults re-syncs.
         if (
-          r.status === 'not_found'
+          r.status === 'low'
           && !r.best_match
           && (r.databases_searched?.length ?? 0) === 0
         ) continue
-        const tt = effectiveTrustTag(r)
-        if (tt === 'clean') v++
-        else if (tt === 'künye') k++
-        else if (tt === 'uydurma') u++
+        const tt = effectiveDecisionTag(r)
+        if (tt === 'valid') v++
+        else if (tt === 'citation') c++
+        else if (tt === 'fabricated') f++
       }
-      out[pdfId] = { valid: v, kunye: k, uydurma: u }
+      out[pdfId] = { valid: v, citation: c, fabricated: f }
     }
     return out
   }, [resultsByPdf])
@@ -379,14 +379,14 @@ export default function VerificationPage() {
       const verifying = pdfResults ? Object.values(pdfResults).some(r => r.status === 'in_progress') : false
       const frozen = verifying ? frozenPdfCountsRef.current[pdfId] : undefined
       const s = summaries[pdfId]
-      const t = trustCountsByPdf[pdfId] ?? { valid: 0, kunye: 0, uydurma: 0 }
+      const t = decisionCountsByPdf[pdfId] ?? { valid: 0, citation: 0, fabricated: 0 }
       return {
-        found: frozen ? frozen.found : (s?.found ?? 0),
-        problematic: frozen ? frozen.problematic : (s?.problematic ?? 0),
-        not_found: frozen ? frozen.not_found : (s?.not_found ?? 0),
-        valid: frozen ? frozen.trustValid : t.valid,
-        kunye: frozen ? frozen.trustKunye : t.kunye,
-        uydurma: frozen ? frozen.trustUydurma : t.uydurma,
+        high: frozen ? frozen.high : (s?.high ?? 0),
+        medium: frozen ? frozen.medium : (s?.medium ?? 0),
+        low: frozen ? frozen.low : (s?.low ?? 0),
+        valid: frozen ? frozen.decisionValid : t.valid,
+        citation: frozen ? frozen.decisionCitation : t.citation,
+        fabricated: frozen ? frozen.decisionFabricated : t.fabricated,
       }
     }
     list.sort((a, b) => {
@@ -412,16 +412,16 @@ export default function VerificationPage() {
       }
       const va = getSortValues(a.id)
       const vb = getSortValues(b.id)
-      if (pdfSortKey === 'found') return dir * (va.found - vb.found)
-      if (pdfSortKey === 'problematic') return dir * (va.problematic - vb.problematic)
-      if (pdfSortKey === 'not_found') return dir * (va.not_found - vb.not_found)
+      if (pdfSortKey === 'high') return dir * (va.high - vb.high)
+      if (pdfSortKey === 'medium') return dir * (va.medium - vb.medium)
+      if (pdfSortKey === 'low') return dir * (va.low - vb.low)
       if (pdfSortKey === 'valid') return dir * (va.valid - vb.valid)
-      if (pdfSortKey === 'kunye') return dir * (va.kunye - vb.kunye)
-      if (pdfSortKey === 'uydurma') return dir * (va.uydurma - vb.uydurma)
+      if (pdfSortKey === 'citation') return dir * (va.citation - vb.citation)
+      if (pdfSortKey === 'fabricated') return dir * (va.fabricated - vb.fabricated)
       return 0
     })
     return list
-  }, [pdfs, pdfSortKey, pdfSortAsc, summaries, trustCountsByPdf, resultsByPdf])
+  }, [pdfs, pdfSortKey, pdfSortAsc, summaries, decisionCountsByPdf, resultsByPdf])
 
   // --- Center panel sorting (persisted in store) ---
   const { toggleCardSort } = useVerificationStore.getState()
@@ -438,14 +438,14 @@ export default function VerificationPage() {
       if (cardSortKey === 'ref') {
         return dir * ((a.source.ref_number ?? 999) - (b.source.ref_number ?? 999))
       }
-      if (cardSortKey === 'trust') {
-        // Order values chosen so that ascending (dir=+1) puts Uydurma first —
+      if (cardSortKey === 'decision') {
+        // Order values chosen so that ascending (dir=+1) puts Fabricated first —
         // but default direction is desc (asc=false, dir=-1), which flips to
-        // Geçerli-first. Invert by using the complement so the DEFAULT click
-        // lands on Uydurma → Künye → Geçerli.
-        const trustOrder: Record<string, number> = { uydurma: 0, 'künye': 1, clean: 2 }
-        const ao = trustOrder[effectiveTrustTag(a.result)] ?? 99
-        const bo = trustOrder[effectiveTrustTag(b.result)] ?? 99
+        // Valid-first. Invert by using the complement so the DEFAULT click
+        // lands on Fabricated → Citation → Valid.
+        const decisionOrder: Record<string, number> = { fabricated: 0, citation: 1, valid: 2 }
+        const ao = decisionOrder[effectiveDecisionTag(a.result)] ?? 99
+        const bo = decisionOrder[effectiveDecisionTag(b.result)] ?? 99
         return -dir * (ao - bo)
       }
       // enabled: enabled first when ascending
@@ -576,7 +576,7 @@ export default function VerificationPage() {
   }, [resultsByPdf])
 
   // Refresh the frozen snapshot whenever a PDF is idle AND its counts cover
-  // the full reference total — that's the moment the pills show a complete
+  // the full source total — that's the moment the pills show a complete
   // run. The snapshot is then rendered in place of the live counts while a
   // re-verify is running (see the left-panel render below).
   useEffect(() => {
@@ -584,21 +584,21 @@ export default function VerificationPage() {
       if (isPdfVerifying(pdf.id)) continue
       const summary = summaries[pdf.id]
       if (!summary || summary.total <= 0) continue
-      if (summary.found + summary.problematic + summary.not_found < summary.total) continue
-      const trust = trustCountsByPdf[pdf.id] ?? { valid: 0, kunye: 0, uydurma: 0 }
+      if (summary.high + summary.medium + summary.low < summary.total) continue
+      const decision = decisionCountsByPdf[pdf.id] ?? { valid: 0, citation: 0, fabricated: 0 }
       frozenPdfCountsRef.current[pdf.id] = {
-        found: summary.found,
-        problematic: summary.problematic,
-        not_found: summary.not_found,
-        trustValid: trust.valid,
-        trustKunye: trust.kunye,
-        trustUydurma: trust.uydurma,
+        high: summary.high,
+        medium: summary.medium,
+        low: summary.low,
+        decisionValid: decision.valid,
+        decisionCitation: decision.citation,
+        decisionFabricated: decision.fabricated,
       }
     }
-  }, [pdfs, summaries, trustCountsByPdf, isPdfVerifying])
+  }, [pdfs, summaries, decisionCountsByPdf, isPdfVerifying])
 
   // Actions
-  async function handleStartOrCancel(mode: 'all' | 'nonFound' = 'all') {
+  async function handleStartOrCancel(mode: 'all' | 'nonHigh' = 'all') {
     if (verifyAllActiveRef.current || isAnyVerifying) {
       // Stop the queue and cancel the in-flight PDF (if any).
       verifyAllActiveRef.current = false
@@ -654,14 +654,14 @@ export default function VerificationPage() {
     }
   }
 
-  async function handleVerifyNonFoundPdf(pdfId: string) {
+  async function handleVerifyNonHighPdf(pdfId: string) {
     if (isPdfVerifying(pdfId)) return
     await loadSourcesFn(pdfId)
     const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
     useVerificationStore.getState().initSourceVerifyState(pdfId, src)
     pendingVerifyPdfIdsRef.current.add(pdfId)
     forceGsPdfIdsRef.current.add(pdfId)
-    await useVerificationStore.getState().startVerificationNonFoundForPdf(pdfId)
+    await useVerificationStore.getState().startVerificationNonHighForPdf(pdfId)
   }
 
   async function handleReverifyOrCancelSource() {
@@ -677,7 +677,7 @@ export default function VerificationPage() {
   }
 
   // When a single-source reverify finishes, trigger a per-source Scholar scan
-  // if the final status is not 'found'.
+  // if the final status is not 'high'.
   useEffect(() => {
     for (const [sourceId, pdfId] of Array.from(pendingSingleSourceGsRef.current)) {
       const r = resultsByPdf[pdfId]?.[sourceId]
@@ -692,7 +692,7 @@ export default function VerificationPage() {
     }
   }, [resultsByPdf])
 
-  async function handleOverride(status: 'found' | 'problematic' | 'not_found') {
+  async function handleOverride(status: 'high' | 'medium' | 'low') {
     if (!effectivePdfId || !selectedSourceId || !currentResult) return
     pendingScrollCardIdRef.current = selectedSourceId
     await useVerificationStore.getState().overrideStatus(effectivePdfId, selectedSourceId, status)
@@ -724,7 +724,7 @@ export default function VerificationPage() {
       if (!target) return
 
       // Respect the middle-pane sort order (sorted but unfiltered), and
-      // exclude disabled references so the report reflects what the user
+      // exclude disabled sources so the report reflects what the user
       // actually verified/kept.
       const sortedSourcesForExport = sortedSourceCards
         .filter(c => c.enabled)
@@ -743,8 +743,8 @@ export default function VerificationPage() {
           const cacheKey = `${s.id}::${refText}`
           const extractedTitle = parsedTitles[cacheKey]?.trim() ?? ''
           const searchText = extractedTitle
-            ? sanitizeReferenceTextForSearch(extractedTitle)
-            : sanitizeReferenceTextForSearch(refText)
+            ? sanitizeSourceTextForSearch(extractedTitle)
+            : sanitizeSourceTextForSearch(refText)
           if (!scholarUrl && searchText) scholarUrl = buildDbSearchUrl('Google Scholar', searchText)
           if (!googleUrl && searchText) googleUrl = googleSearchUrl(searchText)
         }
@@ -753,8 +753,8 @@ export default function VerificationPage() {
           text: refText,
           status: r?.status ?? 'pending',
           problemTags: r?.problem_tags ?? [],
-          trustTag: (r?.trust_tag ?? 'clean') as 'clean' | 'künye' | 'uydurma',
-          trustTagOverride: (r?.trust_tag_override ?? null) as 'clean' | 'künye' | 'uydurma' | null,
+          decisionTag: (r?.decision_tag ?? 'valid') as 'valid' | 'citation' | 'fabricated',
+          decisionTagOverride: (r?.decision_tag_override ?? null) as 'valid' | 'citation' | 'fabricated' | null,
           tagOverrides: r?.tag_overrides,
           scholarUrl,
           googleUrl,
@@ -774,30 +774,30 @@ export default function VerificationPage() {
         }
       })
 
-      const baseSummary = summaries[effectivePdfId] ?? { found: 0, problematic: 0, not_found: 0, total: sortedSourcesForExport.length }
-      const effectiveTrust = (r: typeof reportSources[number]) => r.trustTagOverride ?? r.trustTag
-      const validCount = reportSources.filter(r => effectiveTrust(r) === 'clean').length
-      const kunyeCount = reportSources.filter(r => effectiveTrust(r) === 'künye').length
-      const uydurmaCount = reportSources.filter(r => effectiveTrust(r) === 'uydurma').length
+      const baseSummary = summaries[effectivePdfId] ?? { high: 0, medium: 0, low: 0, total: sortedSourcesForExport.length }
+      const effectiveDecision = (r: typeof reportSources[number]) => r.decisionTagOverride ?? r.decisionTag
+      const validCount = reportSources.filter(r => effectiveDecision(r) === 'valid').length
+      const citationCount = reportSources.filter(r => effectiveDecision(r) === 'citation').length
+      const fabricatedCount = reportSources.filter(r => effectiveDecision(r) === 'fabricated').length
 
       const { generateVerificationReport } = await import('../../pdf/verification-report-writer')
       const pdfBytes = await generateVerificationReport({
         pdfName,
-        summary: { ...baseSummary, valid: validCount, kunye: kunyeCount, uydurma: uydurmaCount },
+        summary: { ...baseSummary, valid: validCount, citation: citationCount, fabricated: fabricatedCount },
         sources: reportSources,
         labels: {
           header: t('verification.exportPdfHeader'),
-          found: t('verification.status.found'),
-          problematic: t('verification.status.problematic'),
-          notFound: t('verification.status.not_found'),
+          high: t('verification.status.high'),
+          medium: t('verification.status.medium'),
+          low: t('verification.status.low'),
           bestMatch: t('verification.exportPdfBestMatch'),
           problems: t('verification.exportPdfProblems'),
           noMatch: t('verification.exportPdfNoMatch'),
-          references: t('verification.exportPdfReferences'),
+          sourcesLabel: t('verification.exportPdfSources'),
           titleTag: t('verification.titleShort'),
           validTag: t('verification.validTag'),
           citationTag: t('verification.citationTag'),
-          uydurmaTag: t('verification.uydurmaTag'),
+          fabricatedTag: t('verification.fabricatedTag'),
           citationError: t('verification.exportPdfCitationError'),
           tagLabel: (tag: string) => problemTagLabel(tag),
         },
@@ -1007,11 +1007,11 @@ export default function VerificationPage() {
   const selectedSearchText = useMemo(() => {
     if (!selectedSourceId) return ''
     const text = verifyTexts[selectedSourceId] ?? currentSource?.text ?? ''
-    return sanitizeReferenceTextForSearch(text)
+    return sanitizeSourceTextForSearch(text)
   }, [selectedSourceId, verifyTexts, currentSource])
 
-  // Titles parsed from each source's raw reference text via the NER extractor.
-  // Keyed by `${sourceId}::${rawText}` so edits to the reference text trigger a
+  // Titles parsed from each source's raw source text via the NER extractor.
+  // Keyed by `${sourceId}::${rawText}` so edits to the source text trigger a
   // re-extraction instead of returning a stale cached title.
   const [parsedTitles, setParsedTitles] = useState<Record<string, string>>({})
 
@@ -1043,11 +1043,11 @@ export default function VerificationPage() {
   }, [selectedSourceId, verifyTexts, currentSource, parsedTitles])
 
   // External searches (Google Scholar / Google Search / DB result links) use
-  // the title parsed from the raw reference text — falling back to the raw
-  // reference text itself when no parsed title is available yet.
+  // the title parsed from the raw source text — falling back to the raw
+  // source text itself when no parsed title is available yet.
   const selectedTitleOrText = useMemo(() => {
     const title = selectedParsedTitle.trim()
-    if (title) return sanitizeReferenceTextForSearch(title)
+    if (title) return sanitizeSourceTextForSearch(title)
     return selectedSearchText
   }, [selectedParsedTitle, selectedSearchText])
 
@@ -1793,7 +1793,7 @@ export default function VerificationPage() {
             )}
             {verifyAllMenuOpen && (
               <ul className={styles['start-menu']} role="menu">
-                {(['all', 'nonFound'] as const).map(mode => (
+                {(['all', 'nonHigh'] as const).map(mode => (
                   <li key={mode} role="none">
                     <button
                       type="button"
@@ -1823,12 +1823,12 @@ export default function VerificationPage() {
               {t('verification.sort.name')}{pdfSortKey === 'name' && <span className={styles['sort-arrow']}>{pdfSortAsc ? '\u2191' : '\u2193'}</span>}
             </button>
             {([
-              { key: 'found',       color: STATUS_HEX.found,         titleKey: 'verification.sort.byFound' },
-              { key: 'problematic', color: STATUS_HEX.problematic,   titleKey: 'verification.sort.byProblematic' },
-              { key: 'not_found',   color: STATUS_HEX.not_found,     titleKey: 'verification.sort.byNotFound' },
-              { key: 'valid',       color: TRUST_HEX.validBorder,    titleKey: 'verification.sort.byValid' },
-              { key: 'kunye',       color: TRUST_HEX.kunyeBorder,    titleKey: 'verification.sort.byKunye' },
-              { key: 'uydurma',     color: TRUST_HEX.uydurmaBorder,  titleKey: 'verification.sort.byUydurma' },
+              { key: 'high',       color: STATUS_HEX.high,             titleKey: 'verification.sort.byHigh' },
+              { key: 'medium',     color: STATUS_HEX.medium,           titleKey: 'verification.sort.byMedium' },
+              { key: 'low',        color: STATUS_HEX.low,              titleKey: 'verification.sort.byLow' },
+              { key: 'valid',      color: DECISION_HEX.validBorder,       titleKey: 'verification.sort.byValid' },
+              { key: 'citation',   color: DECISION_HEX.citationBorder,    titleKey: 'verification.sort.byCitation' },
+              { key: 'fabricated', color: DECISION_HEX.fabricatedBorder,  titleKey: 'verification.sort.byFabricated' },
             ] as const).map(({ key, color, titleKey }) => (
               <button
                 key={key}
@@ -1875,24 +1875,24 @@ export default function VerificationPage() {
               const pdfVerifying = isPdfVerifying(pdf.id)
               const pdfResults = resultsByPdf[pdf.id] ?? {}
               const hasPdfResults = Object.keys(pdfResults).length > 0
-              let trustValid = 0, trustKunye = 0, trustUydurma = 0
+              let decisionValid = 0, decisionCitation = 0, decisionFabricated = 0
               for (const r of Object.values(pdfResults)) {
                 if (r.status === 'in_progress' || r.status === 'pending') continue
-                const tt = effectiveTrustTag(r)
-                if (tt === 'clean') trustValid++
-                else if (tt === 'künye') trustKunye++
-                else if (tt === 'uydurma') trustUydurma++
+                const tt = effectiveDecisionTag(r)
+                if (tt === 'valid') decisionValid++
+                else if (tt === 'citation') decisionCitation++
+                else if (tt === 'fabricated') decisionFabricated++
               }
               // While re-verifying a PDF that already had a complete run,
               // hold the pills at the prior snapshot so they don't drop to
               // zero and climb back up during the new run.
               const frozen = pdfVerifying ? frozenPdfCountsRef.current[pdf.id] : undefined
-              const dispFound = frozen ? frozen.found : summary?.found ?? 0
-              const dispProblematic = frozen ? frozen.problematic : summary?.problematic ?? 0
-              const dispNotFound = frozen ? frozen.not_found : summary?.not_found ?? 0
-              const dispTrustValid = frozen ? frozen.trustValid : trustValid
-              const dispTrustKunye = frozen ? frozen.trustKunye : trustKunye
-              const dispTrustUydurma = frozen ? frozen.trustUydurma : trustUydurma
+              const dispHigh = frozen ? frozen.high : summary?.high ?? 0
+              const dispMedium = frozen ? frozen.medium : summary?.medium ?? 0
+              const dispLow = frozen ? frozen.low : summary?.low ?? 0
+              const dispDecisionValid = frozen ? frozen.decisionValid : decisionValid
+              const dispDecisionCitation = frozen ? frozen.decisionCitation : decisionCitation
+              const dispDecisionFabricated = frozen ? frozen.decisionFabricated : decisionFabricated
               nodes.push(
                 <div
                   key={pdf.id}
@@ -1921,7 +1921,7 @@ export default function VerificationPage() {
                     {pdfVerifying ? (
                       <span className={`${styles['vi-status']} ${styles['vi-spin']}`}>&#x25CC;</span>
                     ) : hasPdfResults ? (
-                      <span className={styles['vi-status']} style={{ color: STATUS_HEX.found }}>&#x2713;</span>
+                      <span className={styles['vi-status']} style={{ color: STATUS_HEX.high }}>&#x2713;</span>
                     ) : (
                       <span className={styles['vi-status']} style={{ color: STATUS_HEX.neutral }}>&#x25CB;</span>
                     )}
@@ -1934,15 +1934,15 @@ export default function VerificationPage() {
                   </div>
                   {(summary || frozen) && (
                     <div className={styles['verify-counts']}>
-                      <span className={`${styles['vc']} ${styles['vc-found']}`}>{dispFound}</span>
-                      <span className={`${styles['vc']} ${styles['vc-problematic']}`}>{dispProblematic}</span>
-                      <span className={`${styles['vc']} ${styles['vc-not-found']}`}>{dispNotFound}</span>
+                      <span className={`${styles['vc']} ${styles['vc-high']}`}>{dispHigh}</span>
+                      <span className={`${styles['vc']} ${styles['vc-medium']}`}>{dispMedium}</span>
+                      <span className={`${styles['vc']} ${styles['vc-low']}`}>{dispLow}</span>
                       {(hasPdfResults || frozen) && (
                         <>
                           <span className={styles['vc-divider']} aria-hidden="true" />
-                          <span className={`${styles['vc']} ${styles['vc-valid']}`}>{dispTrustValid}</span>
-                          <span className={`${styles['vc']} ${styles['vc-kunye']}`}>{dispTrustKunye}</span>
-                          <span className={`${styles['vc']} ${styles['vc-uydurma']}`}>{dispTrustUydurma}</span>
+                          <span className={`${styles['vc']} ${styles['vc-valid']}`}>{dispDecisionValid}</span>
+                          <span className={`${styles['vc']} ${styles['vc-citation']}`}>{dispDecisionCitation}</span>
+                          <span className={`${styles['vc']} ${styles['vc-fabricated']}`}>{dispDecisionFabricated}</span>
                         </>
                       )}
                     </div>
@@ -1982,9 +1982,9 @@ export default function VerificationPage() {
                 </button>
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
-                  onClick={() => effectivePdfId && handleVerifyNonFoundPdf(effectivePdfId)}
+                  onClick={() => effectivePdfId && handleVerifyNonHighPdf(effectivePdfId)}
                   disabled={!effectivePdfId || (effectivePdfId ? isPdfVerifying(effectivePdfId) : true)}
-                  title={t('verification.verifyNonFound')}
+                  title={t('verification.verifyNonHigh')}
                 ><span aria-hidden="true">&#x25B6;</span>{t('verification.nfShort')}</button>
               </div>
               <div className={styles['toolbar-center']}>
@@ -2016,7 +2016,7 @@ export default function VerificationPage() {
                   </button>
                   {sortOpen && (
                     <ul className={styles['sort-menu']} role="menu">
-                      {(['ref', 'enabled', 'status', 'trust'] as const).map(key => (
+                      {(['ref', 'enabled', 'status', 'decision'] as const).map(key => (
                         <li key={key} role="none">
                           <button
                             type="button"
@@ -2060,17 +2060,17 @@ export default function VerificationPage() {
                   dropTargetIdx === idx && dragSourceId !== card.source.id ? styles['card-dragover'] : '',
                 ].filter(Boolean).join(' ')
 
-                // Tint the selected-border per trust state (Geçerli/Künye/Uydurma).
-                const trust = card.result ? effectiveTrustTag(card.result) : null
-                const trustBorderColor =
-                  trust === 'clean' ? TRUST_HEX.validBorder
-                  : trust === 'künye' ? TRUST_HEX.kunyeBorder
-                  : trust === 'uydurma' ? TRUST_HEX.uydurmaBorder
+                // Tint the selected-border per decision state (Valid/Citation/Fabricated).
+                const decision = card.result ? effectiveDecisionTag(card.result) : null
+                const decisionBorderColor =
+                  decision === 'valid' ? DECISION_HEX.validBorder
+                  : decision === 'citation' ? DECISION_HEX.citationBorder
+                  : decision === 'fabricated' ? DECISION_HEX.fabricatedBorder
                   : undefined
-                const trustGlow =
-                  trust === 'clean' ? 'rgba(134, 239, 172, 0.35)'
-                  : trust === 'künye' ? 'rgba(148, 163, 184, 0.35)'
-                  : trust === 'uydurma' ? 'rgba(232, 121, 249, 0.35)'
+                const decisionGlow =
+                  decision === 'valid' ? 'rgba(134, 239, 172, 0.35)'
+                  : decision === 'citation' ? 'rgba(148, 163, 184, 0.35)'
+                  : decision === 'fabricated' ? 'rgba(232, 121, 249, 0.35)'
                   : undefined
 
                 return (
@@ -2078,9 +2078,9 @@ export default function VerificationPage() {
                     key={card.source.id}
                     ref={(el) => { cardRefs.current[card.source.id] = el }}
                     className={cardClass}
-                    style={trustBorderColor ? {
-                      ['--card-trust-border' as string]: trustBorderColor,
-                      ['--card-trust-glow' as string]: trustGlow,
+                    style={decisionBorderColor ? {
+                      ['--card-decision-border' as string]: decisionBorderColor,
+                      ['--card-decision-glow' as string]: decisionGlow,
                     } as React.CSSProperties : undefined}
                     role="button"
                     tabIndex={0}
@@ -2122,7 +2122,7 @@ export default function VerificationPage() {
                             onClick={(e) => {
                               e.stopPropagation()
                               selectSource(card.source.id)
-                              const text = verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)
+                              const text = verifyTexts[card.source.id] ?? sanitizeSourceText(card.source.text)
                               navigator.clipboard.writeText(text)
                             }}
                             title={t('verification.copyText')}
@@ -2184,22 +2184,22 @@ export default function VerificationPage() {
                             </span>
                           )}
                           {card.result && (() => {
-                            const trust = effectiveTrustTag(card.result)
-                            const cls = trust === 'clean'
+                            const decision = effectiveDecisionTag(card.result)
+                            const cls = decision === 'valid'
                               ? styles['valid-tag']
-                              : trust === 'künye'
+                              : decision === 'citation'
                                 ? styles['citation-tag']
-                                : styles['uydurma-tag']
-                            const label = trust === 'clean'
+                                : styles['fabricated-tag']
+                            const label = decision === 'valid'
                               ? t('verification.validTag')
-                              : trust === 'künye'
+                              : decision === 'citation'
                                 ? t('verification.citationTag')
-                                : t('verification.uydurmaTag')
-                            const tip = trust === 'clean'
+                                : t('verification.fabricatedTag')
+                            const tip = decision === 'valid'
                               ? t('verification.validTagTooltip')
-                              : trust === 'künye'
+                              : decision === 'citation'
                                 ? t('verification.citationTagTooltip')
-                                : t('verification.uydurmaTagTooltip')
+                                : t('verification.fabricatedTagTooltip')
                             return (
                               <button
                                 type="button"
@@ -2210,7 +2210,7 @@ export default function VerificationPage() {
                                   selectSource(card.source.id)
                                   if (!effectivePdfId) return
                                   pendingScrollCardIdRef.current = card.source.id
-                                  useVerificationStore.getState().cycleTrustTag(effectivePdfId, card.source.id)
+                                  useVerificationStore.getState().cycleDecisionTag(effectivePdfId, card.source.id)
                                 }}
                               >
                                 {label}
@@ -2233,7 +2233,7 @@ export default function VerificationPage() {
                         >&#x2807;</span>
                         <textarea
                           className={styles['card-textarea']}
-                          value={verifyTexts[card.source.id] ?? sanitizeReferenceText(card.source.text)}
+                          value={verifyTexts[card.source.id] ?? sanitizeSourceText(card.source.text)}
                           onInput={(e) => {
                             const el = e.target as HTMLTextAreaElement
                             setVerifyText(card.source.id, el.value)
@@ -2584,49 +2584,49 @@ export default function VerificationPage() {
               <>
                 <div className={styles['detail-action-row']}>
                   {currentResult && (() => {
-                    const trust = effectiveTrustTag(currentResult)
-                    const cls = trust === 'clean'
+                    const decision = effectiveDecisionTag(currentResult)
+                    const cls = decision === 'valid'
                       ? styles['valid-tag']
-                      : trust === 'künye'
+                      : decision === 'citation'
                         ? styles['citation-tag']
-                        : styles['uydurma-tag']
-                    const label = trust === 'clean'
+                        : styles['fabricated-tag']
+                    const label = decision === 'valid'
                       ? t('verification.validTag')
-                      : trust === 'künye'
+                      : decision === 'citation'
                         ? t('verification.citationTag')
-                        : t('verification.uydurmaTag')
-                    const tip = trust === 'clean'
+                        : t('verification.fabricatedTag')
+                    const tip = decision === 'valid'
                       ? t('verification.validTagTooltip')
-                      : trust === 'künye'
+                      : decision === 'citation'
                         ? t('verification.citationTagTooltip')
-                        : t('verification.uydurmaTagTooltip')
+                        : t('verification.fabricatedTagTooltip')
                     return (
                       <button
                         type="button"
-                        className={`${cls} ${styles['detail-trust-pill']}`}
+                        className={`${cls} ${styles['detail-decision-pill']}`}
                         title={tip}
                         onClick={() => {
                           if (!effectivePdfId || !selectedSourceId) return
-                          useVerificationStore.getState().cycleTrustTag(effectivePdfId, selectedSourceId)
+                          useVerificationStore.getState().cycleDecisionTag(effectivePdfId, selectedSourceId)
                         }}
                       >{label}</button>
                     )
                   })()}
                   <div className={styles['detail-action-spacer']} />
                   <button
-                    className={`${styles['override-btn']} ${styles['override-found']} ${currentResult?.status === 'found' ? styles['override-found-active'] : ''}`}
+                    className={`${styles['override-btn']} ${styles['override-high']} ${currentResult?.status === 'high' ? styles['override-high-active'] : ''}`}
                     disabled={!currentResult || currentResult.status === 'in_progress'}
-                    onClick={() => handleOverride('found')} title={t('verification.markAsFound')}
+                    onClick={() => handleOverride('high')} title={t('verification.markAsHigh')}
                   >&#x2713;</button>
                   <button
-                    className={`${styles['override-btn']} ${styles['override-problematic']} ${currentResult?.status === 'problematic' ? styles['override-problematic-active'] : ''}`}
+                    className={`${styles['override-btn']} ${styles['override-medium']} ${currentResult?.status === 'medium' ? styles['override-medium-active'] : ''}`}
                     disabled={!currentResult || currentResult.status === 'in_progress'}
-                    onClick={() => handleOverride('problematic')} title={t('verification.markAsProblematic')}
+                    onClick={() => handleOverride('medium')} title={t('verification.markAsMedium')}
                   >~</button>
                   <button
-                    className={`${styles['override-btn']} ${styles['override-not-found']} ${currentResult?.status === 'not_found' ? styles['override-not-found-active'] : ''}`}
+                    className={`${styles['override-btn']} ${styles['override-low']} ${currentResult?.status === 'low' ? styles['override-low-active'] : ''}`}
                     disabled={!currentResult || currentResult.status === 'in_progress'}
-                    onClick={() => handleOverride('not_found')} title={t('verification.markAsNotFound')}
+                    onClick={() => handleOverride('low')} title={t('verification.markAsLow')}
                   >X</button>
                 </div>
 
@@ -2713,7 +2713,7 @@ export default function VerificationPage() {
                             <li key={url} className={styles['url-item']}>
                               <span
                                 className={styles['url-dot']}
-                                style={{ background: alive ? STATUS_HEX.found : STATUS_HEX.not_found }}
+                                style={{ background: alive ? STATUS_HEX.high : STATUS_HEX.low }}
                                 title={alive ? t('verification.urlReachable') : t('verification.urlDead')}
                               />
                               <button className={styles['url-link']} onClick={() => openOverlayWithUrl(url)} title={url}>

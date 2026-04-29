@@ -1,4 +1,4 @@
-"""Score matches between source references and search results using multi-signal approach."""
+"""Score matches between source sources and search results using multi-signal approach."""
 
 import re
 from typing import Any
@@ -14,8 +14,8 @@ from services.scoring_constants import (
     DOI_MATCH_MIN_SCORE,
     FIELD_MATCH_BONUS,
     LOW_PARSE_CONFIDENCE_THRESHOLD,
-    STATUS_FOUND_THRESHOLD,
-    STATUS_PROBLEMATIC_THRESHOLD,
+    STATUS_HIGH_THRESHOLD,
+    STATUS_MEDIUM_THRESHOLD,
     TITLE_MATCH_THRESHOLD,
     TITLE_SEQUENTIAL_WEIGHT,
     TITLE_TOKEN_SORT_WEIGHT,
@@ -27,17 +27,17 @@ from utils.doi_extractor import extract_arxiv_id, normalize_doi
 
 __all__ = [
     "DOI_MATCH_MIN_SCORE",
-    "STATUS_FOUND_THRESHOLD",
-    "STATUS_PROBLEMATIC_THRESHOLD",
+    "STATUS_HIGH_THRESHOLD",
+    "STATUS_MEDIUM_THRESHOLD",
     "TITLE_MATCH_THRESHOLD",
-    "classify_trust",
+    "classify_decision",
     "determine_verification_status",
     "score_match",
 ]
 
 
 def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
-    """Score a candidate result against a source reference.
+    """Score a candidate result against a source source.
 
     candidate dict expected keys: title, authors, year, doi, url, database, search_url
     """
@@ -71,7 +71,7 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
     details.url_match = _urls_match(source, candidate)
 
     # Base composite — title+author weighted mix, falling back to title-only
-    # when the reference was parsed with low confidence or has no authors.
+    # when the source was parsed with low confidence or has no authors.
     if source.parse_confidence < LOW_PARSE_CONFIDENCE_THRESHOLD or source.authors == []:
         base = title_score
     else:
@@ -84,7 +84,7 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
     if source.year and candidate.get("year") and abs(source.year - candidate["year"]) <= 1:
         bonus += FIELD_MATCH_BONUS
 
-    src_venue = (source.source or "").strip()
+    src_venue = (source.journal or "").strip()
     cand_venue = (candidate.get("journal") or "").strip()
     if src_venue and cand_venue and _venues_match(src_venue, cand_venue):
         bonus += FIELD_MATCH_BONUS
@@ -129,15 +129,15 @@ def determine_verification_status(
     """Score-banded status + per-signal problem tags.
 
     Status is derived purely from the composite score (no title-only gate):
-      >= STATUS_FOUND_THRESHOLD       → "found"
-      >= STATUS_PROBLEMATIC_THRESHOLD → "problematic"
-      otherwise                       → "not_found"
+      >= STATUS_HIGH_THRESHOLD   → "high"
+      >= STATUS_MEDIUM_THRESHOLD → "medium"
+      otherwise                   → "low"
 
     Problem tags are emitted independently of the status band so the five
     card chips stay in sync with per-signal reality:
       !authors    — source has authors AND authors_match() is False
       !year       — source.year AND bm.year AND |diff| > 1
-      !source     — source.source AND bm.journal AND !_venues_match
+      !journal    — source.journal AND bm.journal AND !_venues_match
       !doi/arXiv  — (source.doi OR source.arxiv_id) AND NOT bm.url_match
       !title      — bm present AND title_similarity < TITLE_MATCH_THRESHOLD
 
@@ -146,7 +146,7 @@ def determine_verification_status(
     url_liveness = url_liveness or {}
 
     if best_match is None:
-        return "not_found", []
+        return "low", []
 
     tags: list[str] = []
 
@@ -175,13 +175,13 @@ def determine_verification_status(
     elif src_has_year != bm_has_year:
         tags.append("!year")
 
-    src_has_venue = bool((source.source or "").strip())
+    src_has_venue = bool((source.journal or "").strip())
     bm_has_venue = bool((best_match.journal or "").strip())
     if src_has_venue and bm_has_venue:
-        if not _venues_match(source.source, best_match.journal):
-            tags.append("!source")
+        if not _venues_match(source.journal, best_match.journal):
+            tags.append("!journal")
     elif src_has_venue != bm_has_venue:
-        tags.append("!source")
+        tags.append("!journal")
 
     src_has_ident = bool(source.doi or source.arxiv_id)
     bm_has_ident = bool(best_match.doi) or "arxiv.org" in (best_match.url or "")
@@ -195,22 +195,22 @@ def determine_verification_status(
         tags.append("!title")
 
     score = best_match.score
-    if score >= STATUS_FOUND_THRESHOLD:
-        status = "found"
-    elif score >= STATUS_PROBLEMATIC_THRESHOLD:
-        status = "problematic"
+    if score >= STATUS_HIGH_THRESHOLD:
+        status = "high"
+    elif score >= STATUS_MEDIUM_THRESHOLD:
+        status = "medium"
     else:
-        status = "not_found"
+        status = "low"
     return status, tags
 
 
-# ----- Trust tag (Künye / Uydurma) decision tree --------------------------
+# ----- Decision tag (Citation / Fabricated) decision tree -----------------
 
-def classify_trust(
+def classify_decision(
     source: ParsedSource,
     best_match: MatchResult | None,
 ) -> str:
-    """Classify a reference as "clean" | "künye" | "uydurma".
+    """Classify a source as "valid" | "citation" | "fabricated".
 
     Per-signal "matches" predicates mirror the chip display rule for
     authors / year / source / doi/arXiv:
@@ -223,13 +223,13 @@ def classify_trust(
       title_matches = title_similarity >= TITLE_MATCH_THRESHOLD
 
     Rule:
-      all four of {author, year, title, source} match     → "clean"
+      all four of {author, year, title, source} match     → "valid"
       title matches
-        OR (author matches AND any of {year, source, doi} matches) → "künye"
-      otherwise                                           → "uydurma"
+        OR (author matches AND any of {year, source, doi} matches) → "citation"
+      otherwise                                           → "fabricated"
     """
     if best_match is None:
-        return "uydurma"
+        return "fabricated"
 
     title_matches = (
         best_match.match_details.title_similarity >= TITLE_MATCH_THRESHOLD
@@ -249,10 +249,10 @@ def classify_trust(
     else:
         year_matches = not src_has_year and not bm_has_year
 
-    src_has_venue = bool((source.source or "").strip())
+    src_has_venue = bool((source.journal or "").strip())
     bm_has_venue = bool((best_match.journal or "").strip())
     if src_has_venue and bm_has_venue:
-        source_matches = _venues_match(source.source, best_match.journal)
+        source_matches = _venues_match(source.journal, best_match.journal)
     else:
         source_matches = not src_has_venue and not bm_has_venue
 
@@ -264,13 +264,13 @@ def classify_trust(
         doi_matches = not src_has_ident and not bm_has_ident
 
     if author_matches and year_matches and title_matches and source_matches:
-        return "clean"
+        return "valid"
     elif title_matches or (
         author_matches and (year_matches or source_matches or doi_matches)
     ):
-        return "künye"
+        return "citation"
     else:
-        return "uydurma"
+        return "fabricated"
 
 
 def _url_match_score(source: ParsedSource, candidate: dict[str, Any]) -> float:
@@ -432,7 +432,7 @@ def _venues_match(source_venue: str, cand_journal: str) -> bool:
 
     # Multi-strategy fuzzy. Deliberately omit partial_ratio — single-token
     # overlaps ("IEEE", "Sensors") inflate it and produce false negatives
-    # on the !source tag.
+    # on the !journal tag.
     best = max(
         fuzz.token_sort_ratio(src, cand),
         fuzz.token_set_ratio(src, cand),

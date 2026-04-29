@@ -6,11 +6,11 @@
 // duplicate them.
 //
 // Bands:
-//   score >= STATUS_FOUND_THRESHOLD       → "found"       (UI: High / Yüksek)
-//   score >= STATUS_PROBLEMATIC_THRESHOLD → "problematic" (UI: Medium / Orta)
-//   otherwise                              → "not_found"   (UI: Low / Düşük)
+//   score >= STATUS_HIGH_THRESHOLD   → "high"   (UI: High / Yüksek)
+//   score >= STATUS_MEDIUM_THRESHOLD → "medium" (UI: Medium / Orta)
+//   otherwise                         → "low"    (UI: Low / Düşük)
 
-export const STATUS_FOUND_THRESHOLD = 0.75
-export const STATUS_PROBLEMATIC_THRESHOLD = 0.5
+export const STATUS_HIGH_THRESHOLD = 0.75
+export const STATUS_MEDIUM_THRESHOLD = 0.5
 export const TITLE_MATCH_THRESHOLD = 0.85
 export const DOI_MATCH_MIN_SCORE = 0.5

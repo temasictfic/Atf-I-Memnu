@@ -227,7 +227,7 @@ export function mergeWithClosest(pdfId: string, sourceId: string): string | null
 /**
  * Merge a source rectangle with the one immediately preceding it in reading
  * order (ref_number - 1). The merged result inherits the previous source's
- * number, so the selected box does not introduce a new reference. Returns
+ * number, so the selected box does not introduce a new source. Returns
  * the id of the resulting merged source, or null if there is no previous.
  */
 export function mergeWithPrevious(pdfId: string, sourceId: string): string | null {

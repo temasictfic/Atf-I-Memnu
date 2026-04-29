@@ -333,7 +333,7 @@ def authors_match(source_authors: list[str], candidate_authors: list[str]) -> bo
 
     Matches against the SMALLER list so that truncated candidate records
     (e.g. book catalogs listing only the first author) don't falsely
-    reject an otherwise-correct reference.
+    reject an otherwise-correct source.
 
       - Empty source -> vacuously True.
       - Empty candidate -> False.

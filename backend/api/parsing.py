@@ -1,7 +1,7 @@
 """Sources / cache / NER endpoints.
 
 After Phase 4 of the PDF-handling migration, the backend no longer parses or
-renders PDFs. Everything PDF-native (file reads, canvas rendering, reference
+renders PDFs. Everything PDF-native (file reads, canvas rendering, source
 detection, bbox text extraction, annotation writing) runs in the Electron
 renderer. The Python side is now only responsible for:
 
@@ -187,7 +187,7 @@ async def remove_pdf(pdf_id: str):
 
 @router.post("/parse/extract-fields")
 async def extract_fields(request: ExtractFieldsRequest):
-    """Extract structured citation fields from raw reference text."""
+    """Extract structured citation fields from raw source text."""
     from services.source_extractor import extract_source_fields
 
     parsed = await extract_source_fields(request.text)

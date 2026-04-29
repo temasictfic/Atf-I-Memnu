@@ -1,7 +1,7 @@
 """Head-to-head evaluation: SIRIS baseline vs fine-tuned fp32 vs fine-tuned INT8.
 
 Computes per-label seqeval F1 on kaynaklar_test and public_test, plus a
-downstream match rate (fraction of references for which the resulting
+downstream match rate (fraction of sources for which the resulting
 ParsedSource has title + authors + year populated at confidence >= 0.3) using
 the live app's own grouping logic from `backend/services/ner_extractor.py`.
 
@@ -135,7 +135,7 @@ def seqeval_on_split(
             true_labels.append(gold_row)
             pred_labels.append(pred_row)
 
-    results = metric.compute(predictions=pred_labels, references=true_labels)
+    results = metric.compute(predictions=pred_labels, sources=true_labels)
     return results
 
 
@@ -144,7 +144,7 @@ def downstream_match_rate(
     raw_records: list[dict],
     extract_fn: Callable,
 ) -> tuple[float, int]:
-    """Run the pipeline on raw kaynaklar reference texts and count how many
+    """Run the pipeline on raw kaynaklar source texts and count how many
     produce a ParsedSource with title + authors + year and confidence >= 0.3.
     """
     ok = 0

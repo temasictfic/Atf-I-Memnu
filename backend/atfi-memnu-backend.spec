@@ -48,7 +48,7 @@ datas += [
 
 # Exclude the heavy ML frameworks we deliberately do not use. Without these
 # excludes PyInstaller will still try to bundle torch / tensorflow / jax if
-# any stray metadata references them, adding ~1 GB each.
+# any stray metadata sources them, adding ~1 GB each.
 excludes = [
     "torch",
     "torchvision",

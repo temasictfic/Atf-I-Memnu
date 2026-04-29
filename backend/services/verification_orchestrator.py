@@ -9,7 +9,7 @@ from api.websocket import manager
 from models.settings import DatabaseConfig
 from models.source import SourceRectangle, ParsedSource
 from models.verification_result import VerificationResult, MatchResult
-from services.match_scorer import classify_trust, determine_verification_status
+from services.match_scorer import classify_decision, determine_verification_status
 from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
 from services.search_settings import (
     get_max_concurrent_apis,
@@ -19,7 +19,7 @@ from services.search_settings import (
 from scrapers.rate_limiter import rate_limiter
 from services.source_extractor import extract_source_fields
 from services.url_checker import check_urls, is_doi_or_arxiv_url
-from utils.text_cleaning import strip_reference_noise
+from utils.text_cleaning import strip_source_noise
 from verifiers._http import RateLimitedError
 
 
@@ -134,7 +134,7 @@ def _is_strong_match(result: MatchResult | None) -> bool:
     almost exclusive to DOI lookups (or direct arXiv-ID lookups), which
     are the cases where continuing to query 9 more APIs is pure quota
     waste — no other DB is going to improve on a DOI-exact hit. Ambiguous
-    references (title-only, editor citations, retracted-era works) stay
+    sources (title-only, editor citations, retracted-era works) stay
     below this threshold and correctly exercise the full verifier fleet.
     """
     if result is None:
@@ -179,15 +179,15 @@ async def verify_pdf_sources(
 
         # Calculate final counts (works for both normal and cancelled runs)
         results = results_store.get(pdf_id, {})
-        found = sum(1 for r in results.values() if r.status == "found")
-        problematic = sum(1 for r in results.values() if r.status == "problematic")
-        not_found = sum(1 for r in results.values() if r.status == "not_found")
+        high = sum(1 for r in results.values() if r.status == "high")
+        medium = sum(1 for r in results.values() if r.status == "medium")
+        low = sum(1 for r in results.values() if r.status == "low")
 
         await manager.broadcast("verify_pdf_done", {
             "pdf_id": pdf_id,
-            "found": found,
-            "problematic": problematic,
-            "not_found": not_found,
+            "high": high,
+            "medium": medium,
+            "low": low,
         })
 
         # Persist results to disk cache
@@ -227,15 +227,15 @@ async def verify_single_source(
 
     # Recalculate counts
     results = results_store.get(pdf_id, {})
-    found = sum(1 for r in results.values() if r.status == "found")
-    problematic = sum(1 for r in results.values() if r.status == "problematic")
-    not_found = sum(1 for r in results.values() if r.status == "not_found")
+    high = sum(1 for r in results.values() if r.status == "high")
+    medium = sum(1 for r in results.values() if r.status == "medium")
+    low = sum(1 for r in results.values() if r.status == "low")
 
     await manager.broadcast("verify_pdf_updated", {
         "pdf_id": pdf_id,
-        "found": found,
-        "problematic": problematic,
-        "not_found": not_found,
+        "high": high,
+        "medium": medium,
+        "low": low,
     })
 
     # Persist updated results to disk cache
@@ -261,7 +261,7 @@ async def _verify_source(
         status="in_progress",
     )
 
-    source_text = strip_reference_noise(source.text)
+    source_text = strip_source_noise(source.text)
 
     await manager.broadcast("verify_started", {
         "pdf_id": pdf_id,
@@ -525,7 +525,7 @@ async def _run_tier1_apis(
                         "database": name,
                         "found": found,
                         "match": result.model_dump() if result else None,
-                        "db_status": "found" if found else "not_found",
+                        "db_status": "high" if found else "low",
                         "search_url": (result.search_url if result else None) or fallback_url,
                     })
 
@@ -606,7 +606,7 @@ async def _run_tier1_apis(
     # returns a strong DOI-exact match. Siblings still in flight get
     # cancelled, their CancelledError handlers emit "skipped" dots, and
     # the finally block gathers them so cleanup completes before we
-    # return. On ambiguous references no verifier crosses the threshold
+    # return. On ambiguous sources no verifier crosses the threshold
     # and every task runs to normal completion, exactly like before.
     tasks = [
         asyncio.create_task(run_verifier(db_id, name, fn))
@@ -660,7 +660,7 @@ async def verify_pdf_sources_filtered(
     modified = []
     for s in filtered:
         if s.id in custom_texts:
-            modified.append(s.model_copy(update={"text": strip_reference_noise(custom_texts[s.id])}))
+            modified.append(s.model_copy(update={"text": strip_source_noise(custom_texts[s.id])}))
         else:
             modified.append(s)
 
@@ -679,7 +679,7 @@ async def _finalize_result(
     """Finalize the verification result for a source.
 
     Picks the best candidate by composite score, then runs the new 3-category
-    status determination (found / problematic / not_found) with problem tags.
+    status determination (high / medium / low) with problem tags.
     """
     url_liveness = url_liveness or {}
 
@@ -690,11 +690,11 @@ async def _finalize_result(
         status, problem_tags = determine_verification_status(
             parsed, best_match, url_liveness
         )
-        trust_tag = classify_trust(parsed, best_match)
+        decision_tag = classify_decision(parsed, best_match)
     else:
-        # Failure to parse → fall back to not_found / uydurma
-        status, problem_tags = "not_found", []
-        trust_tag = "uydurma"
+        # Failure to parse → fall back to low / fabricated
+        status, problem_tags = "low", []
+        decision_tag = "fabricated"
 
     # Build Google Scholar / Google Search URLs from NER-extracted title
     scholar_url, google_url = _build_google_urls(parsed) if parsed else ("", "")
@@ -703,7 +703,7 @@ async def _finalize_result(
         source_id=source_id,
         status=status,
         problem_tags=problem_tags,
-        trust_tag=trust_tag,
+        decision_tag=decision_tag,
         url_liveness=url_liveness,
         best_match=best_match,
         all_results=sorted(all_matches, key=lambda m: m.score, reverse=True),
@@ -718,8 +718,8 @@ async def _finalize_result(
         "source_id": source_id,
         "status": status,
         "problem_tags": problem_tags,
-        "trust_tag": trust_tag,
-        "trust_tag_override": result.trust_tag_override,
+        "decision_tag": decision_tag,
+        "decision_tag_override": result.decision_tag_override,
         "tag_overrides": result.tag_overrides,
         "url_liveness": url_liveness,
         "best_match": best_match.model_dump() if best_match else None,

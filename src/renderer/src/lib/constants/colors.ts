@@ -3,28 +3,28 @@
 // the live UI and exported reports.
 //
 // Two parallel forms are exported:
-//   STATUS_HEX / DB_SCORE_HEX / TRUST_HEX  → CSS-friendly "#rrggbb" strings
-//   STATUS_RGB / DB_SCORE_RGB / TRUST_RGB → [r, g, b] floats in [0, 1] for pdf-lib
+//   STATUS_HEX / DB_SCORE_HEX / DECISION_HEX  → CSS-friendly "#rrggbb" strings
+//   STATUS_RGB / DB_SCORE_RGB / DECISION_RGB → [r, g, b] floats in [0, 1] for pdf-lib
 //
 // Hex and RGB tuples for the same status MUST encode the same color.
 
 type RgbTuple = readonly [number, number, number]
 
-// --- Verification status (found / problematic / not_found / in_progress / pending) ---
+// --- Verification status (high / medium / low / in_progress / pending) ---
 
 export const STATUS_HEX = {
-  found:       '#22c55e',
-  problematic: '#f59e0b',
-  not_found:   '#ef4444',
+  high:        '#22c55e',
+  medium:      '#f59e0b',
+  low:         '#ef4444',
   in_progress: '#3b82f6',
   pending:     '#9ca3af',
   neutral:     '#a8a29e',
 } as const
 
 export const STATUS_RGB: Record<keyof typeof STATUS_HEX, RgbTuple> = {
-  found:       [0.133, 0.773, 0.369],
-  problematic: [0.961, 0.620, 0.043],
-  not_found:   [0.937, 0.267, 0.267],
+  high:        [0.133, 0.773, 0.369],
+  medium:      [0.961, 0.620, 0.043],
+  low:         [0.937, 0.267, 0.267],
   in_progress: [0.231, 0.510, 0.965],
   pending:     [0.612, 0.639, 0.686],
   neutral:     [0.659, 0.635, 0.604],
@@ -44,24 +44,24 @@ export const DB_SCORE_RGB: Record<keyof typeof DB_SCORE_HEX, RgbTuple> = {
   low:    [0.937, 0.267, 0.267],
 }
 
-// --- Trust-tag palette (Geçerli / Künye / Uydurma) ---
+// --- Decision-tag palette (Valid / Citation / Fabricated) ---
 
-export const TRUST_HEX = {
-  validBorder:   '#86efac',
-  validText:     '#166534',
-  kunyeBorder:   '#94a3b8',
-  kunyeText:     '#334155',
-  uydurmaBorder: '#e879f9',
-  uydurmaText:   '#86198f',
+export const DECISION_HEX = {
+  validBorder:      '#86efac',
+  validText:        '#166534',
+  citationBorder:   '#94a3b8',
+  citationText:     '#334155',
+  fabricatedBorder: '#e879f9',
+  fabricatedText:   '#86198f',
 } as const
 
-export const TRUST_RGB: Record<keyof typeof TRUST_HEX, RgbTuple> = {
-  validBorder:   [0.525, 0.937, 0.675],
-  validText:     [0.086, 0.396, 0.204],
-  kunyeBorder:   [0.580, 0.639, 0.722],
-  kunyeText:     [0.200, 0.255, 0.333],
-  uydurmaBorder: [0.910, 0.475, 0.976],
-  uydurmaText:   [0.525, 0.098, 0.561],
+export const DECISION_RGB: Record<keyof typeof DECISION_HEX, RgbTuple> = {
+  validBorder:      [0.525, 0.937, 0.675],
+  validText:        [0.086, 0.396, 0.204],
+  citationBorder:   [0.580, 0.639, 0.722],
+  citationText:     [0.200, 0.255, 0.333],
+  fabricatedBorder: [0.910, 0.475, 0.976],
+  fabricatedText:   [0.525, 0.098, 0.561],
 }
 
 // --- Highlight palette (Parsing page note swatches) ---

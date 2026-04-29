@@ -1,4 +1,4 @@
-"""Extract structured fields (title, authors, year, DOI, etc.) from raw reference text.
+"""Extract structured fields (title, authors, year, DOI, etc.) from raw source text.
 
 Implements rule-based parsing guided by Kurallar.xlsx:
 - Sheet 1 "Veri": 12 parsing rules for field boundary detection
@@ -15,7 +15,7 @@ from utils.text_cleaning import (
     YEAR_PATTERN,
     is_valid_year,
     normalize_author_conjunctions,
-    strip_reference_noise,
+    strip_source_noise,
 )
 from utils.url_cleaner import find_best_url
 
@@ -31,17 +31,17 @@ _LEADING_INLINE_CITATION_RE = re.compile(
 
 
 async def extract_source_fields(raw_text: str) -> ParsedSource:
-    """Parse raw reference text into structured fields.
+    """Parse raw source text into structured fields.
 
-    Tries NER extraction first (GLiNER2), falls back to regex if NER is
+    Tries NER extraction first, falls back to regex if NER is
     unavailable or returns low confidence.
     """
     from services.ner_extractor import extract_fields_ner
 
-    # Strip leading reference numbering ("1-", "1.", "[1]", "1)") before
+    # Strip leading source numbering ("1-", "1.", "[1]", "1)") before
     # NER sees the text — otherwise the numeric prefix leaks into author
     # entity spans via raw_text offset reconstruction.
-    cleaned_text = strip_reference_noise(raw_text)
+    cleaned_text = strip_source_noise(raw_text)
 
     ner_result = await extract_fields_ner(cleaned_text)
     if ner_result is not None and ner_result.parse_confidence >= LOW_PARSE_CONFIDENCE_THRESHOLD:
@@ -51,11 +51,11 @@ async def extract_source_fields(raw_text: str) -> ParsedSource:
 
 
 def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
-    """Parse raw reference text into structured fields using rule-based, format-aware extraction."""
+    """Parse raw source text into structured fields using rule-based, format-aware extraction."""
     result = ParsedSource(raw_text=raw_text)
 
     # Strip leading numbering and access-date noise before parsing fields.
-    text = strip_reference_noise(raw_text)
+    text = strip_source_noise(raw_text)
 
     # Strip a leading inline parenthetical citation that some refs
     # duplicate before the real author list, e.g.
@@ -104,8 +104,8 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
     # Extract year (rule-based priority: parenthesized > post-conjunction > first-after-authors)
     result.year, year_start, year_end = _extract_year(text, author_end)
 
-    # Extract title and source (journal/conference/publisher name)
-    result.title, result.source = _extract_title_journal(text, author_end, year_start, year_end, fmt)
+    # Extract title and journal (journal/conference/publisher name)
+    result.title, result.journal = _extract_title_journal(text, author_end, year_start, year_end, fmt)
 
     # Compute confidence
     result.parse_confidence = _compute_parse_confidence(result)
@@ -121,7 +121,7 @@ def _find_author_boundary(text: str, fmt: CitationFormat | None) -> int:
     """Find the character index where the authors section ends.
 
     Uses Kurallar author rules to detect the boundary between authors and
-    the rest of the reference (year, title, journal, etc.).
+    the rest of the source (year, title, journal, etc.).
     """
     if not text:
         return 0
@@ -257,7 +257,7 @@ def _find_author_boundary_ieee(text: str) -> int:
     Authors have initials first (G. Liu), and the transition to title
     is marked by a quoted string.
     """
-    # Book/editor references often mark the transition with "Ed.," or "Eds.,"
+    # Book/editor sources often mark the transition with "Ed.," or "Eds.,"
     # and do not quote titles (e.g., "A. Author, Eds., Book Title...").
     editor_boundary = re.search(r",\s*(?:Ed\.|Eds\.|Editor|Editors),\s+", text, re.IGNORECASE)
     if editor_boundary:
@@ -586,7 +586,7 @@ def _parse_authors(author_text: str, fmt: CitationFormat | None = None) -> list[
 
     # IEEE and all remaining formats share the standard parser. Standard
     # handles native IEEE input ("G. Liu, K. Y. Lee") correctly AND pairs
-    # "Last, Initials" when a reference is mis-classified as IEEE.
+    # "Last, Initials" when a source is mis-classified as IEEE.
     return _parse_standard_authors(author_text)
 
 
@@ -708,8 +708,8 @@ def _compute_parse_confidence(parsed: ParsedSource) -> float:
     if len(parsed.title) >= 10:
         score += 0.15
 
-    # Source (journal/conference/publisher) present
-    if parsed.source and len(parsed.source) >= 3:
+    # Journal (journal/conference/publisher) present
+    if parsed.journal and len(parsed.journal) >= 3:
         score += 0.10
 
     return min(round(score, 2), 1.0)

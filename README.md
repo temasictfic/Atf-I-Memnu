@@ -1,10 +1,10 @@
 # Atf-ı Memnu
 
-A Windows desktop app for parsing academic PDFs, extracting their reference lists, and verifying each citation against a panel of scholarly databases — with a dedicated review UI for annotating, correcting, and approving the extracted sources before verification.
+A Windows desktop app for parsing academic PDFs, extracting their source lists, and verifying each source against a panel of scholarly databases — with a dedicated review UI for annotating, correcting, and approving the extracted sources before verification.
 
 ## What it does
 
-1. **Ingest** — point it at a directory or drop in a batch of PDFs. Each file is parsed in the renderer via `pdfjs-dist`; the reference section is located and individual sources split into editable bounding-box rectangles.
+1. **Ingest** — point it at a directory or drop in a batch of PDFs. Each file is parsed in the renderer via `pdfjs-dist`; the source section is located and individual sources split into editable bounding-box rectangles.
 2. **Review** — the parsing page shows each PDF in the middle with its detected source rectangles overlaid. You can draw new ones, edit the text, merge/split, add highlight and callout annotations, and export an annotated copy of the PDF.
 3. **Extract fields (NER)** — for the selected source, a bundled fine-tuned ONNX citation-parser model (via `onnxruntime` + `tokenizers`) extracts title, authors, year, journal, DOI, etc. into structured fields.
 4. **Verify** — the verification page pushes each approved source through the enabled database verifiers in parallel and shows per-database status as it streams in over WebSocket. Sources that don't match can be re-checked via the built-in Google Scholar scanner (a hidden Electron `<webview>` that scrapes results with CAPTCHA handoff).
@@ -15,7 +15,7 @@ A Windows desktop app for parsing academic PDFs, extracting their reference list
 - [arXiv](https://arxiv.org/) · [PubMed](https://pubmed.ncbi.nlm.nih.gov/) · [TR Dizin](https://trdizin.gov.tr/)
 - [Open Library](https://openlibrary.org/) · [Semantic Scholar](https://www.semanticscholar.org/)
 
-Each verifier shares a single pooled `aiohttp` session and reports `found` / `not_found` / `error` / `timeout` per source. API keys for OpenAlex, Semantic Scholar, and PubMed can be set in the Settings page.
+Each verifier shares a single pooled `aiohttp` session and reports `high` / `low` / `error` / `timeout` per source. API keys for OpenAlex, Semantic Scholar, and PubMed can be set in the Settings page.
 
 ## Architecture
 
@@ -32,7 +32,7 @@ Each verifier shares a single pooled `aiohttp` session and reports `found` / `no
 │  ├─ pdfjs-dist pipeline      │ HTTP │  (FastAPI + uvicorn)   │
 │  │   (parse, render, detect, │  WS  │  ├─ NER field extract  │
 │  │   extract, annotate)      │      │  │   (ONNX Runtime     │
-│  ├─ Zustand stores           │      │  │   + DirectML/CPU)   │
+│  ├─ Zustand stores           │      │  │   CUDA / CPU)       │
 │  ├─ Parsing/Verification/    │      │  ├─ Verifier panel     │
 │  │   Settings pages          │      │  ├─ Match scorer       │
 │  └─ Scholar scanner webview  │      │  └─ Author matcher     │
@@ -41,8 +41,8 @@ Each verifier shares a single pooled `aiohttp` session and reports `found` / `no
 
 Key design notes:
 
-- **PDF handling lives in the renderer.** Opening, rendering, reference detection, bbox text extraction, and annotation writing all run in the renderer via `pdfjs-dist` and `pdf-lib` — the Python side never touches PDF bytes. This keeps page switches fast and the backend small. There's an in-memory LRU cache of parsed `PDFDocumentProxy` instances so flipping between recently-viewed PDFs skips disk I/O and document parse.
-- **NER is the only reason Python is in the loop.** A fine-tuned RoBERTa-based citation-parser model is bundled as a quantized INT8 ONNX file (~125 MB, tracked via git LFS). At runtime we use `onnxruntime-directml` with a DirectML → CPU fallback and a tiny `tokenizers`-based pipeline — no `transformers`, no `optimum`, no `torch`, so the packaged bundle stays lean.
+- **PDF handling lives in the renderer.** Opening, rendering, source detection, bbox text extraction, and annotation writing all run in the renderer via `pdfjs-dist` and `pdf-lib` — the Python side never touches PDF bytes. This keeps page switches fast and the backend small. There's an in-memory LRU cache of parsed `PDFDocumentProxy` instances so flipping between recently-viewed PDFs skips disk I/O and document parse.
+- **NER is the only reason Python is in the loop.** A fine-tuned RoBERTa-based citation-parser model is bundled as a quantized INT8 ONNX file (~125 MB, tracked via git LFS). At runtime we use `onnxruntime` (CPU provider, with optional CUDA when available) and a tiny `tokenizers`-based pipeline — no `transformers`, no `optimum`, no `torch`, so the packaged bundle stays lean.
 - **PyInstaller + electron-builder.** The backend is frozen to a standalone exe via PyInstaller (spec excludes torch/tf/jax, disables UPX for onnxruntime DLL safety, and hard-fails the build if the LFS NER model is just a pointer file). The Electron app bundles that exe as `extraResources`.
 - **Single-language bundle.** Only `en-US` and `tr` Chromium locale paks are shipped.
 
@@ -52,7 +52,7 @@ Key design notes:
 - **Python** ≥ 3.12 (managed by `uv`)
 - **uv** — fast Python package manager (`pipx install uv` or see [uv docs](https://docs.astral.sh/uv/))
 - **Git LFS** — required to pull the bundled NER model. After cloning, run `git lfs pull`.
-- **Windows 10/11** — the release pipeline and the `onnxruntime-directml` provider are Windows-only. Linux/macOS development is possible with the CPU provider but untested for packaging.
+- **Windows 10/11** — the release pipeline targets Windows. Linux/macOS development is possible with the CPU provider but untested for packaging.
 
 ## Getting started
 

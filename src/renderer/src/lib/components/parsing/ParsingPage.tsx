@@ -104,11 +104,11 @@ export default function ParsingPage() {
   const calloutTextColor = useNotesStore((s) => s.calloutTextColor);
   const calloutDefaultFontSize = useNotesStore((s) => s.calloutFontSize);
   const calloutDefaultBold = useNotesStore((s) => s.calloutBold);
-  const autoCalloutTextUydurma = useSettingsStore(
-    (s) => s.settings.auto_callout_text_uydurma ?? "",
+  const autoCalloutTextFabricated = useSettingsStore(
+    (s) => s.settings.auto_callout_text_fabricated ?? "",
   );
-  const autoCalloutTextKunye = useSettingsStore(
-    (s) => s.settings.auto_callout_text_kunye ?? "",
+  const autoCalloutTextCitation = useSettingsStore(
+    (s) => s.settings.auto_callout_text_citation ?? "",
   );
   const updateSetting = useSettingsStore((s) => s.updateSetting);
   const notes = useMemo(
@@ -443,7 +443,7 @@ export default function ParsingPage() {
     }
   }, [selectedPdfId, selectedPdf?.status]);
 
-  // On unmount we just drop our reference — the doc itself is owned by
+  // On unmount we just drop our source — the doc itself is owned by
   // document-cache.ts, which manages its lifetime via the LRU. Destroying
   // it here would evict a potentially-cached doc out from under the cache.
   useEffect(() => {
@@ -854,8 +854,8 @@ export default function ParsingPage() {
     setSelectedNoteId(note.id);
   }
 
-  async function runAutoAnnotateForTrustTag(
-    trustTag: "uydurma" | "künye",
+  async function runAutoAnnotateForDecisionTag(
+    decisionTag: "fabricated" | "citation",
     calloutText: string,
   ) {
     if (!selectedPdfId) return;
@@ -869,7 +869,7 @@ export default function ParsingPage() {
       resultsBySourceId: results,
       pageHeightFor: (pageNum) => pages[pageNum]?.height ?? 0,
       pageWidthFor: (pageNum) => pages[pageNum]?.width ?? 0,
-      trustTag,
+      decisionTag,
       calloutText,
     });
     if (stats.highlightsAdded === 0 && stats.calloutsAdded === 0) {
@@ -2117,7 +2117,7 @@ export default function ParsingPage() {
                 </div>
               )}
 
-              {/* Per-trust-tag auto-annotate. One block per category
+              {/* Per-decision-tag auto-annotate. One block per category
                   (Uydurma / Künye): an editable textarea carrying the
                   callout text the user wants stamped, plus the button
                   that runs the sweep. Textarea contents persist via the
@@ -2134,12 +2134,12 @@ export default function ParsingPage() {
                 }}
               >
                 <span style={{ fontSize: 11, color: "#71717a" }}>
-                  {t("parsing.autoAnnotateUydurmaLabel")}
+                  {t("parsing.autoAnnotateFabricatedLabel")}
                 </span>
                 <textarea
-                  value={autoCalloutTextUydurma}
+                  value={autoCalloutTextFabricated}
                   onChange={(e) =>
-                    updateSetting("auto_callout_text_uydurma", e.target.value)
+                    updateSetting("auto_callout_text_fabricated", e.target.value)
                   }
                   rows={2}
                   style={{
@@ -2155,15 +2155,15 @@ export default function ParsingPage() {
                 <button
                   className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
                   onClick={() =>
-                    runAutoAnnotateForTrustTag(
-                      "uydurma",
-                      autoCalloutTextUydurma,
+                    runAutoAnnotateForDecisionTag(
+                      "fabricated",
+                      autoCalloutTextFabricated,
                     )
                   }
                   disabled={!selectedPdfId || sources.length === 0}
-                  title={t("parsing.autoAnnotateUydurmaTitle")}
+                  title={t("parsing.autoAnnotateFabricatedTitle")}
                 >
-                  {t("parsing.autoAnnotateUydurma")}
+                  {t("parsing.autoAnnotateFabricated")}
                 </button>
               </div>
               <div
@@ -2177,12 +2177,12 @@ export default function ParsingPage() {
                 }}
               >
                 <span style={{ fontSize: 11, color: "#71717a" }}>
-                  {t("parsing.autoAnnotateKunyeLabel")}
+                  {t("parsing.autoAnnotateCitationLabel")}
                 </span>
                 <textarea
-                  value={autoCalloutTextKunye}
+                  value={autoCalloutTextCitation}
                   onChange={(e) =>
-                    updateSetting("auto_callout_text_kunye", e.target.value)
+                    updateSetting("auto_callout_text_citation", e.target.value)
                   }
                   rows={2}
                   style={{
@@ -2198,12 +2198,12 @@ export default function ParsingPage() {
                 <button
                   className={`${styles["zoom-btn"]} ${styles["zoom-text"]}`}
                   onClick={() =>
-                    runAutoAnnotateForTrustTag("künye", autoCalloutTextKunye)
+                    runAutoAnnotateForDecisionTag("citation", autoCalloutTextCitation)
                   }
                   disabled={!selectedPdfId || sources.length === 0}
-                  title={t("parsing.autoAnnotateKunyeTitle")}
+                  title={t("parsing.autoAnnotateCitationTitle")}
                 >
-                  {t("parsing.autoAnnotateKunye")}
+                  {t("parsing.autoAnnotateCitation")}
                 </button>
               </div>
 

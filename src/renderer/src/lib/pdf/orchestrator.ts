@@ -1,6 +1,6 @@
 // Client-side parse orchestrator. Replaces the backend parse job: reads PDF
 // bytes via the Electron fs IPC, parses them with pdfjs-dist, and runs the
-// TypeScript reference detector. The caller merges the result into pdf-store
+// TypeScript source detector. The caller merges the result into pdf-store
 // / sources-store exactly like the old backend parse flow did.
 //
 // Existing backend source cache persistence is preserved: we check
@@ -10,7 +10,7 @@
 import { api } from '../api/rest-client'
 import type { SourceRectangle } from '../api/types'
 import { parsePdf } from './parser'
-import { detectReferences } from './reference-detector'
+import { detectSources } from './source-detector'
 
 export interface ParseOutcome {
   pdfId: string
@@ -71,7 +71,7 @@ export async function parseAndDetect(filePath: string): Promise<ParseOutcome> {
       }
     }
 
-    const { sources, numbered } = detectReferences(parsed)
+    const { sources, numbered } = detectSources(parsed)
 
     // Persist freshly detected sources + numbered flag to the backend cache
     // so they survive reloads and so verification (which currently reads from

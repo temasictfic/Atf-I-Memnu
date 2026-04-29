@@ -8,7 +8,6 @@ a list of entity dicts matching HuggingFace's "simple" aggregation output
 changes.
 
 Execution provider is auto-detected:
-  - DirectML (Windows, any DirectX 12 GPU)
   - CUDA (NVIDIA GPUs)
   - CPU otherwise
 """
@@ -40,11 +39,10 @@ _MAX_SEQ_LEN = 512
 
 # Single-worker executor used by ner_extractor to serialize every inference
 # call through one thread. The default asyncio executor has many workers, so
-# concurrent verify batches would call `session.run()` in parallel — which
-# is unsafe on DirectML (it crashes the Gather op in the position-embedding
-# layer under concurrent Run calls). One-at-a-time inference is also all a
-# single GPU can actually do, and the model is small (~30-80 ms/call on CPU,
-# ~130-140 ms on DirectML) so serializing doesn't bottleneck interactive use.
+# concurrent verify batches would call `session.run()` in parallel — and
+# one-at-a-time inference is all a single GPU can actually do anyway. The
+# model is small (~30-80 ms/call on CPU) so serializing doesn't bottleneck
+# interactive use.
 _inference_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
 
@@ -52,8 +50,7 @@ def get_inference_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Return the dedicated single-thread executor for NER inference.
 
     Created lazily. Keeping it module-global means every call to the model
-    is serialized behind one worker thread, which is what ONNX Runtime's
-    DirectML provider requires for stability.
+    is serialized behind one worker thread.
     """
     global _inference_executor
     if _inference_executor is None:
@@ -97,9 +94,6 @@ def _detect_ort_provider() -> str:
 
         available = ort.get_available_providers()
         logger.info("ONNX Runtime available providers: %s", available)
-        if "DmlExecutionProvider" in available:
-            logger.info("GPU detected: using DirectML execution provider")
-            return "DmlExecutionProvider"
         if "CUDAExecutionProvider" in available:
             logger.info("GPU detected: using CUDA execution provider")
             return "CUDAExecutionProvider"
@@ -333,11 +327,10 @@ async def preload_pipeline() -> None:
     prevent the app from starting — extraction falls back to regex.
 
     Retries once on failure with a short delay. This covers the first-
-    launch-after-auto-update race where DirectML's driver state is still
-    warming from the previous process, or the installer hasn't yet
-    flushed the 125 MB model file to disk. A single retry + 2 s pause
-    is enough to clear that window without adding meaningful startup
-    latency to a successful cold-start.
+    launch-after-auto-update race where the installer hasn't yet flushed
+    the 125 MB model file to disk. A single retry + 2 s pause is enough
+    to clear that window without adding meaningful startup latency to a
+    successful cold-start.
     """
     global _preload_complete, _load_error
     if not settings.ner_enabled:

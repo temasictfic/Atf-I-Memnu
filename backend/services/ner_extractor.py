@@ -17,7 +17,7 @@ URL_RE = re.compile(r"https?://[^\s,;\"'}\]]+")
 
 
 async def extract_fields_ner(raw_text: str) -> ParsedSource | None:
-    """Extract structured fields from raw reference text using SIRIS citation parser.
+    """Extract structured fields from raw source text using SIRIS citation parser.
 
     Returns None if the pipeline is unavailable or extraction fails.
     """
@@ -34,10 +34,10 @@ async def extract_fields_ner(raw_text: str) -> ParsedSource | None:
             get_inference_executor(), _extract, pipeline, raw_text
         )
     except Exception as e:
-        # Exception messages from ONNX Runtime's DirectML provider can
-        # contain non-UTF8 bytes (Windows system error text in the local
-        # codepage). Use repr() + type name to guarantee the log message
-        # is a safe ASCII/UTF8 Python string.
+        # Exception messages from ONNX Runtime can contain non-UTF8 bytes
+        # (Windows system error text in the local codepage). Use repr() +
+        # type name to guarantee the log message is a safe ASCII/UTF8
+        # Python string.
         logger.warning("NER extraction failed: %s: %s", type(e).__name__, repr(e))
         return None
 
@@ -92,7 +92,7 @@ def _extract(pipeline, raw_text: str) -> ParsedSource:
         authors=authors,
         year=year,
         url=url,
-        source=source,
+        journal=source,
         extraction_method="ner",
         parse_confidence=confidence,
     )

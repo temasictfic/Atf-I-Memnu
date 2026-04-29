@@ -7,13 +7,13 @@
 
 import { create } from 'zustand'
 
-import type { TrustTag } from '../api/types'
+import type { DecisionTag } from '../api/types'
 
 export type NoteKind = 'highlight' | 'callout'
 
-// Subset of TrustTag that the per-trust-tag auto-annotate buttons emit. 'clean'
-// never produces auto notes — only flagged references do.
-export type AutoTrustTag = Extract<TrustTag, 'uydurma' | 'künye'>
+// Subset of DecisionTag that the per-decision-tag auto-annotate buttons emit.
+// 'valid' never produces auto notes — only flagged sources do.
+export type AutoDecisionTag = Extract<DecisionTag, 'fabricated' | 'citation'>
 
 export interface NoteQuad {
   // A single highlight rectangle in page-local pixel coordinates (SCALE space),
@@ -54,10 +54,10 @@ export interface Note {
   // SourceRectangle. Used to dedupe on re-run so clicking auto-annotate
   // multiple times doesn't stack duplicate markup.
   autoForSourceId?: string
-  // Which trust-tag button produced this note. Lets the per-category auto
+  // Which decision-tag button produced this note. Lets the per-category auto
   // remover wipe its own batch without touching the other category's notes.
   // Absent on the shared title callout and on manual notes.
-  autoTrustTag?: AutoTrustTag
+  autoDecisionTag?: AutoDecisionTag
   createdAt: number
 }
 
@@ -230,19 +230,19 @@ export function removeAutoNotesForPdf(pdfId: string): void {
   })
 }
 
-// Drop only the auto-generated notes belonging to one trust-tag category.
+// Drop only the auto-generated notes belonging to one decision-tag category.
 // Lets the two per-category buttons re-run independently without wiping each
 // other. The shared title callout is managed separately by auto-notes.ts so
 // clicking a category that has zero matching refs doesn't delete the title
 // stamped by the other category.
-export function removeAutoNotesForPdfByTrustTag(
+export function removeAutoNotesForPdfByDecisionTag(
   pdfId: string,
-  trustTag: AutoTrustTag,
+  decisionTag: AutoDecisionTag,
 ): void {
   useNotesStore.setState(state => {
     const list = state.notesByPdf[pdfId]
     if (!list) return state
-    const filtered = list.filter(n => n.autoTrustTag !== trustTag)
+    const filtered = list.filter(n => n.autoDecisionTag !== decisionTag)
     if (filtered.length === list.length) return state
     return {
       notesByPdf: { ...state.notesByPdf, [pdfId]: filtered },

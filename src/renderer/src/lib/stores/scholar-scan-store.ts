@@ -3,7 +3,7 @@ import type { ScholarQueueItem, ScholarScanStatus } from '../services/scholar-sc
 import { scholarScanner } from '../services/scholar-scanner'
 import { useVerificationStore } from './verification-store'
 import { useSourcesStore } from './sources-store'
-import { sanitizeReferenceTextForSearch } from '../utils/reference-text'
+import { sanitizeSourceTextForSearch } from '../utils/source-text'
 import { api } from '../api/rest-client'
 
 interface ScholarScanState {
@@ -74,7 +74,7 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
   })
 
   // Build the scan queue. Each item's searchText is the NER-extracted title
-  // of the reference — the raw sanitized text is only used as a fallback when
+  // of the source — the raw sanitized text is only used as a fallback when
   // extraction returns an empty title so the source is not silently skipped.
   async function buildQueue(pdfId: string, sourceIds?: string[]): Promise<ScholarQueueItem[]> {
     const verStore = useVerificationStore.getState()
@@ -87,7 +87,7 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
       if (sourceIds) return sourceIds.includes(s.id)
       if (enabledSources[s.id] === false) return false
       const r = results[s.id]
-      return r && (r.status === 'not_found' || r.status === 'problematic')
+      return r && (r.status === 'low' || r.status === 'medium')
     })
 
     return Promise.all(
@@ -101,9 +101,9 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
           console.warn(`[Scholar] extractFields failed for ${s.id}:`, err)
         }
         if (!searchText) {
-          searchText = sanitizeReferenceTextForSearch(rawText)
+          searchText = sanitizeSourceTextForSearch(rawText)
         } else {
-          searchText = sanitizeReferenceTextForSearch(searchText)
+          searchText = sanitizeSourceTextForSearch(searchText)
         }
         return { pdfId, sourceId: s.id, searchText }
       }),
@@ -124,8 +124,8 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
 
     startScanForPdf: async (pdfId) => {
       // Show the banner immediately while we build the queue. NER field
-      // extraction runs one HTTP call per non-found source, and for PDFs with
-      // many references the wait before status flips to 'scanning' is
+      // extraction runs one HTTP call per non-high source, and for PDFs with
+      // many sources the wait before status flips to 'scanning' is
       // user-visible — so flip it now and let the banner render a
       // "Preparing…" state until the queue is ready.
       set({

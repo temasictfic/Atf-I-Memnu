@@ -6,20 +6,20 @@ status pills). The scoring weights below are backend-only — the renderer
 displays composite scores produced here but never recomputes them.
 
 Bands:
-- score >= STATUS_FOUND_THRESHOLD       → "found"       (UI: High / Yüksek)
-- score >= STATUS_PROBLEMATIC_THRESHOLD → "problematic" (UI: Medium / Orta)
-- otherwise                              → "not_found"   (UI: Low / Düşük)
+- score >= STATUS_HIGH_THRESHOLD   → "high"   (UI: High / Yüksek)
+- score >= STATUS_MEDIUM_THRESHOLD → "medium" (UI: Medium / Orta)
+- otherwise                         → "low"    (UI: Low / Düşük)
 """
 
 # --- Status-band thresholds (mirrored in scoring.ts) -----------------------
 
-STATUS_FOUND_THRESHOLD = 0.75
-STATUS_PROBLEMATIC_THRESHOLD = 0.50
+STATUS_HIGH_THRESHOLD = 0.75
+STATUS_MEDIUM_THRESHOLD = 0.50
 TITLE_MATCH_THRESHOLD = 0.85
 DOI_MATCH_MIN_SCORE = 0.50
 
 # --- Parse-confidence gates -------------------------------------------------
-# A reference's ``parse_confidence`` reflects how cleanly source-extraction
+# A source's ``parse_confidence`` reflects how cleanly source-extraction
 # pulled fields out of raw text. Two well-known cutoffs drive downstream
 # behaviour:
 #   < LOW  → NER fallback to regex extractor; orchestrator searches with
@@ -51,7 +51,7 @@ YEAR_EXACT_SCORE = 1.0
 YEAR_OFF_BY_ONE_SCORE = 0.5
 
 # Venue (journal/conference) match — minimum normalised fuzzy ratio for the
-# !source chip to clear. Lower than title's threshold because canonicalised
+# !journal chip to clear. Lower than title's threshold because canonicalised
 # venue strings are already aggressively normalised before comparison.
 
 VENUE_FUZZY_MATCH_THRESHOLD = 0.6

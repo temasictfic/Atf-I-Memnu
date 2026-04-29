@@ -2,7 +2,7 @@
  * Google Scholar automated scanner.
  *
  * Uses a hidden Electron <webview> to sequentially search Google Scholar
- * for non-Found references, extract results from the DOM, and send them
+ * for non-High sources, extract results from the DOM, and send them
  * to the backend for scoring.
  */
 
@@ -368,7 +368,7 @@ export class ScholarScanner {
     // shape) and triggers the hidden-webview fallback below. An empty array
     // means "extraction succeeded, Scholar returned 0 hits" — a legitimate
     // signal we MUST NOT retry, otherwise we burn an extra request per
-    // genuine no-result reference.
+    // genuine no-result source.
     const overlay = this.overlayWebview
     let candidates: ScholarCandidate[] | null = null
     console.log(`[Scholar] Overlay webview available: ${!!overlay}`)

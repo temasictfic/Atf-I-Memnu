@@ -1,8 +1,8 @@
 // Generates a from-scratch PDF report of verification results using pdf-lib.
 //
-// Each reference is rendered inside a bordered box:
+// Each source is rendered inside a bordered box:
 //   ┌──────────────────────────────────────┐
-//   │ [N] raw reference text that wraps    │
+//   │ [N] raw source text that wraps    │
 //   │     across multiple lines …          │
 //   ├──────────────────────────────────────┤
 //   │ title:87%  Citation  !authors,!year  │
@@ -15,7 +15,7 @@
 
 import { PDFDocument, PDFName, PDFString, PDFArray, PDFNumber, PDFDict, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
-import { STATUS_RGB, TRUST_RGB } from '../constants/colors'
+import { STATUS_RGB, DECISION_RGB } from '../constants/colors'
 import { dbScoreRgbTuple, verifyStatusRgbTuple } from '../utils/status-helpers'
 // @ts-expect-error Vite ?url import returns a string
 import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
@@ -65,9 +65,9 @@ const LH = 1.4
 
 const tup = (t: readonly [number, number, number]): RGB => rgb(t[0], t[1], t[2])
 
-const COLOR_FOUND: RGB        = tup(STATUS_RGB.found)
-const COLOR_PROBLEMATIC: RGB  = tup(STATUS_RGB.problematic)
-const COLOR_NOT_FOUND: RGB    = tup(STATUS_RGB.not_found)
+const COLOR_HIGH: RGB         = tup(STATUS_RGB.high)
+const COLOR_MEDIUM: RGB       = tup(STATUS_RGB.medium)
+const COLOR_LOW: RGB          = tup(STATUS_RGB.low)
 const COLOR_TEXT: RGB         = rgb(0.1, 0.1, 0.1)
 const COLOR_MUTED: RGB        = rgb(0.47, 0.44, 0.40)
 const COLOR_DARK: RGB         = rgb(0.267, 0.251, 0.235)
@@ -79,13 +79,13 @@ const COLOR_CARD_BORDER: RGB  = rgb(0.906, 0.898, 0.890)
 const COLOR_CARD_BG: RGB      = rgb(0.980, 0.980, 0.978)
 const COLOR_DB_BG: RGB        = rgb(0.996, 0.953, 0.780)
 const COLOR_TEAL: RGB         = rgb(0.0, 0.588, 0.533)
-// Trust-tag palette (Geçerli / Künye / Uydurma) — sourced from constants/colors.ts.
-const COLOR_VALID_BORDER: RGB   = tup(TRUST_RGB.validBorder)
-const COLOR_VALID_TEXT: RGB     = tup(TRUST_RGB.validText)
-const COLOR_KUNYE_BORDER: RGB   = tup(TRUST_RGB.kunyeBorder)
-const COLOR_KUNYE_TEXT: RGB     = tup(TRUST_RGB.kunyeText)
-const COLOR_UYDURMA_BORDER: RGB = tup(TRUST_RGB.uydurmaBorder)
-const COLOR_UYDURMA_TEXT: RGB   = tup(TRUST_RGB.uydurmaText)
+// Decision-tag palette (Valid / Citation / Fabricated) — sourced from constants/colors.ts.
+const COLOR_VALID_BORDER: RGB      = tup(DECISION_RGB.validBorder)
+const COLOR_VALID_TEXT: RGB        = tup(DECISION_RGB.validText)
+const COLOR_CITATION_BORDER: RGB   = tup(DECISION_RGB.citationBorder)
+const COLOR_CITATION_TEXT: RGB     = tup(DECISION_RGB.citationText)
+const COLOR_FABRICATED_BORDER: RGB = tup(DECISION_RGB.fabricatedBorder)
+const COLOR_FABRICATED_TEXT: RGB   = tup(DECISION_RGB.fabricatedText)
 
 const statusColor = (s: string): RGB => tup(verifyStatusRgbTuple(s))
 const dbScoreColor = (s: number): RGB => tup(dbScoreRgbTuple(s))
@@ -100,39 +100,39 @@ export interface ReportBestMatch {
 export interface ReportSource {
   refNumber: number; text: string; status: string
   problemTags: string[]; bestMatch?: ReportBestMatch
-  trustTag?: 'clean' | 'künye' | 'uydurma'
-  trustTagOverride?: 'clean' | 'künye' | 'uydurma' | null
+  decisionTag?: 'valid' | 'citation' | 'fabricated'
+  decisionTagOverride?: 'valid' | 'citation' | 'fabricated' | null
   tagOverrides?: Record<string, boolean>
   scholarUrl?: string; googleUrl?: string
 }
 export interface ReportData {
   pdfName: string
-  summary: { found: number; problematic: number; not_found: number; total: number; valid?: number; kunye?: number; uydurma?: number }
+  summary: { high: number; medium: number; low: number; total: number; valid?: number; citation?: number; fabricated?: number }
   sources: ReportSource[]
   labels: {
-    header: string; found: string; problematic: string; notFound: string
+    header: string; high: string; medium: string; low: string
     bestMatch: string; problems: string; noMatch: string
-    references: string
-    titleTag: string; validTag: string; citationTag: string; uydurmaTag?: string; citationError?: string
+    sourcesLabel: string
+    titleTag: string; validTag: string; citationTag: string; fabricatedTag?: string; citationError?: string
     tagLabel: (tag: string) => string
   }
 }
 
-function effectiveTrust(src: ReportSource): 'clean' | 'künye' | 'uydurma' {
-  if (src.trustTagOverride) return src.trustTagOverride
-  if (!src.bestMatch) return 'uydurma'
-  // Mirror classifyTrustFromTags in tagState.ts — compute pill live from
+function effectiveDecision(src: ReportSource): 'valid' | 'citation' | 'fabricated' {
+  if (src.decisionTagOverride) return src.decisionTagOverride
+  if (!src.bestMatch) return 'fabricated'
+  // Mirror classifyDecisionFromTags in tagState.ts — compute pill live from
   // the current chip states so export matches what the user sees on screen.
   const authorsOn = effectiveTagOnPdf(src, 'authors')
   const yearOn    = effectiveTagOnPdf(src, 'year')
   const titleOn   = effectiveTagOnPdf(src, 'title')
-  const sourceOn  = effectiveTagOnPdf(src, 'source')
+  const journalOn = effectiveTagOnPdf(src, 'journal')
   const doiOn     = effectiveTagOnPdf(src, 'doi/arXiv')
   const authorMatches = !authorsOn, yearMatches = !yearOn, titleMatches = !titleOn
-  const sourceMatches = !sourceOn,  doiMatches  = !doiOn
-  if (authorMatches && yearMatches && titleMatches && sourceMatches) return 'clean'
-  if (titleMatches || (authorMatches && (yearMatches || sourceMatches || doiMatches))) return 'künye'
-  return 'uydurma'
+  const journalMatches = !journalOn, doiMatches = !doiOn
+  if (authorMatches && yearMatches && titleMatches && journalMatches) return 'valid'
+  if (titleMatches || (authorMatches && (yearMatches || journalMatches || doiMatches))) return 'citation'
+  return 'fabricated'
 }
 
 // --- Helpers ---
@@ -268,8 +268,8 @@ function measureTop(src: ReportSource, rf: PDFFont, bf: PDFFont): TopMeasure {
 
 interface TagItem { text: string; color: RGB; width: number; align?: 'right' }
 
-type PdfTagKey = 'authors' | 'year' | 'title' | 'source' | 'doi/arXiv'
-const PDF_TAG_ORDER: PdfTagKey[] = ['authors', 'year', 'title', 'source', 'doi/arXiv']
+type PdfTagKey = 'authors' | 'year' | 'title' | 'journal' | 'doi/arXiv'
+const PDF_TAG_ORDER: PdfTagKey[] = ['authors', 'year', 'title', 'journal', 'doi/arXiv']
 
 function defaultTagOnPdf(src: ReportSource, tag: PdfTagKey): boolean {
   const bm = src.bestMatch
@@ -277,7 +277,7 @@ function defaultTagOnPdf(src: ReportSource, tag: PdfTagKey): boolean {
   switch (tag) {
     case 'authors':  return probs.includes('!authors')   && !!bm
     case 'year':     return probs.includes('!year')      && !!bm
-    case 'source':   return probs.includes('!source')    && !!bm
+    case 'journal':  return probs.includes('!journal')   && !!bm
     case 'doi/arXiv':return probs.includes('!doi/arXiv') && !!bm
     case 'title':    return probs.includes('!title')     && !!bm
   }
@@ -307,7 +307,7 @@ function measureTags(src: ReportSource, labels: ReportData['labels'], bf: PDFFon
       pushChip(text, COLOR_TEAL, true)
     } else {
       const text = labels.tagLabel(`!${tag}`)
-      pushChip(text, COLOR_PROBLEMATIC, true)
+      pushChip(text, COLOR_MEDIUM, true)
     }
   }
   // "Sorunlar: " prefix — only when at least one chip was added.
@@ -320,17 +320,17 @@ function measureTags(src: ReportSource, labels: ReportData['labels'], bf: PDFFon
     })
   }
 
-  // Trust tag — always rendered (cycles Geçerli/Künye/Uydurma), override wins.
-  const trust = effectiveTrust(src)
-  if (trust === 'clean') {
+  // Decision tag — always rendered (cycles Valid/Citation/Fabricated), override wins.
+  const decision = effectiveDecision(src)
+  if (decision === 'valid') {
     const t = labels.validTag
     tags.push({ text: t, color: COLOR_VALID_TEXT, width: bf.widthOfTextAtSize(san(t), TAG_SIZE), align: 'right' })
-  } else if (trust === 'künye') {
+  } else if (decision === 'citation') {
     const t = labels.citationTag
-    tags.push({ text: t, color: COLOR_KUNYE_TEXT, width: bf.widthOfTextAtSize(san(t), TAG_SIZE), align: 'right' })
+    tags.push({ text: t, color: COLOR_CITATION_TEXT, width: bf.widthOfTextAtSize(san(t), TAG_SIZE), align: 'right' })
   } else {
-    const t = labels.uydurmaTag ?? 'Uydurma'
-    tags.push({ text: t, color: COLOR_UYDURMA_TEXT, width: bf.widthOfTextAtSize(san(t), TAG_SIZE), align: 'right' })
+    const t = labels.fabricatedTag ?? 'Fabricated'
+    tags.push({ text: t, color: COLOR_FABRICATED_TEXT, width: bf.widthOfTextAtSize(san(t), TAG_SIZE), align: 'right' })
   }
 
   return tags
@@ -385,7 +385,7 @@ function measureCard(m: ReportBestMatch, src: ReportSource, rf: PDFFont, bf: PDF
 function measureBottom(src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont): { tags: TagItem[]; card: CardMeasure | null; noMatch: boolean; height: number } {
   const tags = measureTags(src, labels, bf)
   const card = src.bestMatch ? measureCard(src.bestMatch, src, rf, bf) : null
-  const noMatch = !src.bestMatch && src.status === 'not_found'
+  const noMatch = !src.bestMatch && src.status === 'low'
 
   let h = 0
   const th = tagsRowHeight(tags)
@@ -422,27 +422,27 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
   w.text(displayName, MARGIN_L, SUBTITLE_SIZE, rf, COLOR_MUTED)
   w.skip(8)
 
-  // Summary stats on a single row: "222 referans   ● Bulundu: 5   ● Sorunlu: 64   ● Bulunamadı: 153"
+  // Summary stats on a single row: "222 kaynak   ● Bulundu: 5   ● Sorunlu: 64   ● Bulunamadı: 153"
   {
-    const totalLabel = `${summary.total} ${labels.references}`
+    const totalLabel = `${summary.total} ${labels.sourcesLabel}`
     let sx = MARGIN_L
     const sy = w.y - BODY_SIZE
     w.pg.drawText(san(totalLabel), { x: sx, y: sy, size: BODY_SIZE, font: bf, color: COLOR_TEXT })
     sx += bf.widthOfTextAtSize(san(totalLabel), BODY_SIZE) + 12
 
     const summaryParts: { l: string; c: number; clr: RGB }[] = [
-      { l: labels.found, c: summary.found, clr: COLOR_FOUND },
-      { l: labels.problematic, c: summary.problematic, clr: COLOR_PROBLEMATIC },
-      { l: labels.notFound, c: summary.not_found, clr: COLOR_NOT_FOUND },
+      { l: labels.high, c: summary.high, clr: COLOR_HIGH },
+      { l: labels.medium, c: summary.medium, clr: COLOR_MEDIUM },
+      { l: labels.low, c: summary.low, clr: COLOR_LOW },
     ]
     if (summary.valid != null) {
       summaryParts.push({ l: labels.validTag, c: summary.valid, clr: COLOR_VALID_BORDER })
     }
-    if (summary.kunye != null) {
-      summaryParts.push({ l: labels.citationTag, c: summary.kunye, clr: COLOR_KUNYE_BORDER })
+    if (summary.citation != null) {
+      summaryParts.push({ l: labels.citationTag, c: summary.citation, clr: COLOR_CITATION_BORDER })
     }
-    if (summary.uydurma != null) {
-      summaryParts.push({ l: labels.uydurmaTag ?? 'Uydurma', c: summary.uydurma, clr: COLOR_UYDURMA_BORDER })
+    if (summary.fabricated != null) {
+      summaryParts.push({ l: labels.fabricatedTag ?? 'Fabricated', c: summary.fabricated, clr: COLOR_FABRICATED_BORDER })
     }
     for (const p of summaryParts) {
       w.pg.drawCircle({ x: sx + 3, y: sy + BODY_SIZE * 0.35, size: 3, color: p.clr })
@@ -457,7 +457,7 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
   w.pg.drawLine({ start: { x: MARGIN_L, y: w.y }, end: { x: PAGE_W - MARGIN_R, y: w.y }, thickness: 0.5, color: COLOR_BORDER })
   w.skip(10)
 
-  // --- References --- preserve caller-provided order (matches middle-pane sort).
+  // --- Sources --- preserve caller-provided order (matches middle-pane sort).
   const sorted = data.sources
 
   for (const src of sorted) {
@@ -467,20 +467,20 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
     const boxX = MARGIN_L
     const boxW = CONTENT_W
 
-    // Never split a reference box across pages
+    // Never split a source box across pages
     if (w.y - totalBoxH < MARGIN_B) w.newPage()
 
     const boxTopY = w.y
 
-    // Outer border — driven by the (possibly overridden) trust classification.
-    const trust = effectiveTrust(src)
+    // Outer border — driven by the (possibly overridden) decision classification.
+    const decision = effectiveDecision(src)
     let borderColor: RGB
     let borderWidth: number
-    if (trust === 'künye') {
-      borderColor = COLOR_KUNYE_BORDER; borderWidth = 1.2
-    } else if (trust === 'uydurma') {
-      borderColor = COLOR_UYDURMA_BORDER; borderWidth = 1.2
-    } else if (trust === 'clean') {
+    if (decision === 'citation') {
+      borderColor = COLOR_CITATION_BORDER; borderWidth = 1.2
+    } else if (decision === 'fabricated') {
+      borderColor = COLOR_FABRICATED_BORDER; borderWidth = 1.2
+    } else if (decision === 'valid') {
       borderColor = COLOR_VALID_BORDER; borderWidth = 1.0
     } else {
       borderColor = COLOR_BORDER; borderWidth = 0.75
@@ -508,7 +508,7 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
       w.skip(BODY_SIZE * LH)
 
       // Remaining lines indented so they line up with the first letter
-      // of the reference text (past the [N] badge) instead of sliding
+      // of the source text (past the [N] badge) instead of sliding
       // back under the badge.
       for (let i = 1; i < top.refLines.length; i++) {
         w.text(top.refLines[i], textX, SMALL_SIZE, rf, COLOR_TEXT)
@@ -657,7 +657,7 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
       const cardDrawn = cardTopY - w.y
       if (cardDrawn < card.totalHeight) w.skip(card.totalHeight - cardDrawn)
     } else if (bot.noMatch) {
-      w.text(labels.noMatch, cx, SMALL_SIZE, rf, COLOR_NOT_FOUND)
+      w.text(labels.noMatch, cx, SMALL_SIZE, rf, COLOR_LOW)
     }
 
     // Ensure cursor past box bottom

@@ -1,6 +1,6 @@
 """Latency, disk, and memory benchmark: SIRIS baseline vs fine-tuned fp32 vs INT8 ONNX.
 
-Measures p50/p95/p99 ms per reference on real kaynaklar_test raw texts, peak
+Measures p50/p95/p99 ms per source on real kaynaklar_test raw texts, peak
 RSS during inference, and on-disk model size. Appends a markdown table to the
 most recent `eval_<timestamp>.md` under `backend/training/reports/`, or creates
 a new report if none exists.
@@ -100,7 +100,7 @@ def bench_pipeline(pipeline_obj, refs: list[str]) -> dict:
     }
 
 
-def load_reference_texts(merged_dir: Path, limit: int) -> list[str]:
+def load_source_texts(merged_dir: Path, limit: int) -> list[str]:
     sidecar = merged_dir / "kaynaklar_test_raw.jsonl"
     texts: list[str] = []
     if sidecar.exists():
@@ -147,11 +147,11 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    refs = load_reference_texts(args.merged_dir, BENCH_REFS + WARMUP_REFS)
+    refs = load_source_texts(args.merged_dir, BENCH_REFS + WARMUP_REFS)
     if not refs:
-        print("error: no reference texts available for benchmarking", file=sys.stderr)
+        print("error: no source texts available for benchmarking", file=sys.stderr)
         return 2
-    print(f"Loaded {len(refs)} reference texts for benchmarking")
+    print(f"Loaded {len(refs)} source texts for benchmarking")
 
     models_to_test: list[tuple[str, Callable[[], object], Path | None]] = []
     if "baseline" not in args.skip:
@@ -209,7 +209,7 @@ def main() -> int:
             f"| {r['p99_ms']:.1f} | {r['mean_ms']:.1f} | {r['peak_rss_mb']:.0f} | {disk} |"
         )
     lines.append("")
-    lines.append(f"Bench sample size: {BENCH_REFS} references (after {WARMUP_REFS}-ref warmup)")
+    lines.append(f"Bench sample size: {BENCH_REFS} sources (after {WARMUP_REFS}-ref warmup)")
     lines.append("")
 
     existing = report_path.read_text(encoding="utf-8") if report_path.exists() else ""

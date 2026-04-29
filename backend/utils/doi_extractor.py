@@ -1,4 +1,4 @@
-"""Extract and normalize DOIs from reference text."""
+"""Extract and normalize DOIs from source text."""
 
 import re
 

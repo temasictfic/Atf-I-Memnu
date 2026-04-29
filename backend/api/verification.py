@@ -27,52 +27,17 @@ def _save_verify_cache(pdf_id: str, results: dict[str, VerificationResult]) -> N
     cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
-_LEGACY_STATUS_MAP = {
-    "green": "found",
-    "yellow": "problematic",
-    "red": "problematic",
-    "black": "not_found",
-}
-
-
 def _load_verify_cache(pdf_id: str) -> dict[str, VerificationResult] | None:
-    """Load verification results from disk cache.
-
-    Migrates legacy 4-category statuses (green/yellow/red/black) to the
-    3-category model (found/problematic/not_found).
-    """
+    """Load verification results from disk cache."""
     cache_file = settings.get_cache_dir() / f"verify_{pdf_id}.json"
     if not cache_file.exists():
         return None
     try:
         data = json.loads(cache_file.read_text(encoding="utf-8"))
-        migrated = False
-        normalized: dict[str, VerificationResult] = {}
-        for source_id, payload in data.items():
-            entry = dict(payload)
-            old_status = entry.get("status")
-            if old_status in _LEGACY_STATUS_MAP:
-                entry["status"] = _LEGACY_STATUS_MAP[old_status]
-                migrated = True
-            # Drop journal_match from legacy MatchDetails entries
-            for m in (entry.get("all_results") or []):
-                md = m.get("match_details") or {}
-                md.pop("journal_match", None)
-                # Clamp legacy scores that may predate the [0, 1] cap
-                if isinstance(m.get("score"), (int, float)) and m["score"] > 1.0:
-                    m["score"] = 1.0
-            best = entry.get("best_match")
-            if isinstance(best, dict):
-                md = best.get("match_details") or {}
-                md.pop("journal_match", None)
-                if isinstance(best.get("score"), (int, float)) and best["score"] > 1.0:
-                    best["score"] = 1.0
-            normalized[source_id] = VerificationResult(**entry)
-
-        if migrated:
-            _save_verify_cache(pdf_id, normalized)
-
-        return normalized
+        return {
+            source_id: VerificationResult(**payload)
+            for source_id, payload in data.items()
+        }
     except Exception:
         return None
 
@@ -86,16 +51,16 @@ class VerifySourceRequest(BaseModel):
 
 
 class OverrideRequest(BaseModel):
-    status: str  # found, problematic, not_found
+    status: str  # high, medium, low
 
 
 class TagOverrideRequest(BaseModel):
-    tag: str            # "authors" | "year" | "title" | "source" | "doi/arXiv"
+    tag: str            # "authors" | "year" | "title" | "journal" | "doi/arXiv"
     state: bool | None  # None clears the override
 
 
-class TrustOverrideRequest(BaseModel):
-    trust: str | None   # "clean" | "künye" | "uydurma" | None (clear)
+class DecisionOverrideRequest(BaseModel):
+    decision: str | None   # "valid" | "citation" | "fabricated" | None (clear)
 
 
 class VerifyBatchRequest(BaseModel):
@@ -244,9 +209,9 @@ async def get_verify_status(job_id: str):
     summaries = []
     for pdf_id in job["pdfs"]:
         results = verify_results.get(pdf_id, {})
-        found = sum(1 for r in results.values() if r.status == "found")
-        problematic = sum(1 for r in results.values() if r.status == "problematic")
-        not_found = sum(1 for r in results.values() if r.status == "not_found")
+        high = sum(1 for r in results.values() if r.status == "high")
+        medium = sum(1 for r in results.values() if r.status == "medium")
+        low = sum(1 for r in results.values() if r.status == "low")
         in_progress = sum(1 for r in results.values() if r.status == "in_progress")
 
         # A PDF is completed if: no in-progress sources AND either
@@ -255,9 +220,9 @@ async def get_verify_status(job_id: str):
 
         summaries.append({
             "pdf_id": pdf_id,
-            "found": found,
-            "problematic": problematic,
-            "not_found": not_found,
+            "high": high,
+            "medium": medium,
+            "low": low,
             "in_progress": in_progress,
             "total": len(results),
             "completed": completed,
@@ -289,15 +254,15 @@ async def override_status(pdf_id: str, source_id: str, request: OverrideRequest)
 
     # Recalculate counts
     results = verify_results[pdf_id]
-    found = sum(1 for r in results.values() if r.status == "found")
-    problematic = sum(1 for r in results.values() if r.status == "problematic")
-    not_found = sum(1 for r in results.values() if r.status == "not_found")
+    high = sum(1 for r in results.values() if r.status == "high")
+    medium = sum(1 for r in results.values() if r.status == "medium")
+    low = sum(1 for r in results.values() if r.status == "low")
 
     await manager.broadcast("verify_pdf_updated", {
         "pdf_id": pdf_id,
-        "found": found,
-        "problematic": problematic,
-        "not_found": not_found,
+        "high": high,
+        "medium": medium,
+        "low": low,
     })
     await manager.send_log(
         "info",
@@ -312,12 +277,12 @@ async def override_status(pdf_id: str, source_id: str, request: OverrideRequest)
     return {"success": True}
 
 
-_ALLOWED_TAG_KEYS = {"authors", "year", "title", "source", "doi/arXiv"}
+_ALLOWED_TAG_KEYS = {"authors", "year", "title", "journal", "doi/arXiv"}
 
 
 @router.post("/verify/tag-override/{pdf_id}/{source_id}")
 async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequest):
-    """Store per-tag ON/OFF overrides for a reference card.
+    """Store per-tag ON/OFF overrides for a source card.
 
     state=True  → force ON
     state=False → force OFF
@@ -341,8 +306,8 @@ async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequ
         "source_id": source_id,
         "status": existing.status,
         "problem_tags": existing.problem_tags,
-        "trust_tag": existing.trust_tag,
-        "trust_tag_override": existing.trust_tag_override,
+        "decision_tag": existing.decision_tag,
+        "decision_tag_override": existing.decision_tag_override,
         "tag_overrides": existing.tag_overrides,
         "url_liveness": existing.url_liveness,
         "best_match": existing.best_match.model_dump() if existing.best_match else None,
@@ -355,23 +320,23 @@ async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequ
     return {"success": True}
 
 
-_ALLOWED_TRUST_VALUES = {"clean", "künye", "uydurma", None}
+_ALLOWED_DECISION_VALUES = {"valid", "citation", "fabricated", None}
 
 
-@router.post("/verify/trust-override/{pdf_id}/{source_id}")
-async def set_trust_override(pdf_id: str, source_id: str, request: TrustOverrideRequest):
-    """Store the user's three-state trust-tag override for a reference.
+@router.post("/verify/decision-override/{pdf_id}/{source_id}")
+async def set_decision_override(pdf_id: str, source_id: str, request: DecisionOverrideRequest):
+    """Store the user's three-state decision-tag override for a source.
 
-    trust="clean" | "künye" | "uydurma" → force that trust state
-    trust=None                          → clear override (use classify_trust)
+    decision="valid" | "citation" | "fabricated" → force that decision state
+    decision=None                                → clear override (use classify_decision)
     """
-    if request.trust not in _ALLOWED_TRUST_VALUES:
-        raise HTTPException(status_code=400, detail=f"Invalid trust: {request.trust}")
+    if request.decision not in _ALLOWED_DECISION_VALUES:
+        raise HTTPException(status_code=400, detail=f"Invalid decision: {request.decision}")
     if pdf_id not in verify_results or source_id not in verify_results[pdf_id]:
         raise HTTPException(status_code=404, detail="Result not found")
 
     existing = verify_results[pdf_id][source_id]
-    existing.trust_tag_override = request.trust
+    existing.decision_tag_override = request.decision
     _save_verify_cache(pdf_id, verify_results[pdf_id])
 
     await manager.broadcast("verify_source_done", {
@@ -379,8 +344,8 @@ async def set_trust_override(pdf_id: str, source_id: str, request: TrustOverride
         "source_id": source_id,
         "status": existing.status,
         "problem_tags": existing.problem_tags,
-        "trust_tag": existing.trust_tag,
-        "trust_tag_override": existing.trust_tag_override,
+        "decision_tag": existing.decision_tag,
+        "decision_tag_override": existing.decision_tag_override,
         "tag_overrides": existing.tag_overrides,
         "url_liveness": existing.url_liveness,
         "best_match": existing.best_match.model_dump() if existing.best_match else None,
@@ -415,14 +380,14 @@ class ScoreScholarRequest(BaseModel):
 async def score_scholar(request: ScoreScholarRequest):
     """Score Google Scholar candidates against a source and merge into results."""
     from services.source_extractor import extract_source_fields
-    from services.match_scorer import score_match, determine_verification_status, classify_trust
+    from services.match_scorer import score_match, determine_verification_status, classify_decision
     from services.author_matcher import clean_scholar_authors
     from services.ner_extractor import extract_fields_ner
 
     # request.source_text is the title-only search query used to hit Scholar.
     # SIRIS NER was trained on full citations and mislabels bare titles — it
     # thinks the leading capitalized words are authors. Use the stored full
-    # PDF reference text (same as Crossref/OpenAlex paths do) to keep both
+    # PDF source text (same as Crossref/OpenAlex paths do) to keep both
     # sides of the comparison symmetric.
     sources = load_sources_for_pdf(request.pdf_id) or []
     source_rect = next((s for s in sources if s.id == request.source_id), None)
@@ -435,7 +400,7 @@ async def score_scholar(request: ScoreScholarRequest):
 
     for cand in request.candidates:
         # If we have an APA citation from Scholar's "Cite" dialog, run it
-        # through the same NER extractor used on source references. Scraped
+        # through the same NER extractor used on source sources. Scraped
         # Scholar fields truncate title/authors ("J Smith, A Jones…"); the
         # APA string contains the full metadata. Falling through to scraped
         # values preserves behaviour when enrichment fails (CAPTCHA on the
@@ -456,8 +421,8 @@ async def score_scholar(request: ScoreScholarRequest):
                     year = ner.year
                 if ner.doi:
                     doi = ner.doi
-                if ner.source:
-                    journal = ner.source
+                if ner.journal:
+                    journal = ner.journal
 
         match = score_match(parsed, {
             "title": title,
@@ -492,10 +457,10 @@ async def score_scholar(request: ScoreScholarRequest):
     status, problem_tags = determine_verification_status(
         parsed, existing.best_match, existing.url_liveness
     )
-    trust_tag = classify_trust(parsed, existing.best_match)
+    decision_tag = classify_decision(parsed, existing.best_match)
     existing.status = status
     existing.problem_tags = problem_tags
-    existing.trust_tag = trust_tag
+    existing.decision_tag = decision_tag
 
     # Persist and broadcast
     _save_verify_cache(request.pdf_id, verify_results[request.pdf_id])
@@ -505,8 +470,8 @@ async def score_scholar(request: ScoreScholarRequest):
         "source_id": request.source_id,
         "status": status,
         "problem_tags": problem_tags,
-        "trust_tag": trust_tag,
-        "trust_tag_override": existing.trust_tag_override,
+        "decision_tag": decision_tag,
+        "decision_tag_override": existing.decision_tag_override,
         "tag_overrides": existing.tag_overrides,
         "url_liveness": existing.url_liveness,
         "best_match": existing.best_match.model_dump() if existing.best_match else None,
@@ -518,15 +483,15 @@ async def score_scholar(request: ScoreScholarRequest):
 
     # Recalculate and broadcast PDF counts
     results = verify_results[request.pdf_id]
-    found = sum(1 for r in results.values() if r.status == "found")
-    problematic = sum(1 for r in results.values() if r.status == "problematic")
-    not_found = sum(1 for r in results.values() if r.status == "not_found")
+    high = sum(1 for r in results.values() if r.status == "high")
+    medium = sum(1 for r in results.values() if r.status == "medium")
+    low = sum(1 for r in results.values() if r.status == "low")
 
     await manager.broadcast("verify_pdf_updated", {
         "pdf_id": request.pdf_id,
-        "found": found,
-        "problematic": problematic,
-        "not_found": not_found,
+        "high": high,
+        "medium": medium,
+        "low": low,
     })
 
     return {

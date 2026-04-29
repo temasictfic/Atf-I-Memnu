@@ -83,14 +83,14 @@ export const api = {
   verifyResults: (pdfId: string) =>
     request<{ results: Record<string, import('./types').VerificationResult> }>('GET', `/api/verify/results/${pdfId}`),
 
-  overrideStatus: (pdfId: string, sourceId: string, status: 'found' | 'problematic' | 'not_found') =>
+  overrideStatus: (pdfId: string, sourceId: string, status: 'high' | 'medium' | 'low') =>
     request<{ success: boolean }>('PUT', `/api/verify/override/${pdfId}/${sourceId}`, { status }),
 
   setTagOverride: (pdfId: string, sourceId: string, tag: string, state: boolean | null) =>
     request<{ success: boolean }>('POST', `/api/verify/tag-override/${pdfId}/${sourceId}`, { tag, state }),
 
-  setTrustOverride: (pdfId: string, sourceId: string, trust: import('./types').TrustTag | null) =>
-    request<{ success: boolean }>('POST', `/api/verify/trust-override/${pdfId}/${sourceId}`, { trust }),
+  setDecisionOverride: (pdfId: string, sourceId: string, decision: import('./types').DecisionTag | null) =>
+    request<{ success: boolean }>('POST', `/api/verify/decision-override/${pdfId}/${sourceId}`, { decision }),
 
   scoreScholar: (pdfId: string, sourceId: string, sourceText: string, candidates: import('./types').ScholarCandidate[]) =>
     request<import('./types').ScoreScholarResponse>('POST', '/api/verify/score-scholar', {

@@ -1,5 +1,5 @@
 // Client-side parsed-PDF shape. Mirrors backend/models/pdf_document.py so the
-// reference detector port and the rest of the parsing UI can keep using the
+// source detector port and the rest of the parsing UI can keep using the
 // same field names that exist server-side today.
 
 export interface TextBlock {

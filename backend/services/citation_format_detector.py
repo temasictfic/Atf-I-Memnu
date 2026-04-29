@@ -1,4 +1,4 @@
-"""Detect citation format (APA, MLA, Chicago, Harvard, Vancouver, IEEE) from reference text.
+"""Detect citation format (APA, MLA, Chicago, Harvard, Vancouver, IEEE) from source text.
 
 Based on Kurallar.xlsx Sheet 2 "Atif Formatlari" distinguishing characteristics.
 """
@@ -17,7 +17,7 @@ class CitationFormat(str, Enum):
 
 
 def detect_format(text: str) -> tuple[CitationFormat | None, float]:
-    """Detect citation format from reference text.
+    """Detect citation format from source text.
 
     Returns (format, confidence) where confidence is 0.0-1.0.
     Returns (None, 0.0) if no format can be determined.
@@ -38,7 +38,7 @@ def detect_format(text: str) -> tuple[CitationFormat | None, float]:
         scores[CitationFormat.HARVARD] += 2
         scores[CitationFormat.VANCOUVER] += 2
 
-    # --- Signal 3: Year near end of reference (IEEE) ---
+    # --- Signal 3: Year near end of source (IEEE) ---
     # Only boost IEEE if year is near end AND not in parentheses (MLA/Chicago have (Year) near end too)
     year_matches = list(re.finditer(r"\b(?:19|20)\d{2}\b", text))
     if year_matches:

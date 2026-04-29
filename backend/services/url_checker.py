@@ -1,4 +1,4 @@
-"""URL liveness checking for non-DOI/arXiv links in references.
+"""URL liveness checking for non-DOI/arXiv links in sources.
 
 DOI and arXiv URLs are validated via their respective APIs (Crossref, arXiv),
 so we skip them here.  For all other URLs we send a HEAD (then GET as fallback)

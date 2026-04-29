@@ -1,4 +1,4 @@
-// TypeScript port of backend/services/reference_detector.py.
+// TypeScript port of backend/services/source_detector.py.
 //
 // The port is deliberately function-for-function so parity against the Python
 // implementation is easy to audit. The behavior — including regex semantics,
@@ -10,23 +10,23 @@ import type { ParsedPdf, TextBlock } from './types'
 import { makeSourceId } from '../utils/source-id'
 
 // -------------------------------------------------------------------------
-// Patterns (transliterated from reference_detector.py)
+// Patterns (transliterated from source_detector.py)
 // -------------------------------------------------------------------------
 
 // Strict header patterns — must match the whole line.
 const HEADER_PATTERNS_STRICT: RegExp[] = [
   /^\s*(?:EK[-\s]?\d*\s*[A-Z]?[:.\s]*)?\s*(?:KAYNAKLAR|KAYNAK[CÇ]A)\s*$/i,
-  /^\s*(?:REFERENCES?|BIBLIOGRAPHY|WORKS?\s+CITED)\s*$/i,
+  /^\s*(?:SOURCES?|BIBLIOGRAPHY|WORKS?\s+CITED)\s*$/i,
   /^\s*LITERAT[UÜ]R\s*$/i,
 ]
 
 // Looser patterns for short lines that might have trailing punctuation.
 const HEADER_PATTERNS_LOOSE: RegExp[] = [
   /(?:EK[-\s]?\d*\s*[A-Z]?[:.\s]*)?\s*(?:KAYNAKLAR|KAYNAK[CÇ]A)/i,
-  /^(?:REFERENCES?|BIBLIOGRAPHY)\s*[:.]*\s*$/i,
+  /^(?:SOURCES?|BIBLIOGRAPHY)\s*[:.]*\s*$/i,
 ]
 
-// Individual reference-number patterns, matched at start-of-line.
+// Individual source-number patterns, matched at start-of-line.
 const REF_NUMBER_PATTERNS: RegExp[] = [
   /^\s*\[(\d{1,3})\]\s*/, // [1] Text...
   /^\s*(\d{1,3})\.\s+/, // 1. Text...
@@ -194,10 +194,10 @@ function mergeLineFragments(blocks: TextBlock[]): TextBlock[] {
 }
 
 // -------------------------------------------------------------------------
-// _find_reference_header
+// _find_source_header
 // -------------------------------------------------------------------------
 
-function findReferenceHeader(blocks: PageBlock[]): number | null {
+function findSourceHeader(blocks: PageBlock[]): number | null {
   const candidates: number[] = []
   for (let idx = 0; idx < blocks.length; idx++) {
     const block = blocks[idx][1]
@@ -225,7 +225,7 @@ function findReferenceHeader(blocks: PageBlock[]): number | null {
   if (candidates.length === 0) return null
   if (candidates.length === 1) return candidates[0]
 
-  // Multiple candidates: prefer one followed by real reference content.
+  // Multiple candidates: prefer one followed by real source content.
   for (const candidateIdx of candidates) {
     const blocksAfter = blocks.slice(candidateIdx + 1, candidateIdx + 10)
     let nonInstructionCount = 0
@@ -242,10 +242,10 @@ function findReferenceHeader(blocks: PageBlock[]): number | null {
 }
 
 // -------------------------------------------------------------------------
-// _filter_reference_blocks
+// _filter_source_blocks
 // -------------------------------------------------------------------------
 
-function filterReferenceBlocks(blocks: PageBlock[]): PageBlock[] {
+function filterSourceBlocks(blocks: PageBlock[]): PageBlock[] {
   const filtered: PageBlock[] = []
   for (const entry of blocks) {
     const text = entry[1].text.trim()
@@ -279,10 +279,10 @@ function validateNumberedSources(sources: SourceRectangle[]): boolean {
 }
 
 // -------------------------------------------------------------------------
-// _split_numbered_references
+// _split_numbered_sources
 // -------------------------------------------------------------------------
 
-function splitNumberedReferences(blocks: PageBlock[], pdfId: string): SourceRectangle[] {
+function splitNumberedSources(blocks: PageBlock[], pdfId: string): SourceRectangle[] {
   const sources: SourceRectangle[] = []
   let currentText = ''
   let currentNum: number | null = null
@@ -419,7 +419,7 @@ function splitByEmptyLines(blocks: PageBlock[], pdfId: string): SourceRectangle[
 
   if (boundaryIndices.length < 4) return []
 
-  // Step 4: group blocks into references
+  // Step 4: group blocks into sources
   const sources: SourceRectangle[] = []
   let refCounter = 0
 
@@ -445,10 +445,10 @@ function splitByEmptyLines(blocks: PageBlock[], pdfId: string): SourceRectangle[
 }
 
 // -------------------------------------------------------------------------
-// _split_unnumbered_references
+// _split_unnumbered_sources
 // -------------------------------------------------------------------------
 
-function splitUnnumberedReferences(blocks: PageBlock[], pdfId: string): SourceRectangle[] {
+function splitUnnumberedSources(blocks: PageBlock[], pdfId: string): SourceRectangle[] {
   const sources: SourceRectangle[] = []
   let currentText = ''
   let currentBlocks: PageBlock[] = []
@@ -607,7 +607,7 @@ export interface DetectResult {
   numbered: boolean
 }
 
-export function detectReferences(document: ParsedPdf): DetectResult {
+export function detectSources(document: ParsedPdf): DetectResult {
   const allBlocks: PageBlock[] = []
   for (const page of document.pages) {
     const merged = mergeLineFragments(page.text_blocks)
@@ -616,16 +616,16 @@ export function detectReferences(document: ParsedPdf): DetectResult {
     }
   }
 
-  const refStartIdx = findReferenceHeader(allBlocks)
+  const refStartIdx = findSourceHeader(allBlocks)
   if (refStartIdx === null) return { sources: [], numbered: false }
 
   let refBlocks = allBlocks.slice(refStartIdx + 1)
   if (refBlocks.length === 0) return { sources: [], numbered: false }
 
-  refBlocks = filterReferenceBlocks(refBlocks)
+  refBlocks = filterSourceBlocks(refBlocks)
 
-  // Try numbered references first
-  let sources = splitNumberedReferences(refBlocks, document.id)
+  // Try numbered sources first
+  let sources = splitNumberedSources(refBlocks, document.id)
   if (sources.length > 0 && !validateNumberedSources(sources)) sources = []
 
   if (sources.length > 0) return { sources, numbered: true }
@@ -634,5 +634,5 @@ export function detectReferences(document: ParsedPdf): DetectResult {
   const gapSources = splitByEmptyLines(refBlocks, document.id)
   if (gapSources.length > 0) return { sources: gapSources, numbered: false }
 
-  return { sources: splitUnnumberedReferences(refBlocks, document.id), numbered: false }
+  return { sources: splitUnnumberedSources(refBlocks, document.id), numbered: false }
 }

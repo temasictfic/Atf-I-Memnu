@@ -1,10 +1,10 @@
-"""Text cleaning utilities for reference processing."""
+"""Text cleaning utilities for source processing."""
 
 import re
 import unicodedata
 
 
-# Matches exactly the reference-number prefixes used by reference detection.
+# Matches exactly the source-number prefixes used by source detection.
 REF_NUMBER_PREFIX_PATTERNS = [
     re.compile(r"^\s*\[(\d{1,3})\]\s*"),   # [1] Text...
     re.compile(r"^\s*(\d{1,3})\.\s+"),     # 1. Text...
@@ -12,7 +12,7 @@ REF_NUMBER_PREFIX_PATTERNS = [
     re.compile(r"^\s*(\d{1,3})-\s*"),      # 1- Text...
 ]
 
-# Access-date footers/noise frequently seen in references.
+# Access-date footers/noise frequently seen in sources.
 ACCESS_DATE_PATTERNS = [
     r"(?i)[,;]?\s*son\s+eri[şs]im\s+tarihi\s*:?\s*\d{1,2}\s+[A-Za-zÇĞİÖŞÜçğıöşü]+\s+\d{4}\.?",
     r"(?i)[,;]?\s*eri[şs]im\s+tarihi\s*:?\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\.?",
@@ -50,8 +50,8 @@ def normalize_text(text: str) -> str:
     return text
 
 
-def strip_reference_noise(text: str) -> str:
-    """Remove leading reference numbering and access-date fragments."""
+def strip_source_noise(text: str) -> str:
+    """Remove leading source numbering and access-date fragments."""
     cleaned = text or ""
 
     for pattern in REF_NUMBER_PREFIX_PATTERNS:
@@ -67,9 +67,9 @@ def strip_reference_noise(text: str) -> str:
     return cleaned
 
 
-def clean_reference_text(text: str) -> str:
-    """Clean a reference text for search queries."""
-    text = strip_reference_noise(text)
+def clean_source_text(text: str) -> str:
+    """Clean a source text for search queries."""
+    text = strip_source_noise(text)
     # Remove URLs
     text = re.sub(r"https?://\S+", "", text)
     # Remove DOIs

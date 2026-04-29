@@ -9,7 +9,7 @@
 
 The desktop app uses a token-classification model to extract structured
 fields (title, authors, year, journal, DOI, volume, issue, pages, etc.) from
-raw reference strings detected in PDFs. The original deployment used the
+raw source strings detected in PDFs. The original deployment used the
 upstream `SIRIS-Lab/citation-parser-ENTITY` model directly from HuggingFace
 Hub: a multilingual DistilBERT fine-tuned by SIRIS-Lab on ~2,400 citations,
 reporting F1 = 0.9498 on their own test set.
@@ -18,9 +18,9 @@ That model works well on APA and APA-variation formats — which is what its
 training corpus is dominated by — but its accuracy drops sharply on formats
 the Turkish academic corpus we care about actually uses. A comparison run in
 [backend/compare_extraction.py](../compare_extraction.py) across 2,081
-references from 40 test PDFs documented the specific failure modes: titles
+sources from 40 test PDFs documented the specific failure modes: titles
 truncated to a single sentence, author spans that include the leading
-reference number (`"39. Klok, T"`), DOI and arXiv identifiers missed, and
+source number (`"39. Klok, T"`), DOI and arXiv identifiers missed, and
 particularly weak performance on IEEE, Vancouver, Chicago, and informal
 Turkish academic styles.
 
@@ -30,7 +30,7 @@ product is a fine-tuned + INT8-quantized ONNX model at
 the runtime loads via [backend/services/ner_model_manager.py](../services/ner_model_manager.py).
 On the held-out non-APA test set, it scores **F1 = 0.864** versus **F1 =
 0.555** for the upstream baseline — a 31-point improvement on the target
-distribution, with no regression on APA-style references (F1 = 0.967 on
+distribution, with no regression on APA-style sources (F1 = 0.967 on
 SIRIS's own public test set, matching the baseline's 0.966).
 
 ## 2. Design decisions and why
@@ -39,12 +39,12 @@ SIRIS's own public test set, matching the baseline's 0.966).
 
 SIRIS-Lab's reported F1 of 0.99 on TITLE and 0.95 on AUTHORS is real — but
 only on *their* training distribution, which is APA-heavy. Labeling more APA
-references would have been wasted effort: the model already handles them.
+sources would have been wasted effort: the model already handles them.
 The bottleneck is the long tail of formats the upstream training set did not
-cover. So the labeling strategy was to target only references that **fail**
+cover. So the labeling strategy was to target only sources that **fail**
 a simple APA heuristic.
 
-The heuristic is deliberately conservative: a reference is bucketed as
+The heuristic is deliberately conservative: a source is bucketed as
 `apa_like` if a four-digit year appears in parentheses within the first 200
 characters of the pre-stripped text (`\([12]\d{3}[a-z]?\)`), and `non_apa`
 otherwise. See [scripts/filter_candidates.py](./scripts/filter_candidates.py).
@@ -54,19 +54,19 @@ and the `non_apa` bucket was dominated by Vancouver, IEEE, Chicago, and
 informal styles with year-after-authors or bracket-numbered formats.
 
 On the user's 40-PDF corpus this split produced 1,146 non-APA candidates
-and 876 APA-skipped references out of 2,027 total.
+and 876 APA-skipped sources out of 2,027 total.
 
-### 2.2 Reference-number stripping via the app's own function
+### 2.2 Source-number stripping via the app's own function
 
-A recurring failure mode was author spans that included leading reference
+A recurring failure mode was author spans that included leading source
 numbers like `"39. Klok, T"`. Rather than teach the model to handle this,
 the pipeline structurally eliminates the problem by applying the same
-`strip_reference_noise` function from [backend/utils/text_cleaning.py](../utils/text_cleaning.py)
+`strip_source_noise` function from [backend/utils/text_cleaning.py](../utils/text_cleaning.py)
 that the live app already calls at inference time ([backend/services/source_extractor.py:43](../services/source_extractor.py#L43)).
 This means:
 
 - numbering, access-date fragments, and duplicated whitespace are removed
-  from the reference text *before* the filter classifies it,
+  from the source text *before* the filter classifies it,
 - labels are written against the stripped text, so the model never sees the
   boilerplate at training time,
 - at inference time the same function pre-processes text, so the training
@@ -108,7 +108,7 @@ is designed to catch.
 
 ### 2.4 Dataset augmentation with the public SIRIS corpus
 
-The focused labeling produced 500 non-APA references (see §3.3) — not
+The focused labeling produced 500 non-APA sources (see §3.3) — not
 enough on its own to fine-tune a 130M-parameter transformer without
 catastrophic forgetting. The solution is to concatenate the 500 kaynaklar
 labels with the full public SIRIS training set (2,150 examples) so the
@@ -125,10 +125,10 @@ This gives us four split roles:
 | `kaynaklar_test` | 27 | Held-out kaynaklar PDFs. Primary benchmark. |
 | `public_test` | 269 | Upstream SIRIS test. Catastrophic-forgetting guard. |
 
-The kaynaklar splits are stratified **by source PDF**, not by reference.
+The kaynaklar splits are stratified **by source PDF**, not by source.
 `prepare_data.py` asserts that no `source_pdf` appears in more than one
-split. This is critical: a reference-level split would allow the same PDF's
-references to appear in both train and test, which would inflate the
+split. This is critical: a source-level split would allow the same PDF's
+sources to appear in both train and test, which would inflate the
 benchmark by measuring what the model memorized.
 
 ### 2.5 INT8 dynamic quantization
@@ -158,14 +158,14 @@ python -m backend.training.scripts.filter_candidates
 
 Input: per-PDF cached JSONs dropped into `data/kaynaklar/input/*.json`. These
 are the app's own parse cache — each file has a `sources` array where each
-source has a `text` field (the raw reference string) plus bbox, ref_number,
+source has a `text` field (the raw source string) plus bbox, ref_number,
 status metadata. The script duck-types the format: any dict with a `text`
-(or `raw_text`) field of length ≥ 20 is treated as a reference record, so
+(or `raw_text`) field of length ≥ 20 is treated as a source record, so
 future cache format changes shouldn't break it as long as the field name
 stays.
 
-For every reference:
-1. Apply `strip_reference_noise` to get the same text the live app will see.
+For every source:
+1. Apply `strip_source_noise` to get the same text the live app will see.
 2. Skip duplicates (same stripped text across PDFs).
 3. Classify as `apa_like` (parenthesized year in first 200 chars) or
    `non_apa`.
@@ -198,12 +198,12 @@ Labels were produced by an LLM (Claude Code) reading candidates from
 `to_label.jsonl` in batches and emitting span annotations against the
 pre-stripped text. The workflow was:
 
-1. Read a batch of 20–30 references from `to_label.jsonl`.
-2. For each reference, identify which entities are present and write them
+1. Read a batch of 20–30 sources from `to_label.jsonl`.
+2. For each source, identify which entities are present and write them
    as (substring, label) tuples in a batch script (e.g.
    `scripts/_batch_001.py`).
 3. The `_label_helper.label_batch(...)` function looks each substring up in
-   the reference text, picks the first non-overlapping occurrence, computes
+   the source text, picks the first non-overlapping occurrence, computes
    offsets, and appends a validator-clean record to `labeled.jsonl`.
 4. Run the validator on the whole file after every batch. Any malformed
    record fails the batch atomically (nothing is written), and the batch is
@@ -213,7 +213,7 @@ The final corpus is **500 labels across 14 PDFs**, saved at
 [data/kaynaklar/labeled.jsonl](./data/kaynaklar/labeled.jsonl). The label
 distribution is heavily skewed toward the first few PDFs processed: 126E156
 has 79 labels, 126E152 has 1. If you care about a larger held-out test set,
-labeling more references from the tail PDFs (126E152, 126E154, 126E159,
+labeling more sources from the tail PDFs (126E152, 126E154, 126E159,
 126E147, 126E148) is the highest-leverage follow-up.
 
 **The `_batch_*.py` scaffolding scripts are not committed** — the
@@ -321,13 +321,13 @@ load cleanly without `file_name` warnings. For each model:
 1. Runs seqeval on `kaynaklar_test` and `public_test` with per-label P/R/F1.
 2. Runs the models over the raw text sidecar from `kaynaklar_test_raw.jsonl`
    and imports `_extract` from [backend/services/ner_extractor.py](../services/ner_extractor.py)
-   to compute the downstream match rate — i.e., the fraction of references
+   to compute the downstream match rate — i.e., the fraction of sources
    for which the final `ParsedSource` has `title + authors + year` populated
    with `parse_confidence ≥ 0.3`. This is the metric that actually
    determines whether the NER path fires or falls back to regex in the live
    app.
 
-**`bench_latency.py`** does a 5-ref warmup then 500 real reference
+**`bench_latency.py`** does a 5-ref warmup then 500 real source
 inferences per model, reporting p50/p95/p99/mean latency and peak RSS
 via `psutil`. Disk size is measured by walking the model directory.
 
@@ -414,17 +414,17 @@ Public test stayed flat or nudged upward — no catastrophic forgetting.
 
 ## 6. Known limitations
 
-**Small held-out kaynaklar_test set (27 references).** The 500 labels
+**Small held-out kaynaklar_test set (27 sources).** The 500 labels
 cover only 14 of the 40 source PDFs because labeling was done sequentially
 from the start of `to_label.jsonl`. The 70/15/15 split-by-PDF therefore
-leaves only 2 PDFs and 27 references in the test set. A single
+leaves only 2 PDFs and 27 sources in the test set. A single
 misclassified span shifts the F1 by roughly 3 points, so the +31 F1 gap is
 directionally correct but the exact number has wide error bars. Adding
 200–300 more labels from the currently under-represented PDFs (126E152,
 126E154, 126E159, 126E147, 126E148 have 1–10 labels each) would tighten
 the confidence interval.
 
-**Public test F1 is our most reliable benchmark.** 269 references from a
+**Public test F1 is our most reliable benchmark.** 269 sources from a
 different distribution, evaluated by two different tokenizers (ours vs.
 SIRIS's own gold). Both models cluster near 0.97 — that's a sign the fine-
 tune didn't break anything on APA, which is what we wanted.
@@ -517,7 +517,7 @@ cp -r backend/training/models/finetuned-onnx-int8 backend/models/citation-ner-in
 
 | File | Purpose |
 |---|---|
-| `data/kaynaklar/labeled.jsonl` | 500 hand-labeled non-APA references. The canonical training signal. |
+| `data/kaynaklar/labeled.jsonl` | 500 hand-labeled non-APA sources. The canonical training signal. |
 
 ### Data (gitignored, regenerable)
 
@@ -539,7 +539,7 @@ See [.gitignore](./.gitignore) for the full list. Short version:
 
 When training a v2 of this model, this is the sequence to follow:
 
-1. **Label more.** The 27-reference test set is the biggest weakness of
+1. **Label more.** The 27-source test set is the biggest weakness of
    v1. Targeted labeling on the currently under-represented PDFs (see §6)
    will widen it significantly without a lot of work.
 2. **Clean the label set if needed.** Validator-clean doesn't mean
@@ -566,6 +566,6 @@ When training a v2 of this model, this is the sequence to follow:
   multilingual DistilBERT fine-tuned on 2,688 citations by SIRIS Lab.
 - Public training corpus: `SIRIS-Lab/citation-parser-ENTITY` dataset on
   HuggingFace Hub, 2,150 train + 269 dev + 269 test, span-annotated.
-- Fine-tuning labels: 500 non-APA references hand-labeled from the app's
+- Fine-tuning labels: 500 non-APA sources hand-labeled from the app's
   own PDF parse cache, specifically targeted at formats the baseline
   struggles with.
