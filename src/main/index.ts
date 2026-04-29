@@ -100,11 +100,33 @@ let mainWindow: BrowserWindow | null = null
 let updaterConfigured = false
 let startupUpdateCheckAttempted = false
 let startupUpdateCheckSucceeded = false
+let userInitiatedDownloadInFlight = false
 const IGNORED_UPDATE_ERRORS: RegExp[] = [
+  // No release / feed shape
   /no published versions on github/i,
   /cannot find.*latest\.yml/i,
-  /http error: 404/i,
-  /status code 404/i,
+  // HTTP status (GitHub feed unreachable / rate-limited)
+  /http error:?\s*4(?:03|04|29)\b/i,
+  /http error:?\s*5\d\d\b/i,
+  /status code 4(?:03|04|29)\b/i,
+  /status code 5\d\d\b/i,
+  // DNS / connectivity (Node net / libuv)
+  /\bENOTFOUND\b/,
+  /\bEAI_AGAIN\b/,
+  /\bETIMEDOUT\b/,
+  /\bECONNRESET\b/,
+  /\bECONNREFUSED\b/,
+  /\bENETUNREACH\b/,
+  /\bEHOSTUNREACH\b/,
+  /getaddrinfo\s+(?:ENOTFOUND|EAI_AGAIN|failed)/i,
+  // Generic socket / proxy / TLS noise
+  /socket hang up/i,
+  /network timeout/i,
+  /request timed out/i,
+  /tunneling socket could not be established/i,
+  /net::ERR_/i,
+  /unable to (?:get|verify) (?:local )?issuer certificate/i,
+  /self[- ]signed certificate/i,
 ]
 
 function shouldRunStartupUpdateCheck(): boolean {
@@ -139,6 +161,10 @@ function configureAutoUpdater(): void {
     })
   })
 
+  autoUpdater.on('update-not-available', () => {
+    mainWindow?.webContents.send('update:notAvailable')
+  })
+
   autoUpdater.on('download-progress', (progress: ProgressInfo) => {
     mainWindow?.webContents.send('update:progress', {
       percent: progress.percent,
@@ -146,15 +172,29 @@ function configureAutoUpdater(): void {
   })
 
   autoUpdater.on('update-downloaded', () => {
+    userInitiatedDownloadInFlight = false
     mainWindow?.webContents.send('update:downloaded')
   })
 
   autoUpdater.on('error', (err: Error) => {
     const message = err?.message || 'Unknown update error'
     console.warn('[Updater] Error:', message)
+
     if (!shouldForwardUpdateError(message)) {
+      console.warn('[Updater] Error suppressed (ignored pattern)')
+      userInitiatedDownloadInFlight = false
       return
     }
+
+    // Background-check failures (no active user download) never reach the UI:
+    // a transient banner during a silent startup check produces the spurious
+    // "Update failed" the user reported.
+    if (!userInitiatedDownloadInFlight) {
+      console.warn('[Updater] Error suppressed (background check)')
+      return
+    }
+
+    userInitiatedDownloadInFlight = false
     mainWindow?.webContents.send('update:error', message)
   })
 }
@@ -370,14 +410,17 @@ let downloadCancellationToken: CancellationToken | null = null
 
 ipcMain.on('update:download', () => {
   if (isDev) return
+  userInitiatedDownloadInFlight = true
   downloadCancellationToken = new CancellationToken()
   autoUpdater.downloadUpdate(downloadCancellationToken).catch((err) => {
     console.warn('[autoUpdater] downloadUpdate failed:', err)
+    userInitiatedDownloadInFlight = false
   })
 })
 
 ipcMain.on('update:cancel', () => {
   if (isDev) return
+  userInitiatedDownloadInFlight = false
   // Stop in-flight download if any
   try {
     downloadCancellationToken?.cancel()

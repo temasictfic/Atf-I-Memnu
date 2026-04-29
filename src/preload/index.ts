@@ -66,6 +66,11 @@ const electronAPI = {
     ipcRenderer.on('update:error', listener)
     return () => ipcRenderer.removeListener('update:error', listener)
   },
+  onUpdateNotAvailable: (cb: () => void): (() => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('update:notAvailable', listener)
+    return () => ipcRenderer.removeListener('update:notAvailable', listener)
+  },
   downloadUpdate: (): void => {
     ipcRenderer.send('update:download')
   },

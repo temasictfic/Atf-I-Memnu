@@ -47,11 +47,25 @@ export default function UpdateNotification() {
       setVisible(true)
     })
 
+    const offNotAvailable = window.electronAPI.onUpdateNotAvailable(() => {
+      // Clear a stale error banner if a subsequent check confirms we're up to
+      // date. Don't disrupt an active 'available'/'downloading'/'ready' flow.
+      setStage(prev => {
+        if (prev === 'error') {
+          setVisible(false)
+          setErrorMessage('')
+          return 'hidden'
+        }
+        return prev
+      })
+    })
+
     return () => {
       offAvailable()
       offProgress()
       offDownloaded()
       offError()
+      offNotAvailable()
     }
   }, [])
 

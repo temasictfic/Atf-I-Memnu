@@ -23,6 +23,7 @@ declare global {
       onUpdateProgress: (cb: (progress: { percent: number }) => void) => () => void
       onUpdateDownloaded: (cb: () => void) => () => void
       onUpdateError: (cb: (message: string) => void) => () => void
+      onUpdateNotAvailable: (cb: () => void) => () => void
       downloadUpdate: () => void
       cancelUpdate: () => void
       installUpdate: () => void
