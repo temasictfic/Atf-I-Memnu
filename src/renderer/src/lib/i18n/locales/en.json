@@ -344,7 +344,7 @@
       "doi": "DOI/arXiv disagrees or missing on one side",
       "year": "Year disagrees (>1 yr) or missing on one side",
       "journal": "Journal (journal / conference / book) disagrees or missing on one side",
-      "title": "Title similarity below 85%"
+      "title": "Title similarity is below 85%"
     },
     "exportPdf": "Export Verification Results to PDF",
     "exportPdfNoResults": "No verification results to export.",

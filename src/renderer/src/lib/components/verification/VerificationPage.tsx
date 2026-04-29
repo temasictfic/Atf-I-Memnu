@@ -2166,7 +2166,7 @@ export default function VerificationPage() {
                                   const label = pct != null
                                     ? `${t('verification.titleShort')}: ${pct}%`
                                     : `${t('verification.titleShort')}: —`
-                                  const tip = on ? (pct != null ? t('verification.titleSimilarity', { percent: pct }) : t('verification.titleShort')) : undefined
+                                  const tip = on ? problemTagDescription('!title') : undefined
                                   return (
                                     <button key={tag} type="button" className={className} onClick={onToggle} title={tip}>
                                       {label}
