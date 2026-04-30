@@ -1163,6 +1163,30 @@
   font-weight: 600;
 }
 .match-link:hover { text-decoration: underline; }
+.match-pill {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 0 8px 0 0;
+  background: #fff;
+  border: 1px solid #fde68a;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  line-height: 1.1;
+  overflow: hidden;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.match-pill:hover { background: #fffbeb; border-color: #fcd34d; }
+.match-pill .match-db {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0;
+  padding: 2px 8px;
+}
+.match-pill .match-score { align-self: center; }
+.match-pill-arrow { font-size: 9px; color: #d97706; font-weight: 700; align-self: center; }
 .match-empty { font-size: 11px; color: #a8a29e; }
 
 .match-toggle {
@@ -1171,10 +1195,11 @@
   background: none;
   border: none;
   cursor: pointer;
-  text-align: left;
+  text-align: right;
   padding: 2px 0;
   font-weight: 500;
   margin-top: 2px;
+  margin-left: auto;
 }
 .match-toggle:hover { color: #44403c; }
 .match-extras {

@@ -2769,35 +2769,47 @@ export default function VerificationPage() {
                               {bm.doi && <span className={styles['match-doi']}>DOI: {bm.doi}</span>}
                             </div>
                             <div className={styles['match-meta-row']}>
-                              <span className={styles['match-db']}>{bm.database}</span>
-                              <span className={styles['match-score']} style={{ color: dbScoreColor(bm.score) }}>
-                                {Math.round(bm.score * 100)}%
-                              </span>
-                            </div>
-                            {bm.url && (
-                              <button className={styles['match-link']} onClick={() => openOverlayWithUrl(bm.url)}>{t('verification.openSource')} &#x2197;</button>
-                            )}
-                            {hasExtras && (
-                              <>
+                              {bm.url ? (
+                                <button
+                                  type="button"
+                                  className={styles['match-pill']}
+                                  onClick={() => openOverlayWithUrl(bm.url)}
+                                  title={bm.url}
+                                >
+                                  <span className={styles['match-db']}>{bm.database}</span>
+                                  <span className={styles['match-score']} style={{ color: dbScoreColor(bm.score) }}>
+                                    {Math.round(bm.score * 100)}%
+                                  </span>
+                                  <span className={styles['match-pill-arrow']}>&#x2197;</span>
+                                </button>
+                              ) : (
+                                <>
+                                  <span className={styles['match-db']}>{bm.database}</span>
+                                  <span className={styles['match-score']} style={{ color: dbScoreColor(bm.score) }}>
+                                    {Math.round(bm.score * 100)}%
+                                  </span>
+                                </>
+                              )}
+                              {hasExtras && (
                                 <button
                                   type="button"
                                   className={styles['match-toggle']}
                                   onClick={() => setMatchExpanded(v => !v)}
                                   aria-expanded={matchExpanded}
                                 >
-                                  {matchExpanded ? `▾ ${t('verification.lessDetails')}` : `▸ ${t('verification.moreDetails')}`}
+                                  {matchExpanded ? `${t('verification.lessDetails')} ▾` : `${t('verification.moreDetails')} ◂`}
                                 </button>
-                                {matchExpanded && (
-                                  <div className={styles['match-extras']}>
-                                    {extras.map(ex => (
-                                      <div key={ex.key} className={styles['match-extra-row']}>
-                                        <span className={styles['match-extra-label']}>{ex.label}:</span>
-                                        <span className={styles['match-extra-value']}>{ex.value}</span>
-                                      </div>
-                                    ))}
+                              )}
+                            </div>
+                            {hasExtras && matchExpanded && (
+                              <div className={styles['match-extras']}>
+                                {extras.map(ex => (
+                                  <div key={ex.key} className={styles['match-extra-row']}>
+                                    <span className={styles['match-extra-label']}>{ex.label}:</span>
+                                    <span className={styles['match-extra-value']}>{ex.value}</span>
                                   </div>
-                                )}
-                              </>
+                                ))}
+                              </div>
                             )}
                           </div>
                         )
