@@ -571,11 +571,21 @@ export default function VerificationPage() {
     if (!pdfDragId) return
     const baseOrder = sortedPdfs.map(p => p.id)
     const fromIdx = baseOrder.indexOf(pdfDragId)
-    if (fromIdx >= 0 && fromIdx !== toIdx) {
-      useVerificationStore.getState().reorderPdfs(fromIdx, toIdx, baseOrder)
-    }
     setPdfDragId(null)
     setPdfDropTargetIdx(null)
+    if (fromIdx < 0 || fromIdx === toIdx) return
+
+    const cutoff = Math.min(verifyCutoffIndex, baseOrder.length)
+    const fromAbove = fromIdx < cutoff
+    const droppedAbove = toIdx < cutoff
+
+    useVerificationStore.getState().reorderPdfs(fromIdx, toIdx, baseOrder)
+
+    // Crossed the bar: nudge cutoff so the non-dragged PDFs keep their group.
+    if (fromAbove !== droppedAbove) {
+      const next = droppedAbove ? cutoff + 1 : cutoff - 1
+      setVerifyCutoffIndex(Math.max(0, Math.min(baseOrder.length, next)))
+    }
   }
 
   function onPdfDragEnd() {
