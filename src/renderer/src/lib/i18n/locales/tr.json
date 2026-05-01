@@ -223,7 +223,7 @@
     "googleSearch": "Google Arama",
     "openGoogleScholar": "Orta panelde Google Scholar'ı aç",
     "openGoogleSearch": "Orta panelde Google Arama'yı aç",
-    "bestMatch": "En İyi Eşleşme",
+    "bestMatch": "En Yüksek Eşleşme",
     "moreDetails": "Daha fazla",
     "lessDetails": "Daha az",
     "bibliographic": "Künye bilgileri",
@@ -348,7 +348,7 @@
       "authors": "Yazarlar uyuşmuyor veya bir tarafta eksik",
       "doi": "DOI/arXiv uyuşmuyor veya bir tarafta eksik",
       "year": "Yıl uyuşmuyor (>1 yıl) veya bir tarafta eksik",
-      "journal": "Yayın yeri (dergi / konferans / kitap) uyuşmuyor veya bir tarafta eksik",
+      "journal": "Yayın (dergi / konferans / kitap) uyuşmuyor veya bir tarafta eksik",
       "title": "Başlık benzerliği %85'in altında"
     },
     "exportPdf": "Doğrulama Sonuçlarını PDF'e Aktar",
@@ -356,6 +356,10 @@
     "exportPdfHeader": "ARDEB Kaynakça Kontrol Sistemi\nDoğrulama Raporu",
     "exportPdfProblems": "Sorunlar",
     "exportPdfNoMatch": "Eşleşme bulunamadı",
-    "exportPdfSources": "kaynak"
+    "exportPdfSources": "kaynak",
+    "exportPdfHighestMatch": "En Yüksek Eşleşme",
+    "exportPdfTotal": "Toplam",
+    "exportPdfMatchGroup": "Eşleşme",
+    "exportPdfDecisionGroup": "Karar"
   }
 }

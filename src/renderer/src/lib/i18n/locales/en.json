@@ -223,7 +223,7 @@
     "googleSearch": "Google Search",
     "openGoogleScholar": "Open Google Scholar in middle panel",
     "openGoogleSearch": "Open Google Search in middle panel",
-    "bestMatch": "Best Match",
+    "bestMatch": "Highest Match",
     "moreDetails": "More details",
     "lessDetails": "Less",
     "bibliographic": "Bibliographic details",
@@ -348,7 +348,7 @@
       "authors": "Authors disagree or missing on one side",
       "doi": "DOI/arXiv disagrees or missing on one side",
       "year": "Year disagrees (>1 yr) or missing on one side",
-      "journal": "Journal (journal / conference / book) disagrees or missing on one side",
+      "journal": "Publication (journal / conference / book) disagrees or missing on one side",
       "title": "Title similarity is below 85%"
     },
     "exportPdf": "Export Verification Results to PDF",
@@ -356,6 +356,10 @@
     "exportPdfHeader": "ARDEB Citation Control System\nVerification Report",
     "exportPdfProblems": "Problems",
     "exportPdfNoMatch": "No match found",
-    "exportPdfSources": "sources"
+    "exportPdfSources": "sources",
+    "exportPdfHighestMatch": "Highest Match",
+    "exportPdfTotal": "Total",
+    "exportPdfMatchGroup": "Match",
+    "exportPdfDecisionGroup": "Decision"
   }
 }

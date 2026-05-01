@@ -78,7 +78,8 @@ const COLOR_BORDER: RGB       = rgb(0.82, 0.82, 0.82)
 const COLOR_CARD_BORDER: RGB  = rgb(0.906, 0.898, 0.890)
 const COLOR_CARD_BG: RGB      = rgb(0.980, 0.980, 0.978)
 const COLOR_DB_BG: RGB        = rgb(0.996, 0.953, 0.780)
-const COLOR_TEAL: RGB         = rgb(0.0, 0.588, 0.533)
+const COLOR_TITLE_TAG: RGB      = rgb(1.0, 0.325, 0.286)  // #FF5349 (scarlet) — title: % chip when score < 85%
+const COLOR_TITLE_TAG_GOOD: RGB = rgb(0.0, 0.588, 0.533)  // teal — title: % chip when score >= 85%
 // Decision-tag palette (Valid / Citation / Fabricated) — sourced from constants/colors.ts.
 const COLOR_VALID_BORDER: RGB      = tup(DECISION_RGB.validBorder)
 const COLOR_VALID_TEXT: RGB        = tup(DECISION_RGB.validText)
@@ -124,6 +125,9 @@ export interface ReportData {
     volume: string; issue: string; pages: string; publisher: string
     editor: string; documentType: string; language: string
     issn: string; isbn: string
+    highestMatch: string
+    problemDesc: { authors: string; title: string; year: string; journal: string; doi: string }
+    total: string; matchGroup: string; decisionGroup: string
   }
   // When false, the "Bibliographic details" block under each best-match card
   // is omitted from the PDF. Default true.
@@ -294,7 +298,16 @@ function measureTop(src: ReportSource, rf: PDFFont, bf: PDFFont): TopMeasure {
   return { badgeW, badgeH, badgeGap, refLines, height: firstRowH + restH }
 }
 
-interface TagItem { text: string; color: RGB; width: number; align?: 'right' }
+interface TagItem {
+  text: string
+  color: RGB
+  width: number
+  align?: 'right'
+  // When set, the chip renders with the original db-badge style:
+  // "<prefix>" in COLOR_DARK, then a yellow pill containing the db name
+  // in COLOR_DB_TEXT, then the percentage in dbScoreColor(score).
+  highestMatch?: { prefix: string; db: string; score: number; scoreText: string; scoreColor: RGB }
+}
 
 type PdfTagKey = 'authors' | 'year' | 'title' | 'journal' | 'doi/arXiv'
 const PDF_TAG_ORDER: PdfTagKey[] = ['authors', 'year', 'title', 'journal', 'doi/arXiv']
@@ -325,6 +338,27 @@ function measureTags(src: ReportSource, labels: ReportData['labels'], bf: PDFFon
     tags.push({ text, color, width: bf.widthOfTextAtSize(san(text), TAG_SIZE) })
   }
 
+  // Leading "highest match" chip — db + score (or no-match label) on the left.
+  if (src.bestMatch) {
+    const m = src.bestMatch
+    const prefix = `${labels.highestMatch}: `
+    const db = san(m.database)
+    const scoreText = `${Math.round(m.score * 100)}%`
+    const prefixW = bf.widthOfTextAtSize(san(prefix), TAG_SIZE)
+    const dbW = bf.widthOfTextAtSize(db, TAG_SIZE) + 8 // pill horizontal padding
+    const scoreW = bf.widthOfTextAtSize(scoreText, TAG_SIZE)
+    const totalW = prefixW + dbW + 6 + scoreW // 6 = gap between pill and score
+    tags.push({
+      text: prefix + m.database + ' ' + scoreText,
+      color: COLOR_DARK,
+      width: totalW,
+      highestMatch: { prefix, db, score: m.score, scoreText, scoreColor: dbScoreColor(m.score) },
+    })
+  } else {
+    const t = labels.noMatch
+    tags.push({ text: t, color: COLOR_LOW, width: bf.widthOfTextAtSize(san(t), TAG_SIZE) })
+  }
+
   const leftChipsStart = tags.length
   for (const tag of PDF_TAG_ORDER) {
     const on = effectiveTagOnPdf(src, tag)
@@ -332,7 +366,10 @@ function measureTags(src: ReportSource, labels: ReportData['labels'], bf: PDFFon
     if (tag === 'title') {
       const pct = src.bestMatch ? Math.round(src.bestMatch.titleSimilarity * 100) : null
       const text = pct != null ? `${labels.titleTag}: ${pct}%` : `${labels.titleTag}: —`
-      pushChip(text, COLOR_TEAL, true)
+      const titleColor = src.bestMatch && src.bestMatch.titleSimilarity >= 0.85
+        ? COLOR_TITLE_TAG_GOOD
+        : COLOR_TITLE_TAG
+      pushChip(text, titleColor, true)
     } else {
       const text = labels.tagLabel(`!${tag}`)
       pushChip(text, COLOR_MEDIUM, true)
@@ -383,7 +420,7 @@ function tagsRowHeight(tags: TagItem[]): number {
 interface CardMeasure {
   titleLines: string[]; authorLines: string[]; journalLines: string[]
   metaLine: string; urlLine: string; totalHeight: number
-  extras: ExtraField[]; extraLines: string[][]; extrasLabel: string
+  extras: ExtraField[]; extraLines: string[][]
 }
 
 function measureCard(m: ReportBestMatch, src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont, includeBibliographic: boolean): CardMeasure {
@@ -400,39 +437,35 @@ function measureCard(m: ReportBestMatch, src: ReportSource, labels: ReportData['
   // Bibliographic extras: each "Label: value" wrapped to fit the card.
   const extras = includeBibliographic ? buildExtras(m, labels) : []
   const extraLines = extras.map(ex => wrapText(san(`${ex.label}: ${ex.value}`), rf, TINY_SIZE, CARD_INNER_W))
-  const extrasLabel = extras.length > 0 ? labels.bibliographic : ''
 
   let h = CARD_PAD
   h += titleLines.length * lh
   if (authorLines.length) h += 2 + authorLines.length * lh
   if (journalLines.length) h += 2 + journalLines.length * lh
   if (metaLine) h += 2 + lh
-  h += 3 + lh // db + score
-  if (urlLine) h += 2 + tlh
-  // Bibliographic details block: small header + one wrapped row per extra.
+  // Bibliographic details block: one wrapped row per extra (no header).
   if (extras.length > 0) {
-    h += 6 + tlh // gap + header
+    h += 4
     for (const lines of extraLines) h += lines.length * tlh
   }
+  if (urlLine) h += 4 + tlh
   // Google Scholar + Google Search links (side by side, one row)
-  if (src.scholarUrl || src.googleUrl) h += tlh
+  if (src.scholarUrl || src.googleUrl) h += 2 + tlh
   h += CARD_PAD
 
-  return { titleLines, authorLines, journalLines, metaLine, urlLine, totalHeight: h, extras, extraLines, extrasLabel }
+  return { titleLines, authorLines, journalLines, metaLine, urlLine, totalHeight: h, extras, extraLines }
 }
 
-function measureBottom(src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont, includeBibliographic: boolean): { tags: TagItem[]; card: CardMeasure | null; noMatch: boolean; height: number } {
+function measureBottom(src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont, includeBibliographic: boolean): { tags: TagItem[]; card: CardMeasure | null; height: number } {
   const tags = measureTags(src, labels, bf)
   const card = src.bestMatch ? measureCard(src.bestMatch, src, labels, rf, bf, includeBibliographic) : null
-  const noMatch = !src.bestMatch && src.status === 'low'
 
   let h = 0
   const th = tagsRowHeight(tags)
   if (th > 0) h += th + 4
   if (card) h += card.totalHeight + 2
-  else if (noMatch) h += SMALL_SIZE * LH + 2
 
-  return { tags, card, noMatch, height: h }
+  return { tags, card, height: h }
 }
 
 // --- Main export ---
@@ -457,43 +490,255 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
     w.text(trimmed, lineX, TITLE_SIZE, bf, COLOR_DARK)
   }
   w.skip(4)
-  // Strip .pdf extension from displayed name
+  // Strip .pdf extension from displayed name; center horizontally.
   const displayName = pdfName.replace(/\.pdf$/i, '')
-  w.text(displayName, MARGIN_L, SUBTITLE_SIZE, rf, COLOR_MUTED)
+  {
+    const nameW = rf.widthOfTextAtSize(san(displayName), SUBTITLE_SIZE)
+    const nameX = MARGIN_L + (CONTENT_W - nameW) / 2
+    w.text(displayName, nameX, SUBTITLE_SIZE, rf, COLOR_MUTED)
+  }
   w.skip(8)
 
-  // Summary stats on a single row: "222 kaynak   ● Bulundu: 5   ● Sorunlu: 64   ● Bulunamadı: 153"
+  // --- Header section: counts table (left) + tag legend table (right), side by side ---
   {
-    const totalLabel = `${summary.total} ${labels.sourcesLabel}`
-    let sx = MARGIN_L
-    const sy = w.y - BODY_SIZE
-    w.pg.drawText(san(totalLabel), { x: sx, y: sy, size: BODY_SIZE, font: bf, color: COLOR_TEXT })
-    sx += bf.widthOfTextAtSize(san(totalLabel), BODY_SIZE) + 12
+    const cellPadX = 6
+    const cellPadY = 2
+    const dotR = 2.5
+    const dotGap = 4
 
-    const summaryParts: { l: string; c: number; clr: RGB }[] = [
+    interface CountPart { l: string; c: number; clr: RGB }
+    const matchParts: CountPart[] = [
       { l: labels.high, c: summary.high, clr: COLOR_HIGH },
       { l: labels.medium, c: summary.medium, clr: COLOR_MEDIUM },
       { l: labels.low, c: summary.low, clr: COLOR_LOW },
     ]
-    if (summary.valid != null) {
-      summaryParts.push({ l: labels.validTag, c: summary.valid, clr: COLOR_VALID_BORDER })
+    const decisionParts: CountPart[] = []
+    if (summary.valid != null) decisionParts.push({ l: labels.validTag, c: summary.valid, clr: COLOR_VALID_BORDER })
+    if (summary.citation != null) decisionParts.push({ l: labels.citationTag, c: summary.citation, clr: COLOR_CITATION_BORDER })
+    if (summary.fabricated != null) decisionParts.push({ l: labels.fabricatedTag, c: summary.fabricated, clr: COLOR_FABRICATED_BORDER })
+
+    // Count cell — split into 3 visual columns that align vertically across all rows:
+    //   [dot] [name] | [count number]
+    // The "|" is a real vertical divider line spanning the whole body.
+    const allCountParts = [...matchParts, ...decisionParts]
+    const widestNameW = allCountParts.reduce((m, p) =>
+      Math.max(m, rf.widthOfTextAtSize(san(p.l), TAG_SIZE)), 0)
+    const widestNumW = allCountParts.reduce((m, p) =>
+      Math.max(m, rf.widthOfTextAtSize(san(`${p.c}`), TAG_SIZE)), 0)
+    const nameNumGap = 8 // gap that contains the divider line (4pt + line + 4pt)
+    // Lane-block width = the natural width needed to render dot + name + divider + number.
+    const laneBlockW = dotR * 2 + dotGap + widestNameW + nameNumGap + widestNumW
+    const minCountCellW = laneBlockW + cellPadX * 2
+
+    // Group-label column: horizontal text "Eşleşme" / "Karar", spanning the 3 stacked count sub-rows.
+    const matchLabelW = bf.widthOfTextAtSize(san(labels.matchGroup), TAG_SIZE)
+    const decisionLabelW = bf.widthOfTextAtSize(san(labels.decisionGroup), TAG_SIZE)
+    const labelColW = Math.max(matchLabelW, decisionLabelW) + cellPadX * 2
+
+    // Counts: each count occupies its own sub-row, stacked vertically. 3 per group.
+    const subRowsPerGroup = 3
+    const minSubRowH = TAG_SIZE * 1.25 + cellPadY * 2
+    const groupCount = decisionParts.length ? 2 : 1
+
+    // Legend dimensions
+    const entries: { chip: string; chipColor: RGB; hint: string }[] = [
+      { chip: labels.tagLabel('!authors'),  chipColor: COLOR_MEDIUM, hint: labels.problemDesc.authors },
+      { chip: labels.tagLabel('!year'),     chipColor: COLOR_MEDIUM, hint: labels.problemDesc.year },
+      { chip: `${labels.titleTag}: %`,      chipColor: COLOR_TITLE_TAG,   hint: labels.problemDesc.title },
+      { chip: labels.tagLabel('!journal'),  chipColor: COLOR_MEDIUM, hint: labels.problemDesc.journal },
+      { chip: labels.tagLabel('!doi/arXiv'),chipColor: COLOR_MEDIUM, hint: labels.problemDesc.doi },
+    ]
+    const widestChipW = entries.reduce((m, e) => Math.max(m, bf.widthOfTextAtSize(san(e.chip), TAG_SIZE)), 0)
+    const widestHintW = entries.reduce((m, e) => Math.max(m, rf.widthOfTextAtSize(san(e.hint), TINY_SIZE)), 0)
+    const chipColW = widestChipW + cellPadX * 2
+    const hintColW = widestHintW + cellPadX * 2
+    const legendBodyW = chipColW + hintColW
+    const sorunlarText = labels.problems
+    const sorunlarTextW = bf.widthOfTextAtSize(san(sorunlarText), TAG_SIZE)
+    const legendW = Math.max(legendBodyW, sorunlarTextW + cellPadX * 2)
+    const headerRowH = TAG_SIZE * 1.25 + cellPadY * 2
+    const minLegendBodyRowH = Math.max(TAG_SIZE, TINY_SIZE) * 1.25 + cellPadY * 2
+
+    // Match heights: pick whichever table's natural size is taller, then grow
+    // the other's body rows to match. Count table body = groupCount × subRowsPerGroup
+    // stacked sub-rows (one per count).
+    const totalCountSubRows = subRowsPerGroup * groupCount
+    const naturalCountH = headerRowH + minSubRowH * totalCountSubRows
+    const naturalLegendH = headerRowH + minLegendBodyRowH * entries.length
+    const tableH = Math.max(naturalCountH, naturalLegendH)
+    const countSubRowH = (tableH - headerRowH) / totalCountSubRows
+    const legendBodyRowH = (tableH - headerRowH) / entries.length
+
+    const totalText = `${labels.total}: ${summary.total} ${labels.sourcesLabel}`
+    const totalTextW = bf.widthOfTextAtSize(san(totalText), TAG_SIZE)
+    const finalCountTableH = tableH
+    const legendTableH = tableH
+
+    const startY = w.y
+    const tableGap = 16
+    // Expand the count table so the two tables together cover the full content width.
+    const countTableW = Math.max(labelColW + minCountCellW, CONTENT_W - tableGap - legendW)
+    const countCellW = countTableW - labelColW
+    const countX = MARGIN_L
+    const legendX = countX + countTableW + tableGap
+
+    // ==================== Count table ====================
+    const countTop = startY
+    const countBottom = countTop - finalCountTableH
+    w.rect(countX, countBottom, countTableW, finalCountTableH, { border: COLOR_BORDER, bw: 0.5 })
+
+    // Header row "Toplam: <n> kaynak" — spans all 4 columns
+    {
+      const headerBottomY = countTop - headerRowH
+      const headerTextX = countX + (countTableW - totalTextW) / 2
+      const headerTextY = headerBottomY + cellPadY + (headerRowH - cellPadY * 2 - TAG_SIZE) / 2
+      w.pg.drawText(san(totalText), {
+        x: headerTextX, y: headerTextY,
+        size: TAG_SIZE, font: bf, color: COLOR_DARK,
+      })
+      w.pg.drawLine({
+        start: { x: countX,                y: headerBottomY },
+        end:   { x: countX + countTableW,  y: headerBottomY },
+        thickness: 0.5, color: COLOR_BORDER,
+      })
     }
-    if (summary.citation != null) {
-      summaryParts.push({ l: labels.citationTag, c: summary.citation, clr: COLOR_CITATION_BORDER })
+    const countBodyTop = countTop - headerRowH
+
+    // Split the count cell into 2 equal compartments: [dot + name] | [number].
+    const halfCompW = countCellW / 2
+    const leftCompStartX = countX + labelColW
+    const dividerX = leftCompStartX + halfCompW
+    const numCenterX = dividerX + halfCompW / 2
+    // Dot + name rendered as a group, centered horizontally in the left compartment.
+    // Names left-align at nameStartX so starts line up vertically across rows.
+    const dotNameBlockW = dotR * 2 + dotGap + widestNameW
+    const dotNameBlockStartX = leftCompStartX + (halfCompW - dotNameBlockW) / 2
+    const dotCenterX = dotNameBlockStartX + dotR
+    const nameStartX = dotNameBlockStartX + dotR * 2 + dotGap
+
+    // Vertical divider between label col and count col (body only)
+    w.pg.drawLine({
+      start: { x: countX + labelColW, y: countBodyTop },
+      end:   { x: countX + labelColW, y: countBottom },
+      thickness: 0.5, color: COLOR_BORDER,
+    })
+    // Single inner divider between [dot+name] and [number] compartments.
+    w.pg.drawLine({
+      start: { x: dividerX, y: countBodyTop },
+      end:   { x: dividerX, y: countBottom },
+      thickness: 0.5, color: COLOR_BORDER,
+    })
+    // Horizontal divider between groups (Eşleşme group → Karar group)
+    if (groupCount === 2) {
+      const midY = countBodyTop - countSubRowH * subRowsPerGroup
+      w.pg.drawLine({
+        start: { x: countX,                y: midY },
+        end:   { x: countX + countTableW,  y: midY },
+        thickness: 0.5, color: COLOR_BORDER,
+      })
     }
-    if (summary.fabricated != null) {
-      summaryParts.push({ l: labels.fabricatedTag, c: summary.fabricated, clr: COLOR_FABRICATED_BORDER })
+
+    const renderCountGroup = (groupIdx: number, label: string, parts: CountPart[]) => {
+      const groupHeight = countSubRowH * subRowsPerGroup
+      const groupTop = countBodyTop - groupIdx * groupHeight
+      const groupBottom = groupTop - groupHeight
+
+      // Horizontal label centered in the label cell, vertically centered over its 3 sub-rows.
+      const labelTextW = bf.widthOfTextAtSize(san(label), TAG_SIZE)
+      const labelX = countX + (labelColW - labelTextW) / 2
+      const labelY = groupBottom + (groupHeight - TAG_SIZE) / 2
+      w.pg.drawText(san(label), {
+        x: labelX, y: labelY, size: TAG_SIZE, font: bf, color: COLOR_DARK,
+      })
+
+      // 3 count sub-rows stacked vertically inside the count column.
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i]
+        const subTop = groupTop - i * countSubRowH
+        const subBottom = subTop - countSubRowH
+
+        // Sub-row divider (only across the count column, so the label cell looks merged)
+        if (i > 0) {
+          w.pg.drawLine({
+            start: { x: countX + labelColW,  y: subTop },
+            end:   { x: countX + countTableW, y: subTop },
+            thickness: 0.5, color: COLOR_BORDER,
+          })
+        }
+
+        const cellTextY = subBottom + cellPadY + (countSubRowH - cellPadY * 2 - TAG_SIZE) / 2
+        const numText = `${p.c}`
+        const numTextW = rf.widthOfTextAtSize(san(numText), TAG_SIZE)
+        // Dot — centered in its compartment.
+        w.pg.drawCircle({ x: dotCenterX, y: cellTextY + TAG_SIZE * 0.35, size: dotR, color: p.clr })
+        // Name — left-aligned at a fixed x so starts align vertically across rows.
+        w.pg.drawText(san(p.l), {
+          x: nameStartX, y: cellTextY,
+          size: TAG_SIZE, font: rf, color: COLOR_TEXT,
+        })
+        // Number — centered in its compartment.
+        w.pg.drawText(san(numText), {
+          x: numCenterX - numTextW / 2, y: cellTextY,
+          size: TAG_SIZE, font: rf, color: COLOR_TEXT,
+        })
+      }
     }
-    for (const p of summaryParts) {
-      w.pg.drawCircle({ x: sx + 3, y: sy + BODY_SIZE * 0.35, size: 3, color: p.clr })
-      sx += 10
-      const partText = `${p.l}: ${p.c}`
-      w.pg.drawText(san(partText), { x: sx, y: sy, size: BODY_SIZE, font: rf, color: COLOR_TEXT })
-      sx += rf.widthOfTextAtSize(san(partText), BODY_SIZE) + 12
+    renderCountGroup(0, labels.matchGroup, matchParts)
+    if (decisionParts.length) renderCountGroup(1, labels.decisionGroup, decisionParts)
+
+    // ==================== Legend table (with Sorunlar header) ====================
+    const legendTop = startY
+    const legendBottom = legendTop - legendTableH
+    w.rect(legendX, legendBottom, legendW, legendTableH, { border: COLOR_BORDER, bw: 0.5 })
+
+    // Header row: "Sorunlar" centered, spans both columns
+    const headerBottomY = legendTop - headerRowH
+    const headerTextX = legendX + (legendW - sorunlarTextW) / 2
+    const headerTextY = headerBottomY + cellPadY + (headerRowH - cellPadY * 2 - TAG_SIZE) / 2
+    w.pg.drawText(san(sorunlarText), {
+      x: headerTextX, y: headerTextY,
+      size: TAG_SIZE, font: bf, color: COLOR_DARK,
+    })
+    // Divider below header
+    w.pg.drawLine({
+      start: { x: legendX,            y: headerBottomY },
+      end:   { x: legendX + legendW,  y: headerBottomY },
+      thickness: 0.5, color: COLOR_BORDER,
+    })
+
+    // Vertical divider between chip and hint columns (body only)
+    w.pg.drawLine({
+      start: { x: legendX + chipColW, y: headerBottomY },
+      end:   { x: legendX + chipColW, y: legendBottom },
+      thickness: 0.5, color: COLOR_BORDER,
+    })
+
+    for (let i = 0; i < entries.length; i++) {
+      const ent = entries[i]
+      const rowTop = headerBottomY - i * legendBodyRowH
+      const rowBottom = rowTop - legendBodyRowH
+      if (i > 0) {
+        w.pg.drawLine({
+          start: { x: legendX,            y: rowTop },
+          end:   { x: legendX + legendW,  y: rowTop },
+          thickness: 0.5, color: COLOR_BORDER,
+        })
+      }
+      const textY = rowBottom + cellPadY + (legendBodyRowH - cellPadY * 2 - TAG_SIZE) / 2
+      w.pg.drawText(san(ent.chip), {
+        x: legendX + cellPadX, y: textY,
+        size: TAG_SIZE, font: bf, color: ent.chipColor,
+      })
+      w.pg.drawText(san(ent.hint), {
+        x: legendX + chipColW + cellPadX, y: textY,
+        size: TINY_SIZE, font: rf, color: COLOR_MUTED,
+      })
     }
-    w.skip(BODY_SIZE * LH)
+
+    // Advance cursor past whichever table ends lower on the page.
+    w.y = Math.min(countBottom, legendBottom)
   }
-  w.skip(4)
+  w.skip(8)
   w.pg.drawLine({ start: { x: MARGIN_L, y: w.y }, end: { x: PAGE_W - MARGIN_R, y: w.y }, thickness: 0.5, color: COLOR_BORDER })
   w.skip(10)
 
@@ -588,7 +833,26 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
           tx = cx
         }
         if (tx > cx) tx += tagGap
-        w.pg.drawText(san(tag.text), { x: tx, y: w.y - TAG_SIZE, size: TAG_SIZE, font: bf, color: tag.color })
+        if (tag.highestMatch) {
+          // Custom render: prefix + yellow pill (db name) + score in score color.
+          const hm = tag.highestMatch
+          const prefixW = bf.widthOfTextAtSize(san(hm.prefix), TAG_SIZE)
+          const dbW = bf.widthOfTextAtSize(san(hm.db), TAG_SIZE) + 8
+          const baseY2 = w.y - TAG_SIZE
+          // Prefix
+          w.pg.drawText(san(hm.prefix), { x: tx, y: baseY2, size: TAG_SIZE, font: bf, color: COLOR_DARK })
+          // Pill
+          const pillX = tx + prefixW
+          const pillY = baseY2 - 2
+          const pillH = TAG_SIZE + 4
+          w.rect(pillX, pillY, dbW, pillH, { fill: COLOR_DB_BG })
+          w.pg.drawText(san(hm.db), { x: pillX + 4, y: baseY2, size: TAG_SIZE, font: bf, color: COLOR_DB_TEXT })
+          // Score
+          const scoreX = pillX + dbW + 6
+          w.pg.drawText(san(hm.scoreText), { x: scoreX, y: baseY2, size: TAG_SIZE, font: bf, color: hm.scoreColor })
+        } else {
+          w.pg.drawText(san(tag.text), { x: tx, y: w.y - TAG_SIZE, size: TAG_SIZE, font: bf, color: tag.color })
+        }
         tx += tag.width
       }
 
@@ -647,21 +911,22 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
         }
       }
 
-      // Database badge + score
-      w.skip(3)
-      const dbLabel = san(m.database)
-      const dbW = bf.widthOfTextAtSize(dbLabel, TINY_SIZE) + 8
-      const dbBY = w.y - SMALL_SIZE * LH + 2
-      w.rect(ccx, dbBY, dbW, SMALL_SIZE * LH - 1, { fill: COLOR_DB_BG })
-      w.pg.drawText(dbLabel, { x: ccx + 4, y: dbBY + 3, size: TINY_SIZE, font: bf, color: COLOR_DB_TEXT })
-      w.pg.drawText(san(`${Math.round(m.score * 100)}%`), {
-        x: ccx + dbW + 6, y: dbBY + 3, size: SMALL_SIZE, font: bf, color: dbScoreColor(m.score),
-      })
-      w.skip(SMALL_SIZE * LH)
+      // Bibliographic details — compact second block listing every populated
+      // extra field (volume, issue, pages, publisher, editor, document type,
+      // language, ISSN, ISBN). Header omitted; missing fields skipped.
+      if (card.extras.length > 0) {
+        w.skip(4)
+        for (const lines of card.extraLines) {
+          for (const line of lines) {
+            w.text(line, ccx, TINY_SIZE, rf, COLOR_SOURCE)
+          }
+        }
+      }
 
-      // URL (underlined, clickable) — truncated to a single line
+      // URL (underlined, clickable) — truncated to a single line, sits just
+      // above the Google search links.
       if (m.url) {
-        w.skip(2)
+        w.skip(4)
         const displayUrl = truncateToWidth(san(m.url), rf, TINY_SIZE, CARD_INNER_W)
         const uy = w.y - TINY_SIZE
         w.pg.drawText(displayUrl, { x: ccx, y: uy, size: TINY_SIZE, font: rf, color: COLOR_LINK })
@@ -669,20 +934,6 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
         w.pg.drawLine({ start: { x: ccx, y: uy - 1 }, end: { x: ccx + uw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
         w.skip(TINY_SIZE * LH)
         w.addLink(m.url, ccx, w.y, uw, TINY_SIZE * LH)
-      }
-
-      // Bibliographic details — compact second block listing every populated
-      // extra field (volume, issue, pages, publisher, editor, document type,
-      // language, ISSN, ISBN). Always rendered when at least one extra is
-      // present; missing fields are skipped.
-      if (card.extras.length > 0) {
-        w.skip(6)
-        w.text(card.extrasLabel, ccx, TINY_SIZE, bf, COLOR_MUTED)
-        for (const lines of card.extraLines) {
-          for (const line of lines) {
-            w.text(line, ccx, TINY_SIZE, rf, COLOR_SOURCE)
-          }
-        }
       }
 
       // Google Scholar + Google Search links side by side (clickable)
@@ -710,8 +961,6 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
       // Ensure cursor past card bottom
       const cardDrawn = cardTopY - w.y
       if (cardDrawn < card.totalHeight) w.skip(card.totalHeight - cardDrawn)
-    } else if (bot.noMatch) {
-      w.text(labels.noMatch, cx, SMALL_SIZE, rf, COLOR_LOW)
     }
 
     // Ensure cursor past box bottom

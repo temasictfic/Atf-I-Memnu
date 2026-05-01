@@ -877,6 +877,17 @@ export default function VerificationPage() {
           language: t('verification.language'),
           issn: t('verification.issn'),
           isbn: t('verification.isbn'),
+          highestMatch: t('verification.exportPdfHighestMatch'),
+          problemDesc: {
+            authors: t('verification.problemDesc.authors'),
+            title: t('verification.problemDesc.title'),
+            year: t('verification.problemDesc.year'),
+            journal: t('verification.problemDesc.journal'),
+            doi: t('verification.problemDesc.doi'),
+          },
+          total: t('verification.exportPdfTotal'),
+          matchGroup: t('verification.exportPdfMatchGroup'),
+          decisionGroup: t('verification.exportPdfDecisionGroup'),
         },
       })
 
@@ -2254,7 +2265,11 @@ export default function VerificationPage() {
                               {TAG_ORDER.map((tag: TagKey) => {
                                 const on = effectiveTagOn(card.result, tag)
                                 const isTitle = tag === 'title'
-                                const baseClass = isTitle ? styles['title-tag'] : styles['problem-tag']
+                                const titleSim = card.result?.best_match?.match_details?.title_similarity ?? 0
+                                const titleGood = isTitle && titleSim >= 0.85
+                                const baseClass = isTitle
+                                  ? (titleGood ? styles['title-tag-good'] : styles['title-tag'])
+                                  : styles['problem-tag']
                                 const offClass = isTitle ? styles['title-tag-off'] : styles['problem-tag-off']
                                 const className = on ? baseClass : offClass
                                 const onToggle = (e: React.MouseEvent) => {
