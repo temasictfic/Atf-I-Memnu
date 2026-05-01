@@ -134,6 +134,32 @@ def _find_author_boundary(text: str, fmt: CitationFormat | None) -> int:
 
     # Generic rule-based detection for APA/MLA/Chicago/Harvard and unknown formats
 
+    # Rule 10 (Definite): "(YYYY)" / "(Mar. 2024)" / "(October 5, 2023)" /
+    # "(2020a)" parens after authors marks the boundary. The boundary lands
+    # just before the opening "(", regardless of whether the preceding char
+    # is "." (APA `et al.`) or a plain space (`Ismail (Oct. 2023)`).
+    for m in re.finditer(
+        r"[\s.,]\("                                  # opening ( preceded by whitespace/punct
+        r"(?:[A-Za-zÀ-ɏ]+\.?\s+)?"                   # optional month abbrev/full ("Oct.", "October")
+        r"(?:\d{1,2}[.,]?\s+)?"                      # optional day-of-month ("5,", "22")
+        r"(\d{4})[a-z]?"                             # year (with optional disambiguation letter)
+        r"\s*[,)]",                                  # closing ) or comma (for "(2020, October 5)")
+        text,
+    ):
+        year_val = int(m.group(1))
+        if not is_valid_year(year_val):
+            continue
+        paren_pos = text.find("(", m.start(), m.end())
+        if paren_pos <= 0:
+            continue
+        before = text[:paren_pos]
+        # Reject if a quote char already appears before — that means we are
+        # past the author block (e.g. Chicago `J. "Title." Journal (Year)`).
+        if '"' in before or "“" in before:
+            continue
+        if _looks_like_author_section(before):
+            return paren_pos
+
     # MLA/Chicago: authors end before a quoted title
     # Check if there's a ". " followed by a quote character, but only
     # if the quoted span looks like a title (several words) — not a
@@ -152,15 +178,6 @@ def _find_author_boundary(text: str, fmt: CitationFormat | None) -> int:
                 # Too short to be a title — likely a nickname inside authors.
                 continue
         return qm.start() + 1
-
-    # Rule 10 (Definite): ". (" = authors section ends (APA-style year in parens)
-    # Look for ". (" or ".(" pattern — but only where "(" starts a year
-    for m in re.finditer(r"\.\s*\(", text):
-        pos = m.start()
-        after_paren = text[m.end():]
-        # Confirm it's a year in parens, not e.g. "(eds.)"
-        if re.match(r"\d{4}", after_paren):
-            return m.start() + 1  # include the period
 
     # Rule 8 (Definite): "., YYYY" = last author is right before year
     for m in re.finditer(r"\.,\s*(\d{4})", text):
@@ -306,23 +323,78 @@ def _looks_like_author_section(text: str) -> bool:
 # Year extraction (Kurallar Rules 3, 4, 5, 6)
 # ---------------------------------------------------------------------------
 
+_NON_YEAR_DIGIT_MASKS = (
+    re.compile(r"https?://\S+"),
+    re.compile(r"10\.\d{4,9}/\S+"),
+    re.compile(r"\barXiv\s*:\s*\d{4}\.\d{4,5}(?:v\d+)?\b", re.IGNORECASE),
+    re.compile(r"\b\d{4}\.\d{4,5}(?:v\d+)?\b"),  # bare arXiv-id form
+    re.compile(r"\b(\d{3,5})\s*[-‐-―]\s*(\d{1,5})\b"),  # page ranges
+    re.compile(r"\bpp?\.\s*\d+", re.IGNORECASE),
+    re.compile(
+        r"\b(?:no|vol|volume|issue|num|number|month|cilt|sayi)\.?\s+[A-Za-zÀ-ɏ]+\s+\d{4}\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _mask_non_year_digits(text: str) -> str:
+    """Blank out digit clusters that are not citation-year candidates.
+
+    URLs, DOIs, arXiv IDs, page ranges, ``pp. NNNN`` and ``no. May 2023``-style
+    issue tags can otherwise leak 4-digit numbers into the year search.
+    Masking with same-length spaces preserves character offsets so callers
+    can still use returned positions against the original text.
+    """
+    out = text
+    for pat in _NON_YEAR_DIGIT_MASKS:
+        out = pat.sub(lambda m: " " * len(m.group(0)), out)
+    return out
+
+
 def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]:
     """Extract year using Kurallar priority rules.
 
     Returns (year, start_pos, end_pos) in the original text.
     """
+    # Mask digit clusters that look like years but aren't (DOI/arXiv/pages).
+    # Same-length replacement preserves all match offsets.
+    masked = _mask_non_year_digits(text)
+
     # Rule 5 (Definite): Parenthesized year takes absolute priority.
-    # Also handle variants like: (2013, 22 Aralik) or (2013, Dec 22).
-    # We return the full parenthesized span so title extraction starts AFTER it.
-    paren_year_with_tail = re.search(r"\((\d{4})[a-z]?(?:\s*,[^)]*)?\)", text, re.IGNORECASE)
+    # Accepts: "(2013)", "(2020a)", "(2013, 22 Aralik)", "(Mar. 2024)",
+    # "(October 5, 2023)". Returns the full "(...)" span so title extraction
+    # starts AFTER it.
+    paren_year_with_tail = re.search(
+        r"\("
+        r"(?:[A-Za-zÀ-ɏ]+\.?\s+)?"                    # optional month abbrev/full
+        r"(?:\d{1,2}[.,]?\s+)?"                       # optional day-of-month
+        r"(\d{4})[a-z]?"                              # year (with optional disambiguation letter)
+        r"(?:\s*,[^)]*)?"                             # optional trailing tail (", 22 Aralik")
+        r"\s*\)",
+        masked,
+        re.IGNORECASE,
+    )
     if paren_year_with_tail:
         year_val = int(paren_year_with_tail.group(1))
         if is_valid_year(year_val):
             return year_val, paren_year_with_tail.start(), paren_year_with_tail.end()
 
+    # Vancouver-tail: "YYYY;Volume(Issue):Pages" — the canonical Vancouver
+    # journal-volume separator. Runs before Rule 3 because a Vancouver ref
+    # like "Authors, et al. <Title-with-leading-year>. Journal. YYYY;V(I):P"
+    # would otherwise let Rule 3 match the in-title year via "et al. YYYY".
+    # The "<digit><semicolon><digit>" shape is highly specific to Vancouver
+    # and effectively never collides with other formats once URLs/DOIs are
+    # masked out above.
+    vanc_tail = re.search(r"\b(\d{4})\s*;\s*\d", masked)
+    if vanc_tail:
+        year_val = int(vanc_tail.group(1))
+        if is_valid_year(year_val):
+            return year_val, vanc_tail.start(1), vanc_tail.end(1)
+
     # Rule 3 (Definite): Year after &, and, ve, et al.
     conj_year = re.search(
-        r"(?:&|and|ve|et\s+al\.)\s*,?\s*(\d{4})\b", text, re.IGNORECASE
+        r"(?:&|and|ve|et\s+al\.)\s*,?\s*(\d{4})\b", masked, re.IGNORECASE
     )
     if conj_year:
         year_val = int(conj_year.group(1))
@@ -331,15 +403,46 @@ def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]
 
     # Rule 4 (Definite): After conjunctions, if ( follows, year = 4 digits inside (
     conj_paren = re.search(
-        r"(?:&|and|ve|et\s+al\.)\s*\((\d{4})", text, re.IGNORECASE
+        r"(?:&|and|ve|et\s+al\.)\s*\((\d{4})", masked, re.IGNORECASE
     )
     if conj_paren:
         year_val = int(conj_paren.group(1))
         if is_valid_year(year_val):
             return year_val, conj_paren.start(1), conj_paren.end(1)
 
+    # IEEE-tail: ", YYYY, doi:" / ", YYYY, URL:" / ", YYYY." at end of metadata.
+    # IEEE refs (`..., vol. V, no. N, pp. X-Y, YYYY, doi: ...`) put the
+    # publication year right before `doi:`/`URL:`. Anchor on that to beat
+    # earlier issue/month-year fragments like `no. May 2023`.
+    ieee_tail = re.search(
+        r",\s*(\d{4})\s*(?:,\s*(?:doi|url)\b|\.\s*$|\s*$)",
+        masked,
+        re.IGNORECASE,
+    )
+    if ieee_tail:
+        year_val = int(ieee_tail.group(1))
+        if is_valid_year(year_val):
+            return year_val, ieee_tail.start(1), ieee_tail.end(1)
+
+    # Bare-year between sentence punctuation (APA-Turkish / Vancouver-bare):
+    # `Authors. YYYY. Title` or `Authors, YYYY, Title`, optionally with a
+    # disambiguation letter (`2017a.`). Preferred over Rule 6 because format
+    # detection sometimes misclassifies these as IEEE and advances the
+    # author boundary past the year.
+    bare_re = re.compile(r"(?:^|[.,])\s+(\d{4})[a-z]?\s*[.,]\s", flags=re.IGNORECASE)
+    bare_after = bare_re.search(masked, author_end_pos)
+    if bare_after:
+        year_val = int(bare_after.group(1))
+        if is_valid_year(year_val):
+            return year_val, bare_after.start(1), bare_after.end(1)
+    bare_anywhere = bare_re.search(masked)
+    if bare_anywhere:
+        year_val = int(bare_anywhere.group(1))
+        if is_valid_year(year_val):
+            return year_val, bare_anywhere.start(1), bare_anywhere.end(1)
+
     # Rule 6 (Definite): First 4-digit number after author_end_pos. Once found, stop.
-    after_authors = text[author_end_pos:]
+    after_authors = masked[author_end_pos:]
     first_year = YEAR_PATTERN.search(after_authors)
     if first_year:
         year_val = int(first_year.group(1))
@@ -349,7 +452,7 @@ def _extract_year(text: str, author_end_pos: int) -> tuple[int | None, int, int]
             return year_val, abs_start, abs_end
 
     # Fallback: first year anywhere in text
-    fallback = YEAR_PATTERN.search(text)
+    fallback = YEAR_PATTERN.search(masked)
     if fallback:
         year_val = int(fallback.group(1))
         if is_valid_year(year_val):
@@ -436,6 +539,12 @@ def _extract_title_journal_mla_chicago(
 
     between = between.strip().lstrip(".,").strip()
 
+    # If `between` has effectively no content, the source is APA-Springer
+    # (`Authors (Year). Title. Journal`) misclassified as MLA/Chicago \u2014 title
+    # is AFTER the year, not before. Defer to the APA handler.
+    if len(between) < 5 and year_end >= 0:
+        return _extract_title_journal_apa_harvard(text, author_end, year_start, year_end)
+
     # Kurallar Title Rule 1: quoted title
     quoted = re.search(r'["\u201C]([^"\u201D]+)["\u201D]', between)
     if quoted:
@@ -471,6 +580,11 @@ def _extract_title_journal_vancouver(
 
     # Split by ". " — first segment is title, second is journal
     parts = re.split(r"\.\s+", between, maxsplit=2)
+    # Drop leading parts that are author-list continuation rather than the
+    # title: Vancouver boundary detection sometimes stops mid-list and
+    # leaves `Moons KG, et al` as parts[0].
+    while parts and re.search(r"\bet\s+al\.?\s*$", parts[0].strip(), re.IGNORECASE):
+        parts.pop(0)
     title = parts[0].strip().rstrip(".") if parts else ""
     journal = parts[1].strip().rstrip(".") if len(parts) > 1 else None
 
@@ -518,14 +632,23 @@ def _extract_title_journal_legacy(
         journal = _extract_journal_from_remainder(parts[1]) if len(parts) > 1 else None
         return title, journal
 
-    # Try quoted title anywhere
-    quote_match = re.search(r'"([^"]+)"', text)
+    # Try quoted title anywhere — also harvest the journal from the text
+    # AFTER the closing quote (covers `Authors. YYYY. "Title". Journal, ...`
+    # bare-year forms where no `(YYYY)` paren is present).
+    quote_match = re.search(r'["“]([^"”]+)["”]', text)
     if quote_match:
         title = quote_match.group(1).strip()
-        return title, None
+        remainder = text[quote_match.end():].strip().lstrip(".,").strip()
+        journal = _extract_journal_from_remainder(remainder) if remainder else None
+        return title, journal
 
-    # Last resort: take text after author boundary, capped
-    after = text[author_end:].strip().lstrip(".,()0123456789 ").strip()
+    # Last resort: take text after author boundary, capped.
+    # Strip leading bare year + optional disambiguation letter ("2017a.",
+    # "2011a.") explicitly — the lstrip charset that follows would leave
+    # the trailing letter behind ("a") and treat it as the title.
+    after = text[author_end:].strip()
+    after = re.sub(r"^[.,()]*\s*(?:19|20)\d{2}[a-z]?[.,]?\s*", "", after)
+    after = after.lstrip(".,()0123456789 ").strip()
     if after:
         # Split at first period for title
         parts = re.split(r"\.\s+", after, maxsplit=1)
@@ -534,6 +657,37 @@ def _extract_title_journal_legacy(
         return title, journal
 
     return text[:200], None
+
+
+_JOURNAL_LEADING_PREFIX_RE = re.compile(
+    r"^(?:In|En|Da|De)\s*:\s*", flags=re.IGNORECASE
+)
+# Reject candidates that are just metadata labels — `URL`, `DOI: 10`, `arXiv:`,
+# bare URLs/DOIs. These appear after title extraction when the reference has
+# no real venue (arXiv-only, DOI-only, dataset).
+_JOURNAL_REJECT_PREFIX_RE = re.compile(
+    r"^\s*(?:arXiv|DOI|URL|https?:|10\.\d|©)", flags=re.IGNORECASE
+)
+# End-of-journal markers: comma+vol/issue/page/digit, OR period+identifier
+# section (DOI/URL/arXiv/©), OR final period at end of text. The period-then-
+# identifier branch lets us keep internal abbreviation periods like
+# `Proc. Computer Vision and Pattern Recognition (CVPR), IEEE.` together.
+_JOURNAL_END_RE = re.compile(
+    r",\s*(?:vol\.?|pp\.?|p\.?|no\.?|issue|cilt|sayi|\d)"
+    r"|\.\s*(?:DOI|URL|arXiv|https?://|10\.\d{4}|©)"
+    r"|\.\s*$",
+    flags=re.IGNORECASE,
+)
+# Trailing volume / volume.issue token left attached to the journal name
+# (e.g. `Sensors 22.8`, `Pattern Recognition 147`). Stripped after the
+# end-marker step so journal names that intentionally end in a digit
+# (rare) survive only if no end-marker fired.
+_JOURNAL_TRAILING_VOL_RE = re.compile(r"\s+\d{1,4}(?:\.\d{1,4})?\s*$")
+# Final-result rejection: after all stripping the journal is just a
+# metadata label fragment (`URL`, `In`, `Trans`, `arXiv`).
+_JOURNAL_LABEL_ONLY_RE = re.compile(
+    r"^\s*(?:arXiv|DOI|URL|In|Trans)\s*:?\s*$", flags=re.IGNORECASE
+)
 
 
 def _extract_journal_from_remainder(text: str) -> str | None:
@@ -548,25 +702,29 @@ def _extract_journal_from_remainder(text: str) -> str | None:
 
     text = text.strip()
 
-    # Journal ends at volume/issue patterns
-    # Strip trailing issue info: ", vol. 45", ", 45(2)", ", pp. 123-145"
-    journal_end = re.search(
-        r",\s*(?:vol\.|pp\.|p\.|\d+\s*\(|\d+\s*$)", text, re.IGNORECASE
-    )
-    if journal_end:
-        journal = text[:journal_end.start()].strip()
-    else:
-        # Kurallar Journal Rule 5: period = end of journal name
-        journal = text.split(".")[0].strip()
+    # Strip leading metadata prefix some formats emit before the journal,
+    # e.g. Springer-style `In: Pattern Recognition 147, ...`.
+    text = _JOURNAL_LEADING_PREFIX_RE.sub("", text)
 
-    # Kurallar Journal Rule 2: if journal starts with comma, strip it
-    journal = journal.strip(",").strip()
+    # Reject candidates that are pure metadata labels / URLs / DOIs / arXiv.
+    if _JOURNAL_REJECT_PREFIX_RE.match(text):
+        return None
 
-    # Remove DOI or URL remnants
+    # Cut at end-of-journal marker, otherwise take the whole remainder.
+    end = _JOURNAL_END_RE.search(text)
+    journal = text[: end.start()] if end else text
+
+    # Strip stray punctuation, then any URL/DOI fragments that survived.
+    journal = journal.strip(",;: \t.")
     journal = re.sub(r"https?://\S+", "", journal).strip()
     journal = re.sub(r"doi[:\s]*10\.\S+", "", journal, flags=re.IGNORECASE).strip()
 
+    # Trim trailing volume / volume.issue glued onto the journal name.
+    journal = _JOURNAL_TRAILING_VOL_RE.sub("", journal).strip()
+
     if len(journal) < 3:
+        return None
+    if _JOURNAL_LABEL_ONLY_RE.match(journal):
         return None
 
     return journal.rstrip(".,;:") or None
@@ -631,11 +789,18 @@ def _parse_standard_authors(author_text: str) -> list[str]:
     # Reassemble "Last, Initials" or "Last, First" pairs
     # Kurallar Rule 12: ", K." = author; Rule 7: single letter + period = abbreviation
     authors = []
+    # Latin Extended A/B (À-ɏ) covers diacritic letters used across
+    # European citations: Czech (ř, š), Spanish (á, ú, ñ), Portuguese (ã, ç),
+    # Hungarian (ő, ű), Polish (ł, ż), Scandinavian (å, ø), French (é, è),
+    # German (ä, ö, ü), plus Turkish. Without it "Borovec, Jiří" splits
+    # because "Jiří" doesn't match the lowercase class.
+    upper_cls = r"A-ZÇĞİÖŞÜÀ-ɏ"
+    lower_cls = r"a-zçğıöşüÀ-ɏ"
     # Recognize a complete "Surname Initial(s)" Vancouver-style entry so
     # we don't over-pair (e.g. "Savran A." shouldn't grab "Sankur B").
     complete_vanc_re = re.compile(
-        r"^[A-ZÇĞİÖŞÜ][a-zçğıöşü]+(?:[-\s][A-ZÇĞİÖŞÜ][a-zçğıöşü]+)*"
-        r"\s+[A-ZÇĞİÖŞÜ](?:\.?[A-ZÇĞİÖŞÜ]){0,3}\.?$"
+        rf"^[{upper_cls}][{lower_cls}]+(?:[-\s][{upper_cls}][{lower_cls}]+)*"
+        rf"\s+[{upper_cls}](?:\.?[{upper_cls}]){{0,3}}\.?$"
     )
     i = 0
     while i < len(parts):
@@ -653,9 +818,9 @@ def _parse_standard_authors(author_text: str) -> list[str]:
             #   - compound given:    "A.-r." (Abdel-rahman), "A. u." (Aziz ul)
             #   - interleaved upper/lower: "C. d. S." (Brazilian), "J. P. d. S."
             is_initials = bool(re.match(
-                r"^[A-ZÇĞİÖŞÜ]"
-                r"(?:[.\-\s]+(?:[A-ZÇĞİÖŞÜ]|[a-zçğıöşü]+))*"
-                r"\.?$",
+                rf"^[{upper_cls}]"
+                rf"(?:[.\-\s]+(?:[{upper_cls}]|[{lower_cls}]+))*"
+                rf"\.?$",
                 next_part,
             ))
             # Check if next part is a given-name section:
@@ -664,8 +829,8 @@ def _parse_standard_authors(author_text: str) -> list[str]:
             #   - first name + middle initial: "Julian P.", "Buse N."
             #   - multi-word given: "Buse Nur"
             is_first_name = bool(re.match(
-                r"^[A-ZÇĞİÖŞÜ][a-zçğıöşü]*(?:-[A-ZÇĞİÖŞÜa-zçğıöşü]+)?"
-                r"(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]*(?:-[A-ZÇĞİÖŞÜa-zçğıöşü]+)?)?\.?$",
+                rf"^[{upper_cls}][{lower_cls}]*(?:-[{upper_cls}{lower_cls}]+)?"
+                rf"(?:\s+[{upper_cls}][{lower_cls}]*(?:-[{upper_cls}{lower_cls}]+)?)?\.?$",
                 next_part,
             ))
             if is_initials or is_first_name:
