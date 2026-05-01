@@ -78,6 +78,9 @@ const AUTHOR_START_PATTERNS: RegExp[] = [
 const CONTINUATION_PATTERNS: RegExp[] = [
   /^\(\d{4}[a-z]?\)\.?\s/,
   /^\d+(?:[\-–—]\d+)?\./,
+  // Journal name + volume(/issue): page — e.g. "EFSA Journal, 7(11): 1331".
+  // Strong continuation signal because no real citation header has this shape.
+  /^[A-Z][\w&'\-\s.]*,\s+\d+(?:\(\d+\))?\s*:\s*\d/,
 ]
 
 const CITATION_SIGNAL_PATTERNS: RegExp[] = [
@@ -91,7 +94,27 @@ const CITATION_SIGNAL_PATTERNS: RegExp[] = [
   /\bvol\.\s*\d/i,
 ]
 
-const PREV_CONTINUES_AUTHORS_RE = /(?:[,;&]|\bve|\band|\beds?\.)\s*$/i
+// Patterns that mark the previous block as still mid-citation, so the next
+// line should NOT be treated as a new reference start. Beyond the obvious
+// trailing separators (`,`, `;`, `&`, `ve`, `and`, `eds.`) we also recognise:
+//   `:`        — `Editör:`, `Eds.:` immediately preceding a multi-author list
+//   trailing `-` — mid-word break (e.g. `re-` continuing into next line)
+//   single capital initial like `J.`, `C.` — author initial, title follows
+//   year + period like `2024.` — author/year header, title follows
+const PREV_CONTINUES_AUTHORS_RE =
+  /(?:[,;&:]|\bve|\band|\beds?\.|-|\b[A-Z]\.|\b(?:19|20)\d{2}[a-z]?\.)\s*$/i
+
+// Visual terminators that suggest the previous block actually ended a
+// citation. Required for `authorBoundary` so that wrapped title lines like
+// `... Holter EKG Analizinde\nNormal, Anormal, ...` don't trigger a split:
+// the prev block ends with the bare word `Analizinde` — not a terminator —
+// so we keep accumulating instead of starting a new ref.
+//
+// We also accept URLs and DOIs as terminators because many citations end
+// with a bare URL/DOI (no trailing period) — without this, refs that end
+// with `https://doi.org/...` would block the next legitimate ref start.
+const PREV_TERMINATED_RE =
+  /(?:[.”’")\]]|https?:\/\/\S+|\b10\.\d{4,9}\/\S+)\s*$/i
 
 // -------------------------------------------------------------------------
 // Helpers
@@ -169,7 +192,16 @@ function mergeLineFragments(blocks: TextBlock[]): TextBlock[] {
     const closeH = hGap < lineHeight * 3
 
     if (sameLine && closeH) {
-      const sep = current.text.endsWith('-') ? '' : ' '
+      // pdfjs sometimes returns adjacent text items with no horizontal gap
+      // (e.g. `133` and `:` arrive as separate items, `Wireless` arrives as
+      // `W` + `ireless`). Always inserting a space produced `133 : 103550`
+      // and `W ireless`. Suppress the space when fragments visually touch.
+      const sep =
+        current.text.endsWith('-')
+          ? ''
+          : hGap < lineHeight * 0.25
+            ? ''
+            : ' '
       current = {
         text: current.text + sep + block.text,
         bbox: [
@@ -406,9 +438,11 @@ function splitByEmptyLines(blocks: PageBlock[], pdfId: string): SourceRectangle[
 
     const prevText = prevBlock.text.trim()
     const prevContinuesAuthors = PREV_CONTINUES_AUTHORS_RE.test(prevText)
+    const prevLooksTerminated = PREV_TERMINATED_RE.test(prevText)
     const authorBoundary =
       text.length >= 15 &&
       !prevContinuesAuthors &&
+      prevLooksTerminated &&
       startsWithAuthorPattern(text) &&
       !looksLikeContinuation(text)
 
@@ -419,8 +453,15 @@ function splitByEmptyLines(blocks: PageBlock[], pdfId: string): SourceRectangle[
 
   if (boundaryIndices.length < 4) return []
 
-  // Step 4: group blocks into sources
+  // Step 4: group blocks into sources. If a candidate group doesn't look like
+  // its own citation (too short or no citation signals), reattach it to the
+  // previous source instead of dropping it — those fragments are almost
+  // always wrap-around tails (publisher+city, edition info) that the
+  // boundary detector falsely cleaved off. Driving case: 126E156 ref 9
+  // where `Springer, New York.` was split off and dropped.
   const sources: SourceRectangle[] = []
+  const sourceBlocks: PageBlock[][] = []
+  const sourceTexts: string[] = []
   let refCounter = 0
 
   for (let b = 0; b < boundaryIndices.length; b++) {
@@ -433,12 +474,37 @@ function splitByEmptyLines(blocks: PageBlock[], pdfId: string): SourceRectangle[
       .filter(t => t.length > 0)
       .join(' ')
 
-    if (!refText || refText.length < 20) continue
-    if (!looksLikeCitation(refText)) continue
+    if (!refText) continue
+
+    // Very short fragments are almost always wrap-around tails the boundary
+    // detector cleaved off (publisher+city, edition info, ISBN). Reattach
+    // them to the previous source instead of dropping. Length cap kept low
+    // so legitimate short refs like ISO standards stay independent.
+    if (refText.length < 30 && sources.length > 0) {
+      const lastIdx = sources.length - 1
+      const mergedBlocks = [...sourceBlocks[lastIdx], ...refBlocks]
+      const mergedText = sourceTexts[lastIdx] + ' ' + refText
+      const replacement = createSourceRectangle(
+        mergedBlocks,
+        mergedText,
+        sources[lastIdx].ref_number ?? null,
+        pdfId
+      )
+      if (replacement) {
+        sources[lastIdx] = replacement
+        sourceBlocks[lastIdx] = mergedBlocks
+        sourceTexts[lastIdx] = mergedText
+      }
+      continue
+    }
 
     refCounter += 1
     const src = createSourceRectangle(refBlocks, refText, refCounter, pdfId)
-    if (src) sources.push(src)
+    if (src) {
+      sources.push(src)
+      sourceBlocks.push(refBlocks)
+      sourceTexts.push(refText)
+    }
   }
 
   return sources
@@ -586,7 +652,11 @@ function createSourceRectangle(
     bboxes.push({ x0, y0, x1, y1, page: pageNum })
   }
 
-  const trimmed = text.trim()
+  // Collapse any whitespace runs introduced by the merge (or by pdfjs items
+  // separated by spaces of varying width) so detector text matches what
+  // `extractTextInBbox` produces — that's the format the approved cache
+  // stores and the verification pipeline expects.
+  const trimmed = text.replace(/\s+/g, ' ').trim()
   return {
     id: makeSourceId(pdfId, trimmed),
     pdf_id: pdfId,
