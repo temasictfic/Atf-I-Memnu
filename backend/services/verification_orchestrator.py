@@ -8,8 +8,8 @@ from api.websocket import manager
 from models.settings import DatabaseConfig
 from models.source import SourceRectangle, ParsedSource
 from models.verification_result import VerificationResult, MatchResult
-from services.match_scorer import classify_decision, determine_verification_status
-from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
+from services.match_scorer import classify_decision, determine_verification_status, score_to_band
+from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD, STATUS_MEDIUM_THRESHOLD
 from services.search_settings import (
     get_max_concurrent_apis,
     get_max_concurrent_sources_per_pdf,
@@ -506,7 +506,8 @@ async def _run_tier1_apis(
                         result = await asyncio.wait_for(search_fn(parsed), timeout=search_timeout)
 
                     searched.append(name)
-                    found = result is not None and result.score >= 0.5
+                    score = result.score if result is not None else 0.0
+                    found = score >= STATUS_MEDIUM_THRESHOLD
 
                     await manager.broadcast("verify_db_checked", {
                         "pdf_id": pdf_id,
@@ -514,7 +515,7 @@ async def _run_tier1_apis(
                         "database": name,
                         "found": found,
                         "match": result.model_dump() if result else None,
-                        "db_status": "high" if found else "low",
+                        "db_status": score_to_band(score) if result is not None else "low",
                         "search_url": (result.search_url if result else None) or fallback_url,
                     })
 

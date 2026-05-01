@@ -33,7 +33,17 @@ __all__ = [
     "classify_decision",
     "determine_verification_status",
     "score_match",
+    "score_to_band",
 ]
+
+
+def score_to_band(score: float) -> str:
+    """Classify a composite score into the canonical high/medium/low band."""
+    if score >= STATUS_HIGH_THRESHOLD:
+        return "high"
+    if score >= STATUS_MEDIUM_THRESHOLD:
+        return "medium"
+    return "low"
 
 
 def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
@@ -212,14 +222,7 @@ def determine_verification_status(
     if best_match.match_details.title_similarity < TITLE_MATCH_THRESHOLD:
         tags.append("!title")
 
-    score = best_match.score
-    if score >= STATUS_HIGH_THRESHOLD:
-        status = "high"
-    elif score >= STATUS_MEDIUM_THRESHOLD:
-        status = "medium"
-    else:
-        status = "low"
-    return status, tags
+    return score_to_band(best_match.score), tags
 
 
 # ----- Decision tag (Citation / Fabricated) decision tree -----------------

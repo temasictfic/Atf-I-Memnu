@@ -878,11 +878,12 @@
   background: #e7e5e4;
   transition: all 0.2s;
 }
-/* Status-colored dots */
+/* Status-colored dots — high/medium/low mirror STATUS_HEX in colors.ts */
 .dot-high { background: #22c55e; }
-.dot-low { background: #a8a29e; }
-.dot-timeout { background: #f97316; }
-.dot-error { background: #ef4444; }
+.dot-medium { background: #f59e0b; }
+.dot-low { background: #ef4444; }
+.dot-timeout { background: #92400e; }
+.dot-error { background: #000000; }
 .dot-rate_limited { background: #b508ea; }
 .dot-skipped { background: #cbd5e1; border: 1px dashed #94a3b8; }
 .dot-current { background: #3b82f6; animation: pulse 1s infinite; }

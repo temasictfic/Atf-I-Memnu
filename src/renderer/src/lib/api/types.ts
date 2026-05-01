@@ -161,7 +161,7 @@ export interface LogEntry {
 }
 
 // Verification progress tracking
-export type DbCheckStatus = 'checking' | 'high' | 'low' | 'timeout' | 'error' | 'rate_limited' | 'skipped'
+export type DbCheckStatus = 'checking' | 'high' | 'medium' | 'low' | 'timeout' | 'error' | 'rate_limited' | 'skipped'
 
 export interface DbCheckEntry {
   name: string
