@@ -487,8 +487,7 @@ def _extract_title_journal(
     if fmt == CitationFormat.IEEE:
         return _extract_title_journal_ieee(text, author_end, year_start, year_end)
 
-    # Unknown format: use legacy approach
-    return _extract_title_journal_legacy(text, author_end, year_start, year_end)
+    return _extract_title_journal_unknown_format(text, author_end, year_start, year_end)
 
 
 def _extract_title_journal_apa_harvard(
@@ -499,7 +498,7 @@ def _extract_title_journal_apa_harvard(
     Title comes AFTER year.
     """
     if year_end < 0:
-        return _extract_title_journal_legacy(text, author_end, year_start, year_end)
+        return _extract_title_journal_unknown_format(text, author_end, year_start, year_end)
 
     after_year = text[year_end:].strip().lstrip(".)].").strip()
     if not after_year:
@@ -608,13 +607,13 @@ def _extract_title_journal_ieee(
         return title, journal
 
     # Fallback
-    return _extract_title_journal_legacy(text, author_end, year_start, year_end)
+    return _extract_title_journal_unknown_format(text, author_end, year_start, year_end)
 
 
-def _extract_title_journal_legacy(
+def _extract_title_journal_unknown_format(
     text: str, author_end: int, year_start: int, year_end: int
 ) -> tuple[str, str | None]:
-    """Legacy extraction when format is unknown. Preserved for backward compatibility."""
+    """Format-agnostic title/journal extraction used when the citation format is unknown or when a format-specific extractor has insufficient signal."""
     # Try parenthesized year pattern: Authors (Year). Title. Journal
     year_paren_match = re.search(r"\((?:19|20)\d{2}[a-z]?\)", text)
     if year_paren_match:

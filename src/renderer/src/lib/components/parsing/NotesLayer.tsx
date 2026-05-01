@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Note, NoteKind, NoteQuad } from '../../stores/notes-store'
 import {
   DEFAULT_CALLOUT_FONT_SIZE,
-  useNotesStore,
+  DEFAULT_CALLOUT_OPACITY,
 } from '../../stores/notes-store'
 import { SCALE } from '../../pdf/types'
 import styles from './ParsingPage.module.css'
@@ -69,7 +69,6 @@ export function NotesLayer({
 }: Props) {
   const [drawing, setDrawing] = useState<DrawState | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const calloutOpacity = useNotesStore(s => s.calloutOpacity)
 
   const isDrawKind = activeKind === 'callout' || activeKind === 'highlight'
 
@@ -171,7 +170,7 @@ export function NotesLayer({
               pageHeight={pageHeight}
               selected={note.id === selectedNoteId}
               interactive={interactiveCallouts}
-              opacity={note.opacity ?? calloutOpacity}
+              opacity={note.opacity ?? DEFAULT_CALLOUT_OPACITY}
               onSelect={onSelectNote}
               onUpdateBbox={onUpdateNoteBbox}
               onMoveToPage={onMoveNoteToPage}

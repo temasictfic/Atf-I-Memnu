@@ -47,8 +47,7 @@ export interface Note {
   textColor?: string // defaults to DEFAULT_CALLOUT_TEXT_COLOR
   // Per-callout background alpha (0..1). Seeded from `calloutOpacity` at
   // creation; editing the slider with a callout selected updates just
-  // that note. Absent on highlights and on legacy callouts created before
-  // this field existed — callers fall back to the store default.
+  // that note. Highlights ignore this field.
   opacity?: number
   // Set when the note was produced by the auto-annotate action for a specific
   // SourceRectangle. Used to dedupe on re-run so clicking auto-annotate
@@ -79,9 +78,9 @@ interface NotesState {
   // previously-captured snapshots.
   notesHistoryByPdf: Record<string, Note[][]>
   activeKind: NoteKind | null
-  // Mirrors the active kind's chosen color (see `highlightColor` /
-  // `calloutColor` below). Kept so legacy consumers of "current color"
-  // don't need to know the kind.
+  // Mirror of the active kind's color (highlightColor when activeKind is
+  // 'highlight', calloutColor when 'callout'). Lets the drag-preview
+  // renderer pick the right color without switching on activeKind itself.
   activeColor: string
   // Per-kind persisted user choices. `setActiveColor` updates whichever
   // one matches `activeKind`. Manual note creation and auto-annotate

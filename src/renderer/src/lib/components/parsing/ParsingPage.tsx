@@ -51,6 +51,7 @@ import {
   useNotesStore,
   DEFAULT_CALLOUT_FONT_SIZE,
   DEFAULT_CALLOUT_TEXT_COLOR,
+  DEFAULT_CALLOUT_OPACITY,
   CALLOUT_FONT_SIZE_MIN,
   CALLOUT_FONT_SIZE_MAX,
 } from "../../stores/notes-store";
@@ -924,7 +925,7 @@ export default function ParsingPage() {
       : calloutDefaultBold;
   const displayCalloutOpacity =
     selectedNote && selectedNote.kind === "callout" && activeNoteKind === "callout"
-      ? selectedNote.opacity ?? calloutOpacity
+      ? selectedNote.opacity ?? DEFAULT_CALLOUT_OPACITY
       : calloutOpacity;
 
   async function handleExportAnnotatedPdf() {
@@ -958,9 +959,7 @@ export default function ParsingPage() {
       const bytes = await window.electronAPI.readPdfFile(localPath);
       // Lazy-load pdf-lib + fontkit (~1.2 MB) only on first export.
       const { writeNotesToPdf } = await import("../../pdf/annotation-writer");
-      const annotated = await writeNotesToPdf(bytes, pdfNotes, {
-        calloutOpacity: useNotesStore.getState().calloutOpacity,
-      });
+      const annotated = await writeNotesToPdf(bytes, pdfNotes);
       await window.electronAPI.writePdfFile(target, annotated);
       // Flash a success state on the Export button for ~1.8 s.
       setExportSuccess(true);
@@ -2364,10 +2363,10 @@ export default function ParsingPage() {
                           <span className={styles["field-value"]}>{parsedFields.year}</span>
                         </div>
                       )}
-                      {parsedFields.source && (
+                      {parsedFields.journal && (
                         <div className={styles["field-row"]}>
-                          <span className={styles["field-label"]}>{t("parsing.fields.source")}</span>
-                          <span className={styles["field-value"]}>{parsedFields.source}</span>
+                          <span className={styles["field-label"]}>{t("parsing.fields.journal")}</span>
+                          <span className={styles["field-value"]}>{parsedFields.journal}</span>
                         </div>
                       )}
                       {parsedFields.url && (

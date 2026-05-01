@@ -94,12 +94,6 @@ function pixelQuadToPdfRect(quad: NoteQuad, pageHeightPt: number): PdfRect {
   return { x0, y0: Math.min(yTop, yBottom), x1, y1: Math.max(yTop, yBottom) }
 }
 
-export interface WriteNotesOptions {
-  // Background alpha for callout rectangles, 0..1. Defaults to
-  // DEFAULT_CALLOUT_OPACITY. Border alpha is always 1.
-  calloutOpacity?: number
-}
-
 /**
  * Load a PDF, write all given notes (highlights as annotations + callouts as
  * drawn content), return the serialized bytes. The original file on disk is
@@ -107,12 +101,8 @@ export interface WriteNotesOptions {
  */
 export async function writeNotesToPdf(
   originalBytes: Uint8Array,
-  notes: Note[],
-  options: WriteNotesOptions = {}
+  notes: Note[]
 ): Promise<Uint8Array> {
-  const calloutOpacity = clampOpacity(
-    options.calloutOpacity ?? DEFAULT_CALLOUT_OPACITY
-  )
   const pdfDoc = await PDFDocument.load(originalBytes, {
     ignoreEncryption: true,
     updateMetadata: false,
@@ -160,14 +150,7 @@ export async function writeNotesToPdf(
     // Callouts: draw straight into the page content stream.
     for (const note of pageNotes) {
       if (note.kind !== 'callout') continue
-      drawCalloutOnPage(
-        page,
-        note,
-        pageHeightPt,
-        helvetica,
-        helveticaBold,
-        calloutOpacity
-      )
+      drawCalloutOnPage(page, note, pageHeightPt, helvetica, helveticaBold)
     }
   }
 
@@ -233,15 +216,12 @@ function drawCalloutOnPage(
   note: Note,
   pageHeightPt: number,
   helvetica: PDFFont,
-  helveticaBold: PDFFont,
-  calloutOpacity: number
+  helveticaBold: PDFFont
 ) {
   const rect = pixelQuadToPdfRect(note.bbox, pageHeightPt)
   const fillColor = hexToRgb(note.color)
 
-  // Per-callout opacity takes precedence; the options-level default is
-  // used only for legacy callouts that predate the per-note field.
-  const effectiveOpacity = clampOpacity(note.opacity ?? calloutOpacity)
+  const effectiveOpacity = clampOpacity(note.opacity ?? DEFAULT_CALLOUT_OPACITY)
 
   // Translucent background rect. Border stays fully opaque so the callout
   // outline remains visible even when the fill is almost transparent.
