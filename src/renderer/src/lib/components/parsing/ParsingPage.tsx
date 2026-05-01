@@ -86,7 +86,11 @@ export default function ParsingPage() {
   const sortAsc = usePdfStore((s) => s.parsingSortAsc);
   const { toggleParsingSort } = usePdfStore.getState();
 
-  const lastSessionPdfs = useSessionPdfsStore((s) => s.lastSessionPdfs);
+  const lastSessionPdfsRaw = useSessionPdfsStore((s) => s.lastSessionPdfs);
+  const lastSessionPdfs = useMemo(
+    () => [...lastSessionPdfsRaw].sort((a, b) => a.name.localeCompare(b.name)),
+    [lastSessionPdfsRaw],
+  );
   const recordSessionImport = useSessionPdfsStore((s) => s.recordImport);
   const removeFromLastSession = useSessionPdfsStore((s) => s.removeFromLastSession);
   const [isDragOver, setIsDragOver] = useState(false);
