@@ -515,7 +515,7 @@ async def _run_tier1_apis(
                         "database": name,
                         "found": found,
                         "match": result.model_dump() if result else None,
-                        "db_status": score_to_band(score) if result is not None else "low",
+                        "db_status": score_to_band(score) if result is not None else "no_match",
                         "search_url": (result.search_url if result else None) or fallback_url,
                     })
 
