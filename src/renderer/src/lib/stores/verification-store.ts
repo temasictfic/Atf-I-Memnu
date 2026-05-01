@@ -24,6 +24,14 @@ interface VerificationState {
   // overwritten by tasks that were mid-flight on the backend. Cleared per
   // source when verification is restarted for that source.
   cancelledSourceIds: Set<string>
+  // Snapshot of each source's result taken at the moment a re-run starts.
+  // Used by cancel actions to instantly restore the pre-rerun state (status
+  // colour, best_match, decision tag, etc.) for sources that didn't actually
+  // finish in the new run — so Stop reverts queued sources to their prior
+  // appearance without a backend round-trip. Entry is cleared when the
+  // source receives a fresh verify_completed in the new run, or on cancel
+  // restoration.
+  priorResultsByPdf: Record<string, Record<string, VerificationResult>>
   selectedSourceId: string | null
   verifyTexts: Record<string, string>
   sourceOriginalTexts: Record<string, string>
@@ -229,6 +237,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   summaries: {},
   sourceProgress: {},
   cancelledSourceIds: new Set<string>(),
+  priorResultsByPdf: {},
   selectedSourceId: null,
   verifyTexts: {},
   sourceOriginalTexts: {},
@@ -422,6 +431,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         const summaries = { ...state.summaries }
         const newProgress: Record<string, { currentDb: string | null; checkedDbs: DbCheckEntry[] }> = {}
         const newResults: Record<string, Record<string, VerificationResult>> = { ...state.resultsByPdf }
+        const newPriorResults: Record<string, Record<string, VerificationResult>> = { ...state.priorResultsByPdf }
         // Clear cancelled flags for sources we are about to re-run so late
         // events from the *previous* run no longer suppress this new run.
         const nextCancelled = new Set(state.cancelledSourceIds)
@@ -435,6 +445,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           const order = state.sourceOrder[id] ?? []
           const prevPdfResults = state.resultsByPdf[id] ?? {}
           newResults[id] = {}
+          const pdfPriorSnapshot = { ...(state.priorResultsByPdf[id] ?? {}) }
           for (const sourceId of order) {
             if (excludedSet.has(sourceId) || state.enabledSources[sourceId] === false) {
               if (prevPdfResults[sourceId]) {
@@ -444,21 +455,42 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             }
             nextCancelled.delete(sourceId)
             newProgress[sourceId] = { currentDb: null, checkedDbs: [] }
-            newResults[id][sourceId] = {
-              source_id: sourceId,
-              status: 'in_progress' as VerifyStatus,
-              problem_tags: [],
-              url_liveness: {},
-              all_results: [],
-              databases_searched: [],
+            // Preserve prior fields (best_match, problem_tags, etc.) so the
+            // UI keeps showing the last-known-good decision tag while the
+            // re-run is in flight, and so a Stop mid-run leaves queued
+            // sources looking like they did before — instead of empty
+            // results that classify as 'fabricated'.
+            const prev = prevPdfResults[sourceId]
+            // Snapshot the pre-rerun result so cancel can restore the row
+            // (status colour included) without a backend round-trip. Skip
+            // sources that don't have a settled prior result yet.
+            if (prev && prev.status !== 'in_progress') {
+              pdfPriorSnapshot[sourceId] = prev
             }
+            newResults[id][sourceId] = prev
+              ? {
+                  ...prev,
+                  source_id: sourceId,
+                  status: 'in_progress' as VerifyStatus,
+                  databases_searched: [],
+                }
+              : {
+                  source_id: sourceId,
+                  status: 'in_progress' as VerifyStatus,
+                  problem_tags: [],
+                  url_liveness: {},
+                  all_results: [],
+                  databases_searched: [],
+                }
           }
+          newPriorResults[id] = pdfPriorSnapshot
         }
         return {
           summaries,
           sourceProgress: newProgress,
           resultsByPdf: newResults,
           cancelledSourceIds: nextCancelled,
+          priorResultsByPdf: newPriorResults,
         }
       })
 
@@ -503,16 +535,33 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       set(state => {
         const pdfResults = { ...(state.resultsByPdf[pdfId] ?? {}) }
         const sourceProgress = { ...state.sourceProgress }
+        const pdfPriorSnapshot = { ...(state.priorResultsByPdf[pdfId] ?? {}) }
 
         for (const sourceId of includeIds) {
-          pdfResults[sourceId] = {
-            source_id: sourceId,
-            status: 'in_progress' as VerifyStatus,
-            problem_tags: [],
-            url_liveness: {},
-            all_results: [],
-            databases_searched: [],
+          // Preserve prior fields so a re-run on an already-verified source
+          // keeps showing the last-known-good decision tag during in_progress
+          // and on Stop, instead of flashing as 'fabricated'.
+          const prev = pdfResults[sourceId]
+          // Snapshot the pre-rerun result so cancel can restore the row
+          // without a backend round-trip.
+          if (prev && prev.status !== 'in_progress') {
+            pdfPriorSnapshot[sourceId] = prev
           }
+          pdfResults[sourceId] = prev
+            ? {
+                ...prev,
+                source_id: sourceId,
+                status: 'in_progress' as VerifyStatus,
+                databases_searched: [],
+              }
+            : {
+                source_id: sourceId,
+                status: 'in_progress' as VerifyStatus,
+                problem_tags: [],
+                url_liveness: {},
+                all_results: [],
+                databases_searched: [],
+              }
           sourceProgress[sourceId] = { currentDb: null, checkedDbs: [] }
         }
 
@@ -542,6 +591,10 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
               completed: false,
             },
           },
+          priorResultsByPdf: {
+            ...state.priorResultsByPdf,
+            [pdfId]: pdfPriorSnapshot,
+          },
         }
       })
 
@@ -560,19 +613,31 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       set(state => {
         const nextCancelled = new Set(state.cancelledSourceIds)
         nextCancelled.delete(sourceId)
+        const prev = state.resultsByPdf[pdfId]?.[sourceId]
+        const pdfPriorSnapshot = { ...(state.priorResultsByPdf[pdfId] ?? {}) }
+        if (prev && prev.status !== 'in_progress') {
+          pdfPriorSnapshot[sourceId] = prev
+        }
         return {
           resultsByPdf: {
             ...state.resultsByPdf,
             [pdfId]: {
               ...(state.resultsByPdf[pdfId] ?? {}),
-              [sourceId]: {
-                source_id: sourceId,
-                status: 'in_progress' as VerifyStatus,
-                problem_tags: [],
-                url_liveness: {},
-                all_results: [],
-                databases_searched: [],
-              },
+              [sourceId]: prev
+                ? {
+                    ...prev,
+                    source_id: sourceId,
+                    status: 'in_progress' as VerifyStatus,
+                    databases_searched: [],
+                  }
+                : {
+                    source_id: sourceId,
+                    status: 'in_progress' as VerifyStatus,
+                    problem_tags: [],
+                    url_liveness: {},
+                    all_results: [],
+                    databases_searched: [],
+                  },
             },
           },
           sourceProgress: {
@@ -580,6 +645,10 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             [sourceId]: { currentDb: null, checkedDbs: [] },
           },
           cancelledSourceIds: nextCancelled,
+          priorResultsByPdf: {
+            ...state.priorResultsByPdf,
+            [pdfId]: pdfPriorSnapshot,
+          },
         }
       })
       await api.verifySource(pdfId, sourceId, sanitizeSourceText(text ?? ''))
@@ -737,13 +806,23 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const newResults = { ...state.resultsByPdf }
       const newSummaries = { ...state.summaries }
       const newProgress = { ...state.sourceProgress }
+      const newPriorResults = { ...state.priorResultsByPdf }
       const nextCancelled = new Set(state.cancelledSourceIds)
       for (const pdfId of Object.keys(newResults)) {
         const pdfResults = { ...newResults[pdfId] }
+        const pdfPriorSnapshot = { ...(state.priorResultsByPdf[pdfId] ?? {}) }
         let changed = false
         for (const sourceId of Object.keys(pdfResults)) {
           if (pdfResults[sourceId].status === 'in_progress') {
-            pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'low' as VerifyStatus }
+            // Restore the pre-rerun snapshot if one exists; otherwise fall
+            // back to the original status='low' behaviour.
+            const snapshot = pdfPriorSnapshot[sourceId]
+            if (snapshot) {
+              pdfResults[sourceId] = snapshot
+              delete pdfPriorSnapshot[sourceId]
+            } else {
+              pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'low' as VerifyStatus }
+            }
             newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
             nextCancelled.add(sourceId)
             changed = true
@@ -751,6 +830,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         }
         if (changed) {
           newResults[pdfId] = pdfResults
+          newPriorResults[pdfId] = pdfPriorSnapshot
           let high = 0, medium = 0, low = 0
           for (const r of Object.values(pdfResults)) {
             if (r.status === 'high') high++
@@ -765,6 +845,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         summaries: newSummaries,
         sourceProgress: newProgress,
         cancelledSourceIds: nextCancelled,
+        priorResultsByPdf: newPriorResults,
       }
     })
     if (verifyBatch?.groupOpened) console.groupEnd()
@@ -775,6 +856,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   cancelPdf: async (pdfId) => {
     set(state => {
       const pdfResults = { ...(state.resultsByPdf[pdfId] ?? {}) }
+      const pdfPriorSnapshot = { ...(state.priorResultsByPdf[pdfId] ?? {}) }
       const newProgress = { ...state.sourceProgress }
       const nextCancelled = new Set(state.cancelledSourceIds)
       let changed = false
@@ -786,7 +868,16 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       for (const sourceId of allSourceIds) {
         nextCancelled.add(sourceId)
         if (pdfResults[sourceId]?.status === 'in_progress') {
-          pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'low' as VerifyStatus }
+          // Restore the pre-rerun snapshot if one exists so the row colour
+          // and decision tag match what they looked like before the re-run.
+          // Without a snapshot (first-time verification) fall back to 'low'.
+          const snapshot = pdfPriorSnapshot[sourceId]
+          if (snapshot) {
+            pdfResults[sourceId] = snapshot
+            delete pdfPriorSnapshot[sourceId]
+          } else {
+            pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'low' as VerifyStatus }
+          }
           newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
           changed = true
         }
@@ -812,6 +903,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         summaries: newSummaries,
         sourceProgress: newProgress,
         cancelledSourceIds: nextCancelled,
+        priorResultsByPdf: { ...state.priorResultsByPdf, [pdfId]: pdfPriorSnapshot },
       }
     })
     try { await api.cancelPdfVerification(pdfId) } catch (e) { console.error('Failed to cancel PDF:', e) }
@@ -825,11 +917,22 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const nextCancelled = new Set(state.cancelledSourceIds)
       nextCancelled.add(sourceId)
       let targetPdfId: string | null = null
+      let nextPriorResults = state.priorResultsByPdf
       for (const pdfId of Object.keys(newResults)) {
         const pdfResults = newResults[pdfId]
         if (pdfResults[sourceId]?.status === 'in_progress') {
-          newResults[pdfId] = { ...pdfResults, [sourceId]: { ...pdfResults[sourceId], status: 'low' as VerifyStatus } }
+          // Restore from snapshot if available; otherwise fall back to 'low'.
+          const snapshot = state.priorResultsByPdf[pdfId]?.[sourceId]
+          const replacement = snapshot
+            ? snapshot
+            : { ...pdfResults[sourceId], status: 'low' as VerifyStatus }
+          newResults[pdfId] = { ...pdfResults, [sourceId]: replacement }
           newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
+          if (snapshot) {
+            const pdfPriorSnapshot = { ...(state.priorResultsByPdf[pdfId] ?? {}) }
+            delete pdfPriorSnapshot[sourceId]
+            nextPriorResults = { ...state.priorResultsByPdf, [pdfId]: pdfPriorSnapshot }
+          }
           targetPdfId = pdfId
           break
         }
@@ -847,6 +950,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         summaries: newSummaries,
         sourceProgress: newProgress,
         cancelledSourceIds: nextCancelled,
+        priorResultsByPdf: nextPriorResults,
       }
     })
     try { await api.cancelSourceVerification(sourceId) } catch (e) { console.error('Failed to cancel source:', e) }
@@ -922,26 +1026,36 @@ export function initVerificationListeners(): () => void {
         })
       }
 
-      useVerificationStore.setState(state => ({
-        resultsByPdf: {
-          ...state.resultsByPdf,
-          [pdfId]: {
-            ...(state.resultsByPdf[pdfId] ?? {}),
-            [sourceId]: {
-              source_id: sourceId,
-              status: 'in_progress' as VerifyStatus,
-              problem_tags: [],
-              url_liveness: {},
-              all_results: [],
-              databases_searched: [],
+      useVerificationStore.setState(state => {
+        const prev = state.resultsByPdf[pdfId]?.[sourceId]
+        return {
+          resultsByPdf: {
+            ...state.resultsByPdf,
+            [pdfId]: {
+              ...(state.resultsByPdf[pdfId] ?? {}),
+              [sourceId]: prev
+                ? {
+                    ...prev,
+                    source_id: sourceId,
+                    status: 'in_progress' as VerifyStatus,
+                    databases_searched: [],
+                  }
+                : {
+                    source_id: sourceId,
+                    status: 'in_progress' as VerifyStatus,
+                    problem_tags: [],
+                    url_liveness: {},
+                    all_results: [],
+                    databases_searched: [],
+                  },
             },
           },
-        },
-        sourceProgress: {
-          ...state.sourceProgress,
-          [sourceId]: { currentDb: null, checkedDbs: [] },
-        },
-      }))
+          sourceProgress: {
+            ...state.sourceProgress,
+            [sourceId]: { currentDb: null, checkedDbs: [] },
+          },
+        }
+      })
     }),
 
     wsClient.on('verify_db_checking', (data) => {
@@ -1080,6 +1194,14 @@ export function initVerificationListeners(): () => void {
             google_url: (data.google_url as string | undefined) || existing[sourceId]?.google_url,
           },
         }
+        // The source completed in the new run — its fresh result is now
+        // authoritative, so the pre-rerun snapshot is no longer needed.
+        const pdfPriorSnapshot = state.priorResultsByPdf[pdfId]
+        let nextPriorResults = state.priorResultsByPdf
+        if (pdfPriorSnapshot && sourceId in pdfPriorSnapshot) {
+          const { [sourceId]: _dropped, ...rest } = pdfPriorSnapshot
+          nextPriorResults = { ...state.priorResultsByPdf, [pdfId]: rest }
+        }
 
         let high = 0, medium = 0, low = 0, inProgress = 0
         for (const r of Object.values(updatedPdfResults)) {
@@ -1117,6 +1239,7 @@ export function initVerificationListeners(): () => void {
               completed: inProgress === 0 && (prevSummary?.completed ?? false),
             },
           },
+          priorResultsByPdf: nextPriorResults,
         }
       })
     }),
