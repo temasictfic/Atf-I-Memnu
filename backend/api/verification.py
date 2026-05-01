@@ -11,6 +11,7 @@ from config import settings
 from models.source import SourceRectangle
 from models.verification_result import VerificationResult, MatchResult
 from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
+from services.search_urls import build_google_urls, build_search_url
 
 router = APIRouter()
 
@@ -19,12 +20,75 @@ verify_jobs: dict[str, dict] = {}
 verify_results: dict[str, dict[str, VerificationResult]] = {}  # pdf_id -> {source_id -> result}
 
 
+def _is_best_match(m: MatchResult, best: MatchResult | None) -> bool:
+    """Identify the all_results entry that should carry best_match=True on disk.
+
+    Matches by (database, score, title) — strong enough to disambiguate
+    across the rare ties we see (each verifier returns a single result, so
+    the full triple is unique in practice).
+    """
+    if best is None:
+        return False
+    return (m.database, m.score, m.title) == (best.database, best.score, best.title)
+
+
+def _serialise_match(m: MatchResult, is_best: bool) -> dict:
+    """Dump a MatchResult for disk: drop search_url + defaults, add best_match flag."""
+    d = m.model_dump(exclude={"search_url"}, exclude_defaults=True)
+    d["best_match"] = is_best
+    return d
+
+
+def _serialise_result(r: VerificationResult) -> dict:
+    """Dump a VerificationResult for disk in the optimised cache shape."""
+    payload = r.model_dump(
+        exclude={"source_id", "best_match", "all_results", "scholar_url", "google_url"},
+        exclude_defaults=True,
+    )
+    payload["all_results"] = [_serialise_match(m, _is_best_match(m, r.best_match)) for m in r.all_results]
+    return payload
+
+
 def _save_verify_cache(pdf_id: str, results: dict[str, VerificationResult]) -> None:
     """Persist verification results to disk cache."""
     cache_dir = settings.get_cache_dir()
     cache_file = cache_dir / f"verify_{pdf_id}.json"
-    data = {k: v.model_dump() for k, v in results.items()}
+    data = {sid: _serialise_result(r) for sid, r in results.items()}
     cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def _hydrate_match(entry: dict, parsed_title: str) -> tuple[MatchResult, bool]:
+    """Rehydrate a MatchResult from disk; rebuild search_url; return is_best flag."""
+    is_best = bool(entry.pop("best_match", False))
+    database = entry.get("database", "")
+    entry["search_url"] = build_search_url(database, parsed_title)
+    return MatchResult(**entry), is_best
+
+
+def _hydrate_result(source_id: str, payload: dict) -> VerificationResult:
+    """Rehydrate a VerificationResult from disk: inject source_id, reconstruct
+    best_match from the flagged all_results entry, rebuild search/scholar/google URLs."""
+    payload = dict(payload)  # don't mutate caller's data
+    parsed_title = payload.get("parsed_title", "") or ""
+
+    raw_all = payload.pop("all_results", [])
+    all_results: list[MatchResult] = []
+    best_match: MatchResult | None = None
+    for entry in raw_all:
+        m, is_best = _hydrate_match(dict(entry), parsed_title)
+        all_results.append(m)
+        if is_best:
+            best_match = m
+
+    scholar_url, google_url = build_google_urls(parsed_title)
+    return VerificationResult(
+        source_id=source_id,
+        all_results=all_results,
+        best_match=best_match,
+        scholar_url=scholar_url,
+        google_url=google_url,
+        **payload,
+    )
 
 
 def _load_verify_cache(pdf_id: str) -> dict[str, VerificationResult] | None:
@@ -34,10 +98,7 @@ def _load_verify_cache(pdf_id: str) -> dict[str, VerificationResult] | None:
         return None
     try:
         data = json.loads(cache_file.read_text(encoding="utf-8"))
-        return {
-            source_id: VerificationResult(**payload)
-            for source_id, payload in data.items()
-        }
+        return {sid: _hydrate_result(sid, payload) for sid, payload in data.items()}
     except Exception:
         return None
 
@@ -396,7 +457,7 @@ async def score_scholar(request: ScoreScholarRequest):
     parsed = await extract_source_fields(full_source_text)
 
     scholar_matches: list[MatchResult] = []
-    search_url = f"https://scholar.google.com/scholar?q={request.source_text[:200]}"
+    search_url = build_search_url("Google Scholar", request.source_text[:200])
 
     for cand in request.candidates:
         # If we have an APA citation from Scholar's "Cite" dialog, run it
@@ -447,8 +508,12 @@ async def score_scholar(request: ScoreScholarRequest):
         existing.databases_searched.append("Google Scholar")
 
     if scholar_matches:
-        existing.all_results.extend(scholar_matches)
+        # Keep only the best Scholar candidate, mirroring how every other
+        # verifier returns a single MatchResult. Replace any prior Scholar
+        # entries so re-runs (e.g. CAPTCHA retry) don't duplicate.
         best_scholar = max(scholar_matches, key=lambda m: m.score)
+        existing.all_results = [m for m in existing.all_results if m.database != "Google Scholar"]
+        existing.all_results.append(best_scholar)
         if existing.best_match is None or best_scholar.score > existing.best_match.score:
             existing.best_match = best_scholar
         existing.all_results.sort(key=lambda m: m.score, reverse=True)

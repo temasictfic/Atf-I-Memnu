@@ -5,6 +5,8 @@ class MatchDetails(BaseModel):
     title_similarity: float = 0.0
     author_match: float = 0.0
     year_match: float = 0.0
+    journal_similarity: float = 0.0
+    doi_arxiv_similarity: float = 0.0
     url_match: bool = False  # unified: doi, arXiv, or other URL matches
 
 
@@ -53,6 +55,10 @@ class VerificationResult(BaseModel):
     best_match: MatchResult | None = None
     all_results: list[MatchResult] = []
     databases_searched: list[str] = []
+    # NER-extracted title — used to derive scholar/google search URLs and
+    # per-database manual-search links on cache load (those fields are
+    # stripped from disk).
+    parsed_title: str = ""
     # Pre-built Google Scholar / Google Search URLs using the NER-extracted title
     scholar_url: str = ""
     google_url: str = ""

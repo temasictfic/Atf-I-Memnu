@@ -32,10 +32,36 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
+def _round_bbox(bbox: dict) -> dict:
+    """Trim JS-arithmetic float noise on bbox coordinates."""
+    return {k: round(v, 2) if isinstance(v, float) else v for k, v in bbox.items()}
+
+
 def _save_to_cache(pdf_id: str, sources: list[SourceRectangle], numbered: bool = False) -> None:
     cache_dir = settings.get_cache_dir()
     cache_file = cache_dir / f"{pdf_id}.json"
-    data = {"sources": [s.model_dump() for s in sources], "numbered": numbered}
+
+    approved = bool(sources) and all(s.status == "approved" for s in sources)
+
+    def dump_source(s: SourceRectangle) -> dict:
+        d = s.model_dump(exclude={"pdf_id"}, exclude_defaults=True)
+        # status defaults to "detected" in the model so exclude_defaults
+        # already strips that; also strip "approved" when it matches the
+        # whole-PDF state (the common case after the user approves).
+        if approved and d.get("status") == "approved":
+            d.pop("status", None)
+        if "bbox" in d:
+            d["bbox"] = _round_bbox(d["bbox"])
+        if "bboxes" in d:
+            d["bboxes"] = [_round_bbox(b) for b in d["bboxes"]]
+        return d
+
+    data = {
+        "pdf_id": pdf_id,
+        "numbered": numbered,
+        "approved": approved,
+        "sources": [dump_source(s) for s in sources],
+    }
     try:
         cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
@@ -49,10 +75,17 @@ def _load_from_cache(pdf_id: str) -> tuple[list[SourceRectangle], bool] | None:
         return None
     try:
         raw = json.loads(cache_file.read_text(encoding="utf-8"))
-        if isinstance(raw, list):
-            # Legacy format: plain list of sources, no numbered flag
-            return [SourceRectangle(**item) for item in raw], False
-        return [SourceRectangle(**item) for item in raw["sources"]], raw.get("numbered", False)
+        approved = bool(raw.get("approved", False))
+        default_status = "approved" if approved else "detected"
+        sources = [
+            SourceRectangle(**{
+                **item,
+                "pdf_id": pdf_id,
+                "status": item.get("status", default_status),
+            })
+            for item in raw["sources"]
+        ]
+        return sources, raw.get("numbered", False)
     except Exception:
         return None
 

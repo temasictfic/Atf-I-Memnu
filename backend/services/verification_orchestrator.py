@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 from typing import Any
-from urllib.parse import quote, quote_plus
 
 from api.websocket import manager
 from models.settings import DatabaseConfig
@@ -16,6 +15,7 @@ from services.search_settings import (
     get_max_concurrent_sources_per_pdf,
     get_search_timeout_seconds,
 )
+from services.search_urls import build_google_urls, build_search_url
 from scrapers.rate_limiter import rate_limiter
 from services.source_extractor import extract_source_fields
 from services.url_checker import check_urls, is_doi_or_arxiv_url
@@ -77,30 +77,14 @@ def _unregister_key(key: str) -> None:
     _active_tasks.pop(key, None)
 
 
-def _build_search_url(db_name: str, parsed: ParsedSource) -> str:
-    """Build a manual search URL for a given database."""
-    query = parsed.title or parsed.raw_text[:200]
-    urls = {
-        "Crossref": f"https://search.crossref.org/search/works?q={quote_plus(query)}&from_ui=yes",
-        "OpenAlex": f"https://openalex.org/works?search={quote(query)}",
-        "arXiv": f"https://arxiv.org/search/?query={quote(query)}&searchtype=all",
-        "Semantic Scholar": f"https://www.semanticscholar.org/search?q={quote(query)}",
-        "Europe PMC": f"https://europepmc.org/search?query={quote(query)}",
-        "TRDizin": f"https://search.trdizin.gov.tr/tr/yayin/ara?q={quote(query, safe=',')}&order=publicationYear-DESC&page=1&limit=20",
-        "PubMed": f"https://pubmed.ncbi.nlm.nih.gov/?term={quote(query)}",
-        "OpenAIRE": f"https://explore.openaire.eu/search/find?fv0={quote(query)}&f0=q",
-        "Open Library": f"https://openlibrary.org/search?q={quote(query)}",
-        "BASE": f"https://www.base-search.net/Search/Results?lookfor={quote(query)}",
-    }
-    return urls.get(db_name, "")
+def _query_for(parsed: ParsedSource) -> str:
+    """Pick the manual-search query string from a parsed source.
 
-
-def _build_google_urls(parsed: ParsedSource) -> tuple[str, str]:
-    """Build Google Scholar and Google Search URLs from NER-extracted title."""
-    query = parsed.title or parsed.raw_text[:200]
-    scholar_url = f"https://scholar.google.com/scholar?q={quote_plus(query)}"
-    google_url = f"https://www.google.com/search?q={quote_plus(query)}"
-    return scholar_url, google_url
+    Prefers the NER-extracted title; falls back to the first 200 chars of
+    raw text when the title is missing. Used for fallback search_urls and
+    Google/Scholar URL construction.
+    """
+    return parsed.title or parsed.raw_text[:200]
 
 
 def _supports_api_key_argument(search_fn: Any) -> bool:
@@ -497,7 +481,7 @@ async def _run_tier1_apis(
     rate_limited: list[str] = []  # db_ids that returned 429 or hit a parked host
 
     async def run_verifier(db_id: str, name: str, search_fn: Any):
-        fallback_url = _build_search_url(name, parsed)
+        fallback_url = build_search_url(name, _query_for(parsed))
         try:
             async with api_semaphore:
                 api_key_names = {
@@ -702,7 +686,8 @@ async def _finalize_result(
         decision_tag = "fabricated"
 
     # Build Google Scholar / Google Search URLs from NER-extracted title
-    scholar_url, google_url = _build_google_urls(parsed) if parsed else ("", "")
+    parsed_title = parsed.title if parsed else ""
+    scholar_url, google_url = build_google_urls(_query_for(parsed)) if parsed else ("", "")
 
     result = VerificationResult(
         source_id=source_id,
@@ -713,6 +698,7 @@ async def _finalize_result(
         best_match=best_match,
         all_results=sorted(all_matches, key=lambda m: m.score, reverse=True),
         databases_searched=databases_searched,
+        parsed_title=parsed_title,
         scholar_url=scholar_url,
         google_url=google_url,
     )

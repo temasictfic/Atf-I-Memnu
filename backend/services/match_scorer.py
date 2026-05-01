@@ -69,6 +69,15 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
 
     # 4. URL match (covers doi, arXiv, and other URLs)
     details.url_match = _urls_match(source, candidate)
+    # DOIs / arXiv IDs are identifier-style — there's no meaningful partial
+    # match, so this is a binary float that mirrors url_match for visibility.
+    details.doi_arxiv_similarity = 1.0 if details.url_match else 0.0
+
+    # 5. Journal / venue similarity (informational — venue *threshold* lives
+    # in _venues_match for problem-tag logic; here we surface the raw score).
+    details.journal_similarity = _venue_similarity_score(
+        source.journal or "", candidate.get("journal") or ""
+    )
 
     # Base composite — title+author weighted mix, falling back to title-only
     # when the source was parsed with low confidence or has no authors.
@@ -400,60 +409,59 @@ def _initials(text: str) -> str:
     return "".join(w[0] for w in words)
 
 
-def _venues_match(source_venue: str, cand_journal: str) -> bool:
-    """Robust venue comparison. Returns True when the two strings plausibly
-    refer to the same venue.
+def _venue_similarity_score(source_venue: str, cand_journal: str) -> float:
+    """Return a 0–1 similarity score between two venue strings.
 
-    Strategy:
-      1. Canonicalise both sides (lowercase, strip parens/prefix/suffix
-         noise, expand ISO-4 abbreviations).
-      2. Take the max over token_sort, token_set, and partial_ratio so that
-         subtitle / extra-token cases pass.
-      3. Initialism check: if one side is short/all-caps, compare against
-         the initials of the other side (CVPR ↔ Computer Vision and Pattern
-         Recognition).
-      4. Container-series allow-list: LNCS / CCIS / NeurIPS proceedings etc.
-         pass when the source looks like a conference or workshop.
-      5. Aggregator hosts (DergiPark, TRDizin, ...) are treated as matching
-         any source — they replace the real journal title.
+    When either side is blank the score is 0.0 (no comparison made — caller
+    can disambiguate via the source values themselves). When both sides are
+    present, aggregator/container/initialism overrides return 1.0;
+    otherwise the score is the max of token_sort and token_set fuzzy ratios
+    on the canonicalised forms.
     """
     src_raw = (source_venue or "").strip()
     cand_raw = (cand_journal or "").strip()
     if not src_raw or not cand_raw:
-        return True  # nothing meaningful to compare
+        return 0.0
 
     src = _canonicalise_venue(src_raw)
     cand = _canonicalise_venue(cand_raw)
     if not src or not cand:
-        return True
+        return 0.0
 
     # Aggregator host on candidate side
     if any(agg in cand for agg in _AGGREGATORS):
-        return True
+        return 1.0
 
-    # Container series on candidate side: accept unconditionally. The
-    # title+author signals at the caller already establish the candidate
-    # really is the cited work; a container-series journal name simply
-    # means the publisher rolled the work into a series and shouldn't be
-    # double-flagged.
+    # Container series on candidate side
     if any(series in cand for series in _CONTAINER_SERIES):
-        return True
-
-    # Multi-strategy fuzzy. Deliberately omit partial_ratio — single-token
-    # overlaps ("IEEE", "Sensors") inflate it and produce false negatives
-    # on the !journal tag.
-    best = max(
-        fuzz.token_sort_ratio(src, cand),
-        fuzz.token_set_ratio(src, cand),
-    ) / 100.0
-    if best >= VENUE_FUZZY_MATCH_THRESHOLD:
-        return True
+        return 1.0
 
     # Initialism: short/all-caps acronym vs expanded title
     short, long = (src_raw, cand_raw) if len(src_raw) <= len(cand_raw) else (cand_raw, src_raw)
     short_clean = re.sub(r"[^A-Za-z]", "", short)
     if 2 <= len(short_clean) <= 8 and short_clean.isupper():
         if short_clean.lower() == _initials(long).lower():
-            return True
+            return 1.0
 
-    return False
+    # Multi-strategy fuzzy. Deliberately omit partial_ratio — single-token
+    # overlaps ("IEEE", "Sensors") inflate it and produce false negatives
+    # on the !journal tag.
+    return max(
+        fuzz.token_sort_ratio(src, cand),
+        fuzz.token_set_ratio(src, cand),
+    ) / 100.0
+
+
+def _venues_match(source_venue: str, cand_journal: str) -> bool:
+    """True when the two venue strings plausibly refer to the same venue.
+
+    Missing-side semantics: when either side is blank, returns True ("no
+    disagreement to flag"). Caller-side problem-tag logic separately checks
+    presence on each side. Otherwise threshold check on top of the fuzz
+    score from :func:`_venue_similarity_score`.
+    """
+    src_raw = (source_venue or "").strip()
+    cand_raw = (cand_journal or "").strip()
+    if not src_raw or not cand_raw:
+        return True
+    return _venue_similarity_score(src_raw, cand_raw) >= VENUE_FUZZY_MATCH_THRESHOLD
