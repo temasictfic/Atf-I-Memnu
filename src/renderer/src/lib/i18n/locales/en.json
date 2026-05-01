@@ -1,16 +1,7 @@
 {
   "common": {
-    "save": "Save",
-    "cancel": "Cancel",
     "open": "Open",
-    "browse": "Browse",
-    "remove": "Remove",
-    "add": "Add",
-    "yes": "Yes",
-    "no": "No",
-    "loading": "Loading…",
-    "retry": "Retry",
-    "delete": "Delete"
+    "browse": "Browse"
   },
   "app": {
     "windowTitle": "ARDEB · Source Control System",
@@ -41,11 +32,7 @@
       "error": "Save failed"
     },
     "language": {
-      "title": "Language",
-      "description": "Choose the interface language",
-      "label": "Interface language",
-      "tr": "Turkish",
-      "en": "English"
+      "label": "Interface language"
     },
     "databases": {
       "title": "Search Databases",
@@ -69,8 +56,7 @@
       "baseLabel": "BASE Search API",
       "baseDesc": "Apply for API key via BASE's contact form. Choose \"Access BASE's HTTP API\" when filling the form",
       "requestBaseAccess": "Request HTTP API access",
-      "optional": "Optional",
-      "required": "Required"
+      "optional": "Optional"
     },
     "openaire": {
       "title": "OpenAIRE Connection",
@@ -105,7 +91,9 @@
       "title": "Export as PDF",
       "annotatedPdfLabel": "PDF export folder",
       "annotatedPdfDesc": "Save location for annotated PDFs and verification reports",
-      "annotatedPdfPlaceholder": "(prompt each time)"
+      "annotatedPdfPlaceholder": "(prompt each time)",
+      "reportBibliographicLabel": "Include more info in best match",
+      "reportBibliographicDesc": "Print the bibliographic details block (volume, pages, publisher, ISSN, etc.) under each best match card in the verification report"
     },
     "cache": {
       "title": "Cache",
@@ -366,10 +354,8 @@
     "exportPdf": "Export Verification Results to PDF",
     "exportPdfNoResults": "No verification results to export.",
     "exportPdfHeader": "ARDEB Citation Control System\nVerification Report",
-    "exportPdfBestMatch": "Best Match",
     "exportPdfProblems": "Problems",
     "exportPdfNoMatch": "No match found",
-    "exportPdfSources": "sources",
-    "exportPdfCitationError": "CITATION ERROR"
+    "exportPdfSources": "sources"
   }
 }

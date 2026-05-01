@@ -116,30 +116,33 @@ export interface ReportData {
   sources: ReportSource[]
   labels: {
     header: string; high: string; medium: string; low: string
-    bestMatch: string; problems: string; noMatch: string
+    problems: string; noMatch: string
     sourcesLabel: string
-    titleTag: string; validTag: string; citationTag: string; fabricatedTag?: string; citationError?: string
+    titleTag: string; validTag: string; citationTag: string; fabricatedTag: string
     tagLabel: (tag: string) => string
-    bibliographic?: string
-    volume?: string; issue?: string; pages?: string; publisher?: string
-    editor?: string; documentType?: string; language?: string
-    issn?: string; isbn?: string
+    bibliographic: string
+    volume: string; issue: string; pages: string; publisher: string
+    editor: string; documentType: string; language: string
+    issn: string; isbn: string
   }
+  // When false, the "Bibliographic details" block under each best-match card
+  // is omitted from the PDF. Default true.
+  includeBibliographic?: boolean
 }
 
 interface ExtraField { key: string; label: string; value: string }
 
 function buildExtras(m: ReportBestMatch, labels: ReportData['labels']): ExtraField[] {
   const out: ExtraField[] = []
-  if (m.volume) out.push({ key: 'volume', label: labels.volume ?? 'Volume', value: m.volume })
-  if (m.issue) out.push({ key: 'issue', label: labels.issue ?? 'Issue', value: m.issue })
-  if (m.pages) out.push({ key: 'pages', label: labels.pages ?? 'Pages', value: m.pages })
-  if (m.publisher) out.push({ key: 'publisher', label: labels.publisher ?? 'Publisher', value: m.publisher })
-  if (m.editor && m.editor.length > 0) out.push({ key: 'editor', label: labels.editor ?? 'Editor', value: m.editor.join(', ') })
-  if (m.documentType) out.push({ key: 'documentType', label: labels.documentType ?? 'Document type', value: m.documentType })
-  if (m.language) out.push({ key: 'language', label: labels.language ?? 'Language', value: m.language })
-  if (m.issn && m.issn.length > 0) out.push({ key: 'issn', label: labels.issn ?? 'ISSN', value: m.issn.join(', ') })
-  if (m.isbn && m.isbn.length > 0) out.push({ key: 'isbn', label: labels.isbn ?? 'ISBN', value: m.isbn.join(', ') })
+  if (m.volume) out.push({ key: 'volume', label: labels.volume, value: m.volume })
+  if (m.issue) out.push({ key: 'issue', label: labels.issue, value: m.issue })
+  if (m.pages) out.push({ key: 'pages', label: labels.pages, value: m.pages })
+  if (m.publisher) out.push({ key: 'publisher', label: labels.publisher, value: m.publisher })
+  if (m.editor && m.editor.length > 0) out.push({ key: 'editor', label: labels.editor, value: m.editor.join(', ') })
+  if (m.documentType) out.push({ key: 'documentType', label: labels.documentType, value: m.documentType })
+  if (m.language) out.push({ key: 'language', label: labels.language, value: m.language })
+  if (m.issn && m.issn.length > 0) out.push({ key: 'issn', label: labels.issn, value: m.issn.join(', ') })
+  if (m.isbn && m.isbn.length > 0) out.push({ key: 'isbn', label: labels.isbn, value: m.isbn.join(', ') })
   return out
 }
 
@@ -354,7 +357,7 @@ function measureTags(src: ReportSource, labels: ReportData['labels'], bf: PDFFon
     const t = labels.citationTag
     tags.push({ text: t, color: COLOR_CITATION_TEXT, width: bf.widthOfTextAtSize(san(t), TAG_SIZE), align: 'right' })
   } else {
-    const t = labels.fabricatedTag ?? 'Fabricated'
+    const t = labels.fabricatedTag
     tags.push({ text: t, color: COLOR_FABRICATED_TEXT, width: bf.widthOfTextAtSize(san(t), TAG_SIZE), align: 'right' })
   }
 
@@ -383,7 +386,7 @@ interface CardMeasure {
   extras: ExtraField[]; extraLines: string[][]; extrasLabel: string
 }
 
-function measureCard(m: ReportBestMatch, src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont): CardMeasure {
+function measureCard(m: ReportBestMatch, src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont, includeBibliographic: boolean): CardMeasure {
   const lh = SMALL_SIZE * LH, tlh = TINY_SIZE * LH
   const titleLines = wrapText(san(m.title), bf, SMALL_SIZE, CARD_INNER_W)
   const authorLines = m.authors.length ? wrapText(san(m.authors.join(', ')), rf, SMALL_SIZE, CARD_INNER_W) : []
@@ -395,9 +398,9 @@ function measureCard(m: ReportBestMatch, src: ReportSource, labels: ReportData['
   const urlLine = m.url ?? ''
 
   // Bibliographic extras: each "Label: value" wrapped to fit the card.
-  const extras = buildExtras(m, labels)
+  const extras = includeBibliographic ? buildExtras(m, labels) : []
   const extraLines = extras.map(ex => wrapText(san(`${ex.label}: ${ex.value}`), rf, TINY_SIZE, CARD_INNER_W))
-  const extrasLabel = extras.length > 0 ? (labels.bibliographic ?? 'Bibliographic details') : ''
+  const extrasLabel = extras.length > 0 ? labels.bibliographic : ''
 
   let h = CARD_PAD
   h += titleLines.length * lh
@@ -418,9 +421,9 @@ function measureCard(m: ReportBestMatch, src: ReportSource, labels: ReportData['
   return { titleLines, authorLines, journalLines, metaLine, urlLine, totalHeight: h, extras, extraLines, extrasLabel }
 }
 
-function measureBottom(src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont): { tags: TagItem[]; card: CardMeasure | null; noMatch: boolean; height: number } {
+function measureBottom(src: ReportSource, labels: ReportData['labels'], rf: PDFFont, bf: PDFFont, includeBibliographic: boolean): { tags: TagItem[]; card: CardMeasure | null; noMatch: boolean; height: number } {
   const tags = measureTags(src, labels, bf)
-  const card = src.bestMatch ? measureCard(src.bestMatch, src, labels, rf, bf) : null
+  const card = src.bestMatch ? measureCard(src.bestMatch, src, labels, rf, bf, includeBibliographic) : null
   const noMatch = !src.bestMatch && src.status === 'low'
 
   let h = 0
@@ -443,6 +446,7 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
 
   const w = new PW(doc, rf, bf)
   const { labels, summary, pdfName } = data
+  const includeBibliographic = data.includeBibliographic ?? true
 
   // --- Page header (multi-line, each line centered) ---
   for (const line of labels.header.split('\n')) {
@@ -478,7 +482,7 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
       summaryParts.push({ l: labels.citationTag, c: summary.citation, clr: COLOR_CITATION_BORDER })
     }
     if (summary.fabricated != null) {
-      summaryParts.push({ l: labels.fabricatedTag ?? 'Fabricated', c: summary.fabricated, clr: COLOR_FABRICATED_BORDER })
+      summaryParts.push({ l: labels.fabricatedTag, c: summary.fabricated, clr: COLOR_FABRICATED_BORDER })
     }
     for (const p of summaryParts) {
       w.pg.drawCircle({ x: sx + 3, y: sy + BODY_SIZE * 0.35, size: 3, color: p.clr })
@@ -498,7 +502,7 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
 
   for (const src of sorted) {
     const top = measureTop(src, rf, bf)
-    const bot = measureBottom(src, labels, rf, bf)
+    const bot = measureBottom(src, labels, rf, bf, includeBibliographic)
     const totalBoxH = BOX_PAD + top.height + 4 + 0.5 + 4 + bot.height + BOX_PAD
     const boxX = MARGIN_L
     const boxW = CONTENT_W

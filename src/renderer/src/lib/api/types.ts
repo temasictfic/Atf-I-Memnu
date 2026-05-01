@@ -138,6 +138,7 @@ export interface AppSettings {
   max_concurrent_apis: number
   max_concurrent_sources_per_pdf: number
   auto_scholar_after_verify?: boolean
+  report_include_bibliographic?: boolean
   language?: 'tr' | 'en'
   auto_callout_text_fabricated?: string
   auto_callout_text_citation?: string

@@ -503,6 +503,20 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+
+          <div className={styles['setting-row']}>
+            <div className={styles['setting-info']}>
+              <span className={styles['setting-label']}>{t('settings.notes.reportBibliographicLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.notes.reportBibliographicDesc')}</span>
+            </div>
+            <label className={styles['db-toggle']}>
+              <input type="checkbox" checked={settings.report_include_bibliographic ?? true}
+                onChange={e => updateSetting('report_include_bibliographic', e.target.checked)} />
+              <span className={styles['toggle-track']}>
+                <span className={styles['toggle-thumb']} />
+              </span>
+            </label>
+          </div>
         </section>
 
         <section className={styles['settings-section']}>

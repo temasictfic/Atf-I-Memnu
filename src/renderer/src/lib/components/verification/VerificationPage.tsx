@@ -837,17 +837,18 @@ export default function VerificationPage() {
       const citationCount = reportSources.filter(r => effectiveDecision(r) === 'citation').length
       const fabricatedCount = reportSources.filter(r => effectiveDecision(r) === 'fabricated').length
 
+      const includeBibliographic = useSettingsStore.getState().settings.report_include_bibliographic ?? true
       const { generateVerificationReport } = await import('../../pdf/verification-report-writer')
       const pdfBytes = await generateVerificationReport({
         pdfName,
         summary: { ...baseSummary, valid: validCount, citation: citationCount, fabricated: fabricatedCount },
         sources: reportSources,
+        includeBibliographic,
         labels: {
           header: t('verification.exportPdfHeader'),
           high: t('verification.status.high'),
           medium: t('verification.status.medium'),
           low: t('verification.status.low'),
-          bestMatch: t('verification.exportPdfBestMatch'),
           problems: t('verification.exportPdfProblems'),
           noMatch: t('verification.exportPdfNoMatch'),
           sourcesLabel: t('verification.exportPdfSources'),
@@ -855,7 +856,6 @@ export default function VerificationPage() {
           validTag: t('verification.validTag'),
           citationTag: t('verification.citationTag'),
           fabricatedTag: t('verification.fabricatedTag'),
-          citationError: t('verification.exportPdfCitationError'),
           tagLabel: (tag: string) => problemTagLabel(tag),
           bibliographic: t('verification.bibliographic'),
           volume: t('verification.volume'),

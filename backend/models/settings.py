@@ -29,6 +29,10 @@ class AppSettings(BaseModel):
     # Persisted only — frontend-driven. The renderer decides whether to
     # auto-open Scholar after a verification finishes; backend has no knob.
     auto_scholar_after_verify: bool = True
+    # Persisted only — frontend-driven. The renderer decides whether to render
+    # the "Bibliographic details" block in best-match cards on the verification
+    # report PDF.
+    report_include_bibliographic: bool = True
     # Callout text used by the Parsing page's per-decision-tag auto-annotate
     # buttons. Persisted so a user's edits survive app restarts.
     auto_callout_text_fabricated: str = "Literatürde bulunmamaktadır."
