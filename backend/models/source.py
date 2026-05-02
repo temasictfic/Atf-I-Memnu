@@ -1,6 +1,10 @@
 import re
+from typing import Literal
 
 from pydantic import BaseModel
+
+
+SourceStatus = Literal["detected", "edited", "approved"]
 
 
 class BoundingBox(BaseModel):
@@ -18,7 +22,7 @@ class SourceRectangle(BaseModel):
     bboxes: list[BoundingBox] = []  # multi-page: one bbox per page
     text: str
     ref_number: int | None = None
-    status: str = "detected"  # detected, edited, approved
+    status: SourceStatus = "detected"
 
 
 _DOI_FROM_URL = re.compile(r"https?://doi\.org/(10\.\S+)")

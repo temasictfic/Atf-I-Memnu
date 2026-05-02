@@ -38,7 +38,7 @@ def _openaire_pace_seconds() -> float | None:
     almost 2× faster than the limiter's anonymous-safe default.
     """
     try:
-        from api.settings import get_current_settings
+        from services.settings_store import get_current_settings
         if (get_current_settings().api_keys.get("openaire", "") or "").strip():
             return _AUTHENTICATED_PACE_SECONDS
     except Exception:

@@ -2,8 +2,8 @@
 
 import aiohttp
 
-from api.settings import get_current_settings
 from config import settings as app_config
+from services.settings_store import get_current_settings
 
 
 def get_search_timeout_seconds() -> int:

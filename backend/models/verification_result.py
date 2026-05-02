@@ -1,4 +1,19 @@
+from typing import Literal
+
 from pydantic import BaseModel
+
+
+# Verifier-assigned outcome of a source. "pending"/"in_progress" are
+# transient (orchestrator lifecycle); "high"/"medium"/"low" are the three
+# settled bands set by `determine_verification_status`.
+VerifyStatus = Literal["pending", "in_progress", "high", "medium", "low"]
+
+# Three-state outcome from `classify_decision`. The same set is also the
+# allowed values for the user override (with `None` meaning "clear override").
+DecisionTag = Literal["valid", "citation", "fabricated"]
+
+# Per-tag override keys for the verification card chips.
+TagKey = Literal["authors", "year", "title", "journal", "doi/arXiv"]
 
 
 class MatchDetails(BaseModel):
@@ -36,20 +51,17 @@ class MatchResult(BaseModel):
 
 class VerificationResult(BaseModel):
     source_id: str
-    # Status values: pending, in_progress, high, medium, low
-    status: str = "pending"
+    status: VerifyStatus = "pending"
     # Problem tags — values:
     # "!authors", "!doi/arXiv", "!year", "!journal", "!title"
     problem_tags: list[str] = []
-    # Decision-tag outcome from classify_decision(): "valid", "citation", or "fabricated"
-    decision_tag: str = "valid"
-    # Three-state decision-tag user override. None = use classify_decision() result.
+    decision_tag: DecisionTag = "valid"
+    # Three-state user override; None = use classify_decision() result.
     # Cycled from the UI via POST /api/verify/decision-override.
-    decision_tag_override: str | None = None
+    decision_tag_override: DecisionTag | None = None
     # Per-tag user overrides for the card's clickable chips.
-    # Keys: "authors", "year", "title", "journal", "doi/arXiv".
     # true = force ON, false = force OFF, missing key = use default logic.
-    tag_overrides: dict[str, bool] = {}
+    tag_overrides: dict[TagKey, bool] = {}
     # URL -> liveness map (for non-doi/arXiv URLs that were checked)
     url_liveness: dict[str, bool] = {}
     best_match: MatchResult | None = None

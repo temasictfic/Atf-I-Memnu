@@ -26,6 +26,8 @@ from typing import Literal
 
 import aiohttp
 
+from services.settings_store import get_current_settings, save_settings
+
 REFRESH_ENDPOINT = (
     "https://services.openaire.eu/uoa-user-management/api/users/getAccessToken"
 )
@@ -165,12 +167,12 @@ async def _refresh_and_cache(refresh_token: str) -> str | None:
     _runtime_last_error = None
 
     # OpenAIRE may rotate the refresh token. Persist the new one so the user
-    # doesn't hit an unexpected sign-out next month. Imported inline to avoid
-    # a circular dependency with the settings API module at process start.
+    # doesn't hit an unexpected sign-out next month. settings_store is a
+    # neutral module so this is now a plain top-level import — the
+    # circular-dependency dance against api.settings is gone.
     new_refresh = data.get("refresh_token")
     if isinstance(new_refresh, str) and new_refresh and new_refresh != refresh_token:
         try:
-            from api.settings import get_current_settings, _save_settings
             current = get_current_settings()
             updated_keys = dict(current.api_keys)
             updated_keys["openaire"] = new_refresh
@@ -180,7 +182,7 @@ async def _refresh_and_cache(refresh_token: str) -> str | None:
                 .date()
                 .isoformat(),
             })
-            _save_settings(updated)
+            save_settings(updated)
             # Re-bind the fingerprint so a racing verifier that reads the
             # freshly persisted refresh token right after this write doesn't
             # treat our just-cached access token as stale and re-exchange.
@@ -201,10 +203,7 @@ async def get_access_token() -> str | None:
     Also detects out-of-band token swaps via a fingerprint comparison, so a
     reconnect with a different token can't serve the prior bearer.
     """
-    # Resolving settings inline keeps this module import-safe before the
-    # FastAPI app has finished wiring its settings router.
     try:
-        from api.settings import get_current_settings
         refresh_token = (
             get_current_settings().api_keys.get("openaire", "") or ""
         ).strip()

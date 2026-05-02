@@ -8,6 +8,7 @@ from api.websocket import manager
 from models.settings import DatabaseConfig
 from models.source import SourceRectangle, ParsedSource
 from models.verification_result import VerificationResult, MatchResult
+from services.cache_store import save_verify_cache
 from services.match_scorer import classify_decision, determine_verification_status, score_to_band
 from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD, STATUS_MEDIUM_THRESHOLD
 from services.search_settings import (
@@ -16,6 +17,7 @@ from services.search_settings import (
     get_search_timeout_seconds,
 )
 from services.search_urls import build_google_urls, build_search_url
+from services.settings_store import get_current_settings
 from scrapers.rate_limiter import rate_limiter
 from services.source_extractor import extract_source_fields
 from services.url_checker import check_urls, is_doi_or_arxiv_url
@@ -178,8 +180,7 @@ async def verify_pdf_sources(
 
         # Persist results to disk cache
         try:
-            from api.verification import _save_verify_cache
-            _save_verify_cache(pdf_id, results)
+            save_verify_cache(pdf_id, results)
         except Exception:
             pass
 
@@ -226,8 +227,7 @@ async def verify_single_source(
 
     # Persist updated results to disk cache
     try:
-        from api.verification import _save_verify_cache
-        _save_verify_cache(pdf_id, results)
+        save_verify_cache(pdf_id, results)
     except Exception:
         pass
 
@@ -265,7 +265,6 @@ async def _verify_source(
 
     try:
         # Load settings for API keys and enabled databases
-        from api.settings import get_current_settings
         app_settings = get_current_settings()
         api_keys = app_settings.api_keys
         enabled_db_configs = {db.id: db for db in app_settings.databases if db.enabled}

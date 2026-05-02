@@ -30,16 +30,22 @@ export const api = {
       cached: boolean
       numbered?: boolean
       approved?: boolean
+      // Persisted alongside sources so a cached re-import can skip a full
+      // PDF parse (the renderer otherwise reads bytes + re-runs pdfjs just
+      // to learn the page count).
+      page_count?: number
     }>('GET', `/api/parse/sources/${pdfId}`),
 
   updateSources: (
     pdfId: string,
     sources: Array<import('./types').SourceRectangle>,
     numbered?: boolean,
+    pageCount?: number,
   ) =>
     request<{ success: boolean }>('PUT', `/api/parse/sources/${pdfId}`, {
       sources,
       ...(numbered !== undefined ? { numbered } : {}),
+      ...(pageCount !== undefined ? { page_count: pageCount } : {}),
     }),
 
   approvePdf: (pdfId: string) =>

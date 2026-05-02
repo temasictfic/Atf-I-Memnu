@@ -9,91 +9,34 @@ renderer. The Python side is now only responsible for:
 2. Managing approval status on those cached sources
 3. Running the NER field extractor (still the only reason Python is in the loop)
 
-The `pdf_store` in-memory cache, the parse job machinery, and all `fitz` /
-`pymupdf` usage are gone. The `_save_to_cache` / `_load_from_cache` helpers
-are the sole source of truth for source state and are shared with
-verification.py via the module-level imports.
+Cache I/O lives in :mod:`services.cache_store`; the in-memory verification
+state lives in :mod:`services.job_store`. Importing from those neutral
+modules instead of cross-importing api.verification breaks the parsing↔
+verification cycle that this module used to be half of.
 """
-
-import json
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.websocket import manager
-from config import settings
 from models.source import SourceRectangle
+from services.cache_store import (
+    _validate_pdf_id,
+    clean_verify_cache,
+    delete_sources_cache,
+    flip_sources_status,
+    load_sources_cache,
+    load_sources_for_pdf,  # re-exported for any external callers
+    save_sources_cache,
+)
+from services.job_store import verify_results
+
+# Backwards-compatible re-export: `load_sources_for_pdf` used to live here and
+# was imported from `api.parsing` by other code. Re-exporting keeps that
+# import path working while the canonical home is now cache_store.
+__all__ = ["router", "load_sources_for_pdf"]
 
 router = APIRouter()
-
-
-# ---------------------------------------------------------------------------
-# Disk cache helpers (shared with verification.py via direct import)
-# ---------------------------------------------------------------------------
-
-
-def _round_bbox(bbox: dict) -> dict:
-    """Trim JS-arithmetic float noise on bbox coordinates."""
-    return {k: round(v, 2) if isinstance(v, float) else v for k, v in bbox.items()}
-
-
-def _save_to_cache(pdf_id: str, sources: list[SourceRectangle], numbered: bool = False) -> None:
-    cache_dir = settings.get_cache_dir()
-    cache_file = cache_dir / f"{pdf_id}.json"
-
-    approved = bool(sources) and all(s.status == "approved" for s in sources)
-
-    def dump_source(s: SourceRectangle) -> dict:
-        d = s.model_dump(exclude={"pdf_id"}, exclude_defaults=True)
-        # status defaults to "detected" in the model so exclude_defaults
-        # already strips that; also strip "approved" when it matches the
-        # whole-PDF state (the common case after the user approves).
-        if approved and d.get("status") == "approved":
-            d.pop("status", None)
-        if "bbox" in d:
-            d["bbox"] = _round_bbox(d["bbox"])
-        if "bboxes" in d:
-            d["bboxes"] = [_round_bbox(b) for b in d["bboxes"]]
-        return d
-
-    data = {
-        "pdf_id": pdf_id,
-        "numbered": numbered,
-        "approved": approved,
-        "sources": [dump_source(s) for s in sources],
-    }
-    try:
-        cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    except Exception as e:
-        print(f"[_save_to_cache] FAILED to write {cache_file}: {e}", flush=True)
-        raise
-
-
-def _load_from_cache(pdf_id: str) -> tuple[list[SourceRectangle], bool] | None:
-    cache_file = settings.get_cache_dir() / f"{pdf_id}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        raw = json.loads(cache_file.read_text(encoding="utf-8"))
-        approved = bool(raw.get("approved", False))
-        default_status = "approved" if approved else "detected"
-        sources = [
-            SourceRectangle(**{
-                **item,
-                "pdf_id": pdf_id,
-                "status": item.get("status", default_status),
-            })
-            for item in raw["sources"]
-        ]
-        return sources, raw.get("numbered", False)
-    except Exception:
-        return None
-
-
-def load_sources_for_pdf(pdf_id: str) -> list[SourceRectangle] | None:
-    """Public helper used by verification.py to read the cached source list."""
-    cached = _load_from_cache(pdf_id)
-    return None if cached is None else cached[0]
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +47,12 @@ def load_sources_for_pdf(pdf_id: str) -> list[SourceRectangle] | None:
 class UpdateSourcesRequest(BaseModel):
     sources: list[SourceRectangle]
     numbered: bool | None = None
+    # Sent by the renderer alongside freshly detected sources so the cache
+    # can persist the parsed page count. Cached re-imports then skip the
+    # full PDF parse — see lib/pdf/orchestrator.ts. Optional for callers
+    # that don't yet have the page count (older clients, edits without a
+    # re-parse).
+    page_count: int | None = None
 
 
 class ExtractFieldsRequest(BaseModel):
@@ -120,66 +69,54 @@ async def get_sources(pdf_id: str):
     # Returns 200 with `cached=false` when no cache entry exists, rather
     # than 404, so the client's orchestrator can do a "check before parse"
     # without producing red network errors in devtools.
-    cached = _load_from_cache(pdf_id)
+    cached = load_sources_cache(pdf_id)
     if cached is None:
         return {"sources": [], "cached": False}
-    sources, numbered = cached
+    sources, numbered, page_count = cached
     approved = len(sources) > 0 and all(s.status == "approved" for s in sources)
-    return {"sources": [s.model_dump() for s in sources], "cached": True, "numbered": numbered, "approved": approved}
+    payload: dict = {
+        "sources": [s.model_dump() for s in sources],
+        "cached": True,
+        "numbered": numbered,
+        "approved": approved,
+    }
+    if page_count is not None:
+        payload["page_count"] = page_count
+    return payload
 
 
 @router.put("/parse/sources/{pdf_id}")
 async def update_sources(pdf_id: str, request: UpdateSourcesRequest):
     # Determine the `numbered` flag to persist: explicit from the request
-    # wins, then any previous cache entry, else False.
+    # wins, then any previous cache entry, else False. Same precedence for
+    # `page_count` so plain source-edit saves don't blank out the cached
+    # page count.
+    prev = load_sources_cache(pdf_id)
     if request.numbered is not None:
         numbered = request.numbered
     else:
-        prev = _load_from_cache(pdf_id)
         numbered = prev[1] if prev is not None else False
 
-    _save_to_cache(pdf_id, request.sources, numbered)
+    if request.page_count is not None:
+        page_count = request.page_count
+    else:
+        page_count = prev[2] if prev is not None else None
+
+    save_sources_cache(pdf_id, request.sources, numbered, page_count)
 
     # Clean stale verify results for removed/renumbered sources
-    _clean_verify_cache(pdf_id, {s.id for s in request.sources})
-    # Also clean in-memory verify results
-    from api.verification import verify_results
+    current_ids = {s.id for s in request.sources}
+    clean_verify_cache(pdf_id, current_ids)
     if pdf_id in verify_results:
-        current_ids = {s.id for s in request.sources}
         verify_results[pdf_id] = {
             k: v for k, v in verify_results[pdf_id].items() if k in current_ids
         }
     return {"success": True}
 
 
-def _clean_verify_cache(pdf_id: str, current_source_ids: set[str]) -> None:
-    """Remove verify cache entries for sources that no longer exist."""
-    cache_file = settings.get_cache_dir() / f"verify_{pdf_id}.json"
-    if not cache_file.exists():
-        return
-    try:
-        data = json.loads(cache_file.read_text(encoding="utf-8"))
-        cleaned = {k: v for k, v in data.items() if k in current_source_ids}
-        if len(cleaned) != len(data):
-            cache_file.write_text(json.dumps(cleaned, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def _flip_status_and_persist(pdf_id: str, new_status: str) -> bool:
-    cached = _load_from_cache(pdf_id)
-    if cached is None:
-        return False
-    sources, numbered = cached
-    for s in sources:
-        s.status = new_status
-    _save_to_cache(pdf_id, sources, numbered)
-    return True
-
-
 @router.post("/parse/approve/{pdf_id}")
 async def approve_pdf(pdf_id: str):
-    if not _flip_status_and_persist(pdf_id, "approved"):
+    if not flip_sources_status(pdf_id, "approved"):
         raise HTTPException(status_code=404, detail="PDF not found")
     await manager.broadcast("parse_approved", {"pdf_id": pdf_id})
     await manager.send_log("success", f"Sources approved for {pdf_id}", pdf_id=pdf_id)
@@ -188,7 +125,7 @@ async def approve_pdf(pdf_id: str):
 
 @router.post("/parse/unapprove/{pdf_id}")
 async def unapprove_pdf(pdf_id: str):
-    if not _flip_status_and_persist(pdf_id, "detected"):
+    if not flip_sources_status(pdf_id, "detected"):
         raise HTTPException(status_code=404, detail="PDF not found")
     await manager.broadcast("parse_unapproved", {"pdf_id": pdf_id})
     await manager.send_log("info", f"Approval revoked for {pdf_id}", pdf_id=pdf_id)
@@ -198,18 +135,9 @@ async def unapprove_pdf(pdf_id: str):
 @router.delete("/parse/pdf/{pdf_id}")
 async def remove_pdf(pdf_id: str):
     """Drop the cached source + verify JSON files for a PDF."""
-    cache_dir = settings.get_cache_dir()
-    for name in (f"{pdf_id}.json", f"verify_{pdf_id}.json"):
-        cache_file = cache_dir / name
-        if cache_file.exists():
-            try:
-                cache_file.unlink()
-            except Exception as e:
-                print(f"[remove_pdf] failed to delete {cache_file}: {e}", flush=True)
-
-    from api.verification import verify_results
+    _validate_pdf_id(pdf_id)
+    delete_sources_cache(pdf_id)
     verify_results.pop(pdf_id, None)
-
     return {"success": True}
 
 

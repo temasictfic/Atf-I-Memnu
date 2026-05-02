@@ -1,106 +1,38 @@
+"""Verification endpoints.
+
+Cache I/O and the in-memory job/result dicts have been extracted to
+:mod:`services.cache_store` and :mod:`services.job_store` respectively, so
+this module no longer cross-imports api.parsing or holds module-level state
+that anyone else has to import. That breaks the parsing↔verification and
+verification↔orchestrator cycles.
+"""
+
 import asyncio
-import json
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.websocket import manager
-from api.parsing import load_sources_for_pdf
-from config import settings
 from models.source import SourceRectangle
-from models.verification_result import VerificationResult, MatchResult
+from models.verification_result import (
+    DecisionTag,
+    MatchResult,
+    TagKey,
+    VerificationResult,
+)
+from services.cache_store import (
+    _validate_pdf_id,
+    load_sources_for_pdf,
+    load_verify_cache,
+    save_verify_cache,
+)
+from services.job_store import verify_jobs, verify_results
 from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
 from services.search_urls import build_google_urls, build_search_url
 
 router = APIRouter()
-
-# In-memory verification results
-verify_jobs: dict[str, dict] = {}
-verify_results: dict[str, dict[str, VerificationResult]] = {}  # pdf_id -> {source_id -> result}
-
-
-def _is_best_match(m: MatchResult, best: MatchResult | None) -> bool:
-    """Identify the all_results entry that should carry best_match=True on disk.
-
-    Matches by (database, score, title) — strong enough to disambiguate
-    across the rare ties we see (each verifier returns a single result, so
-    the full triple is unique in practice).
-    """
-    if best is None:
-        return False
-    return (m.database, m.score, m.title) == (best.database, best.score, best.title)
-
-
-def _serialise_match(m: MatchResult, is_best: bool) -> dict:
-    """Dump a MatchResult for disk: drop search_url + defaults, add best_match flag."""
-    d = m.model_dump(exclude={"search_url"}, exclude_defaults=True)
-    d["best_match"] = is_best
-    return d
-
-
-def _serialise_result(r: VerificationResult) -> dict:
-    """Dump a VerificationResult for disk in the optimised cache shape."""
-    payload = r.model_dump(
-        exclude={"source_id", "best_match", "all_results", "scholar_url", "google_url"},
-        exclude_defaults=True,
-    )
-    payload["all_results"] = [_serialise_match(m, _is_best_match(m, r.best_match)) for m in r.all_results]
-    return payload
-
-
-def _save_verify_cache(pdf_id: str, results: dict[str, VerificationResult]) -> None:
-    """Persist verification results to disk cache."""
-    cache_dir = settings.get_cache_dir()
-    cache_file = cache_dir / f"verify_{pdf_id}.json"
-    data = {sid: _serialise_result(r) for sid, r in results.items()}
-    cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-
-
-def _hydrate_match(entry: dict, parsed_title: str) -> tuple[MatchResult, bool]:
-    """Rehydrate a MatchResult from disk; rebuild search_url; return is_best flag."""
-    is_best = bool(entry.pop("best_match", False))
-    database = entry.get("database", "")
-    entry["search_url"] = build_search_url(database, parsed_title)
-    return MatchResult(**entry), is_best
-
-
-def _hydrate_result(source_id: str, payload: dict) -> VerificationResult:
-    """Rehydrate a VerificationResult from disk: inject source_id, reconstruct
-    best_match from the flagged all_results entry, rebuild search/scholar/google URLs."""
-    payload = dict(payload)  # don't mutate caller's data
-    parsed_title = payload.get("parsed_title", "") or ""
-
-    raw_all = payload.pop("all_results", [])
-    all_results: list[MatchResult] = []
-    best_match: MatchResult | None = None
-    for entry in raw_all:
-        m, is_best = _hydrate_match(dict(entry), parsed_title)
-        all_results.append(m)
-        if is_best:
-            best_match = m
-
-    scholar_url, google_url = build_google_urls(parsed_title)
-    return VerificationResult(
-        source_id=source_id,
-        all_results=all_results,
-        best_match=best_match,
-        scholar_url=scholar_url,
-        google_url=google_url,
-        **payload,
-    )
-
-
-def _load_verify_cache(pdf_id: str) -> dict[str, VerificationResult] | None:
-    """Load verification results from disk cache."""
-    cache_file = settings.get_cache_dir() / f"verify_{pdf_id}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        data = json.loads(cache_file.read_text(encoding="utf-8"))
-        return {sid: _hydrate_result(sid, payload) for sid, payload in data.items()}
-    except Exception:
-        return None
 
 
 class VerifyRequest(BaseModel):
@@ -112,16 +44,18 @@ class VerifySourceRequest(BaseModel):
 
 
 class OverrideRequest(BaseModel):
-    status: str  # high, medium, low
+    # User can only override to one of the three settled bands. "pending"
+    # / "in_progress" are orchestrator-only lifecycle states.
+    status: Literal["high", "medium", "low"]
 
 
 class TagOverrideRequest(BaseModel):
-    tag: str            # "authors" | "year" | "title" | "journal" | "doi/arXiv"
+    tag: TagKey
     state: bool | None  # None clears the override
 
 
 class DecisionOverrideRequest(BaseModel):
-    decision: str | None   # "valid" | "citation" | "fabricated" | None (clear)
+    decision: DecisionTag | None  # None clears the override
 
 
 class VerifyBatchRequest(BaseModel):
@@ -152,24 +86,34 @@ async def _verify_batch(job_id: str, pdf_ids: list[str], texts: dict[str, str], 
 
     await manager.send_log("info", f"Starting batch verification for {len(pdf_ids)} PDFs")
 
-    for pid in pdf_ids:
-        sources = _load_sources_or_empty(pid)
-        if not sources:
-            continue
-        try:
-            await verify_pdf_sources_filtered(
-                pid, sources, verify_results, texts, excluded_ids
-            )
-        except Exception as e:
-            await manager.send_log("error", f"Verification failed for {pid}: {e}")
+    try:
+        for pid in pdf_ids:
+            sources = _load_sources_or_empty(pid)
+            if not sources:
+                continue
+            try:
+                await verify_pdf_sources_filtered(
+                    pid, sources, verify_results, texts, excluded_ids
+                )
+            except Exception as e:
+                await manager.send_log("error", f"Verification failed for {pid}: {e}")
 
-    # Save results to disk cache
-    for pdf_id in pdf_ids:
-        if pdf_id in verify_results and verify_results[pdf_id]:
-            _save_verify_cache(pdf_id, verify_results[pdf_id])
+        # Save results to disk cache (best-effort; cache write failure must
+        # not strand the job in `running`).
+        for pdf_id in pdf_ids:
+            if pdf_id in verify_results and verify_results[pdf_id]:
+                try:
+                    save_verify_cache(pdf_id, verify_results[pdf_id])
+                except Exception as e:
+                    await manager.send_log("error", f"Cache write failed for {pdf_id}: {e}")
 
-    verify_jobs[job_id]["status"] = "done"
-    await manager.send_log("success", "Batch verification complete")
+        verify_jobs[job_id]["status"] = "done"
+        await manager.send_log("success", "Batch verification complete")
+    except Exception as e:
+        verify_jobs[job_id]["status"] = "failed"
+        verify_jobs[job_id]["error"] = str(e)
+        await manager.send_log("error", f"Batch verification job failed: {e}")
+        raise
 
 
 @router.post("/verify")
@@ -186,35 +130,65 @@ async def _verify_all_pdfs(job_id: str, pdf_ids: list[str]):
 
     await manager.send_log("info", f"Starting verification for {len(pdf_ids)} PDFs")
 
-    for pid in pdf_ids:
-        sources = _load_sources_or_empty(pid)
-        if not sources:
-            continue
-        try:
-            await verify_pdf_sources(pid, sources, verify_results)
-        except Exception as e:
-            await manager.send_log("error", f"Verification failed for {pid}: {e}")
+    try:
+        for pid in pdf_ids:
+            sources = _load_sources_or_empty(pid)
+            if not sources:
+                continue
+            try:
+                await verify_pdf_sources(pid, sources, verify_results)
+            except Exception as e:
+                await manager.send_log("error", f"Verification failed for {pid}: {e}")
 
-    # Save results to disk cache
-    for pdf_id in pdf_ids:
-        if pdf_id in verify_results and verify_results[pdf_id]:
-            _save_verify_cache(pdf_id, verify_results[pdf_id])
+        for pdf_id in pdf_ids:
+            if pdf_id in verify_results and verify_results[pdf_id]:
+                try:
+                    save_verify_cache(pdf_id, verify_results[pdf_id])
+                except Exception as e:
+                    await manager.send_log("error", f"Cache write failed for {pdf_id}: {e}")
 
-    verify_jobs[job_id]["status"] = "done"
-    await manager.send_log("success", f"Verification complete for all PDFs")
+        verify_jobs[job_id]["status"] = "done"
+        await manager.send_log("success", "Verification complete for all PDFs")
+    except Exception as e:
+        verify_jobs[job_id]["status"] = "failed"
+        verify_jobs[job_id]["error"] = str(e)
+        await manager.send_log("error", f"Verification job failed: {e}")
+        raise
 
 
 @router.post("/verify/pdf/{pdf_id}")
 async def reverify_pdf(pdf_id: str):
+    _validate_pdf_id(pdf_id)
     sources = _load_sources_or_empty(pdf_id)
     if not sources:
         raise HTTPException(status_code=404, detail="PDF not found")
 
+    job_id = str(uuid.uuid4())[:8]
+    # Register before launch so the returned job_id is pollable via
+    # GET /verify/status/{job_id}. Previously this was missing, so the
+    # client could poll a known-good id and get 404 back.
+    verify_jobs[job_id] = {"status": "running", "pdfs": [pdf_id]}
+
+    asyncio.create_task(_reverify_pdf_job(job_id, pdf_id, sources))
+    return {"job_id": job_id}
+
+
+async def _reverify_pdf_job(job_id: str, pdf_id: str, sources: list[SourceRectangle]):
     from services.verification_orchestrator import verify_pdf_sources
 
-    job_id = str(uuid.uuid4())[:8]
-    asyncio.create_task(verify_pdf_sources(pdf_id, sources, verify_results))
-    return {"job_id": job_id}
+    try:
+        await verify_pdf_sources(pdf_id, sources, verify_results)
+        if pdf_id in verify_results and verify_results[pdf_id]:
+            try:
+                save_verify_cache(pdf_id, verify_results[pdf_id])
+            except Exception as e:
+                await manager.send_log("error", f"Cache write failed for {pdf_id}: {e}")
+        verify_jobs[job_id]["status"] = "done"
+    except Exception as e:
+        verify_jobs[job_id]["status"] = "failed"
+        verify_jobs[job_id]["error"] = str(e)
+        await manager.send_log("error", f"Reverify job failed for {pdf_id}: {e}")
+        raise
 
 
 @router.post("/verify/source/{pdf_id}/{source_id}")
@@ -297,7 +271,7 @@ async def get_verify_results(pdf_id: str):
     results = verify_results.get(pdf_id)
     if results is None:
         # Try loading from disk cache
-        cached = _load_verify_cache(pdf_id)
+        cached = load_verify_cache(pdf_id)
         if cached:
             verify_results[pdf_id] = cached
             results = cached
@@ -333,12 +307,9 @@ async def override_status(pdf_id: str, source_id: str, request: OverrideRequest)
     )
 
     # Persist updated results to disk cache
-    _save_verify_cache(pdf_id, verify_results[pdf_id])
+    save_verify_cache(pdf_id, verify_results[pdf_id])
 
     return {"success": True}
-
-
-_ALLOWED_TAG_KEYS = {"authors", "year", "title", "journal", "doi/arXiv"}
 
 
 @router.post("/verify/tag-override/{pdf_id}/{source_id}")
@@ -349,8 +320,8 @@ async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequ
     state=False → force OFF
     state=None  → clear override (revert to default-derived state)
     """
-    if request.tag not in _ALLOWED_TAG_KEYS:
-        raise HTTPException(status_code=400, detail=f"Unknown tag: {request.tag}")
+    # Pydantic's Literal[TagKey] already validates request.tag at parse time;
+    # an unknown tag yields a 422 before this handler runs.
     if pdf_id not in verify_results or source_id not in verify_results[pdf_id]:
         raise HTTPException(status_code=404, detail="Result not found")
 
@@ -360,7 +331,7 @@ async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequ
     else:
         existing.tag_overrides[request.tag] = request.state
 
-    _save_verify_cache(pdf_id, verify_results[pdf_id])
+    save_verify_cache(pdf_id, verify_results[pdf_id])
 
     await manager.broadcast("verify_source_done", {
         "pdf_id": pdf_id,
@@ -381,9 +352,6 @@ async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequ
     return {"success": True}
 
 
-_ALLOWED_DECISION_VALUES = {"valid", "citation", "fabricated", None}
-
-
 @router.post("/verify/decision-override/{pdf_id}/{source_id}")
 async def set_decision_override(pdf_id: str, source_id: str, request: DecisionOverrideRequest):
     """Store the user's three-state decision-tag override for a source.
@@ -391,14 +359,14 @@ async def set_decision_override(pdf_id: str, source_id: str, request: DecisionOv
     decision="valid" | "citation" | "fabricated" → force that decision state
     decision=None                                → clear override (use classify_decision)
     """
-    if request.decision not in _ALLOWED_DECISION_VALUES:
-        raise HTTPException(status_code=400, detail=f"Invalid decision: {request.decision}")
+    # Pydantic's `DecisionTag | None` already validates request.decision at
+    # parse time; an unknown value yields a 422 before this handler runs.
     if pdf_id not in verify_results or source_id not in verify_results[pdf_id]:
         raise HTTPException(status_code=404, detail="Result not found")
 
     existing = verify_results[pdf_id][source_id]
     existing.decision_tag_override = request.decision
-    _save_verify_cache(pdf_id, verify_results[pdf_id])
+    save_verify_cache(pdf_id, verify_results[pdf_id])
 
     await manager.broadcast("verify_source_done", {
         "pdf_id": pdf_id,
@@ -528,7 +496,7 @@ async def score_scholar(request: ScoreScholarRequest):
     existing.decision_tag = decision_tag
 
     # Persist and broadcast
-    _save_verify_cache(request.pdf_id, verify_results[request.pdf_id])
+    save_verify_cache(request.pdf_id, verify_results[request.pdf_id])
 
     await manager.broadcast("verify_source_done", {
         "pdf_id": request.pdf_id,
