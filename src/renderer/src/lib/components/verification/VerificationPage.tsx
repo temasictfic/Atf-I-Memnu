@@ -2700,6 +2700,7 @@ export default function VerificationPage() {
                         title={tip}
                         onClick={() => {
                           if (!effectivePdfId || !selectedSourceId) return
+                          pendingScrollCardIdRef.current = selectedSourceId
                           useVerificationStore.getState().cycleDecisionTag(effectivePdfId, selectedSourceId)
                         }}
                       >{label}</button>
