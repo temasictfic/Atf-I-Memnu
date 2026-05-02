@@ -330,27 +330,63 @@ export async function revertToOriginal(pdfId: string): Promise<void> {
   }))
   updateSourceCount(pdfId, cloned.length)
   try {
-    await api.updateSources(pdfId, cloned)
+    // Route through saveSources so revert participates in the per-PDF
+    // coalescing instead of racing any in-flight edit save.
+    await saveSources(pdfId)
   } catch (e) {
     console.error('Failed to persist revert:', e)
   }
   autoUnapproveOnEdit(pdfId)
 }
 
+// Per-PDF save coordination.
+//
+// At any time there is at most one save in flight per pdfId. Concurrent
+// saveSources(pdfId) calls during that window mark a "pending" follow-up
+// rather than racing — when the in-flight save resolves, exactly one
+// trailing save fires that reads the latest store state. Bounds active
+// saves at 2 per pdfId regardless of edit cadence and makes the latest
+// store snapshot win on disk, killing the lost-edit race that occurred
+// when network reordering let an older PUT overwrite a newer one.
+const _saveInFlight = new Map<string, Promise<void>>()
+const _savePending = new Set<string>()
+
 export async function saveSources(pdfId: string): Promise<void> {
-  const sources = useSourcesStore.getState().sourcesByPdf[pdfId]
-  if (!sources) {
-    // No in-memory state yet — refuse to overwrite backend with an empty list.
-    console.warn(`[saveSources] skipped for ${pdfId}: no sources in store`)
-    return
+  const existing = _saveInFlight.get(pdfId)
+  if (existing) {
+    // Coalesce: schedule a trailing save and share the in-flight promise
+    // so all callers' awaits resolve when the latest snapshot is on disk.
+    _savePending.add(pdfId)
+    return existing
   }
-  try {
-    await api.updateSources(pdfId, sources)
-    // console.log(`%c[saveSources] ✓ ${pdfId} (${sources.length} sources)`, 'color: #22c55e')
-  } catch (e) {
-    console.error(`[saveSources] ✗ ${pdfId}:`, e)
-    throw e
-  }
+
+  const promise = (async () => {
+    try {
+      while (true) {
+        const sources = useSourcesStore.getState().sourcesByPdf[pdfId]
+        if (!sources) {
+          // No in-memory state yet — refuse to overwrite backend with an empty list.
+          console.warn(`[saveSources] skipped for ${pdfId}: no sources in store`)
+          break
+        }
+        try {
+          await api.updateSources(pdfId, sources)
+        } catch (e) {
+          console.error(`[saveSources] ✗ ${pdfId}:`, e)
+          throw e
+        }
+        if (!_savePending.has(pdfId)) break
+        // Another edit landed during our PUT — re-read state and save again.
+        _savePending.delete(pdfId)
+      }
+    } finally {
+      _saveInFlight.delete(pdfId)
+      _savePending.delete(pdfId)
+    }
+  })()
+
+  _saveInFlight.set(pdfId, promise)
+  return promise
 }
 
 export async function approveSources(pdfId: string): Promise<void> {
