@@ -113,6 +113,21 @@ def _db_park_cleared(db_id: str) -> bool:
     return rate_limiter.parked_remaining(host) <= 0.0
 
 
+def _db_pacing_fits_retry(db_id: str) -> bool:
+    """Return True if the DB's inter-request gap fits in the retry window.
+
+    A DB whose pacing is already wider than ``_RETRY_SEARCH_TIMEOUT_SECONDS``
+    (e.g. arXiv at 3 s pacing under a deep queue) will deterministically
+    time out again inside the 5 s retry budget — the rate-limiter alone
+    consumes the slot. Excluding such DBs keeps the retry log quiet and
+    avoids re-emitting the same misleading ``timeout`` dot.
+    """
+    host = _DB_ID_TO_HOST.get(db_id)
+    if host is None:
+        return True
+    return rate_limiter.rate_for(host) < _RETRY_SEARCH_TIMEOUT_SECONDS
+
+
 def _is_strong_match(result: MatchResult | None) -> bool:
     """Return True when a single verifier's result is strong enough to
     cancel the remaining parallel verifiers for this source.
@@ -330,7 +345,11 @@ async def _verify_source(
         #
         # Short 5 s ceiling (vs the main-pass ~20 s) keeps worst-case
         # retry latency bounded even if everything fails again.
-        retriable_timeouts = set(tier1_results["timeouts"])
+        retriable_timeouts = {
+            db_id
+            for db_id in tier1_results["timeouts"]
+            if _db_pacing_fits_retry(db_id)
+        }
         retriable_rate_limited = {
             db_id
             for db_id in tier1_results["rate_limited"]

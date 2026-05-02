@@ -6,6 +6,7 @@ citation. This module exposes a single lazily-created session that is reused
 across calls, and a shutdown hook the FastAPI app can wire into lifespan.
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from urllib.parse import urlparse
 import aiohttp
 
 from scrapers.rate_limiter import rate_limiter
-from services.search_settings import get_client_timeout
+from services.search_settings import get_client_timeout, get_polite_pool_email
 
 T = TypeVar("T")
 
@@ -102,6 +103,37 @@ def check_rate_limit(resp: aiohttp.ClientResponse) -> None:
     if host:
         rate_limiter.park(host, park_seconds)
     raise RateLimitedError(host, retry_after, status=resp.status)
+
+
+def build_headers() -> dict[str, str]:
+    """Return a polite-pool User-Agent header.
+
+    Identifying the client by mailto when configured lets API operators
+    contact us if a verifier misbehaves and reduces the chance of
+    soft-blocks during traffic spikes — both arXiv ToS and government
+    APIs (TRDizin) treat default aiohttp UAs as suspicious bot traffic.
+    """
+    email = get_polite_pool_email()
+    if email:
+        ua = f"AtfiMemnu/2.9 (Reference Search and Verification; mailto:{email})"
+    else:
+        ua = "AtfiMemnu/2.9 (Reference Search and Verification)"
+    return {"User-Agent": ua}
+
+
+async def acquire_or_rate_limited(host: str, max_wait: float) -> None:
+    """Acquire a rate-limit slot or fail fast as ``RateLimitedError``.
+
+    Wraps ``rate_limiter.acquire(host)`` in ``asyncio.wait_for(max_wait)``.
+    When the inter-request pacing queue is so deep that the wait would
+    exceed ``max_wait`` seconds, raise ``RateLimitedError`` so the
+    orchestrator paints a ``rate_limited`` dot instead of burning the
+    full search-timeout asleep and emitting a misleading ``timeout``.
+    """
+    try:
+        await asyncio.wait_for(rate_limiter.acquire(host), timeout=max_wait)
+    except asyncio.TimeoutError:
+        raise RateLimitedError(host, retry_after=max_wait, status=429) from None
 
 
 def get_session() -> aiohttp.ClientSession:

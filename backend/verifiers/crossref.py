@@ -13,7 +13,7 @@ from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE, HIGH_PARSE_CONFIDENCE_THRESHOLD
 from services.search_settings import get_polite_pool_email
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import build_headers, check_parked_url, check_rate_limit, get_session
 
 CROSSREF_API = "https://api.crossref.org/works"
 _HOST = "api.crossref.org"
@@ -38,23 +38,6 @@ def _crossref_pace_seconds() -> float | None:
     return _POLITE_POOL_PACE_SECONDS if get_polite_pool_email() else None
 
 
-def _build_headers() -> dict[str, str]:
-    """Return a User-Agent header advertising the polite-pool mailto, when set.
-
-    Crossref routes requests carrying a real contact mailto into the "polite"
-    pool with much higher rate limits than the anonymous public pool. Without
-    a configured email we intentionally send a plain UA rather than a fake
-    ``mailto:example.com`` that still keeps us in the public pool and looks
-    like spam to Crossref's operators.
-    """
-    email = get_polite_pool_email()
-    if email:
-        ua = f"AtfiMemnu/1.0 (Citation Search and Verification; mailto:{email})"
-    else:
-        ua = "AtfiMemnu/1.0 (Citation Search and Verification)"
-    return {"User-Agent": ua}
-
-
 async def search_by_doi(source: ParsedSource) -> MatchResult | None:
     """Direct DOI lookup via Crossref."""
     if not source.doi:
@@ -64,7 +47,7 @@ async def search_by_doi(source: ParsedSource) -> MatchResult | None:
     url = f"{CROSSREF_API}/{quote(source.doi, safe='')}"
     check_parked_url(url)
     await rate_limiter.acquire(_HOST, rate=_crossref_pace_seconds())
-    async with session.get(url, headers=_build_headers()) as resp:
+    async with session.get(url, headers=build_headers()) as resp:
         check_rate_limit(resp)
         if resp.status != 200:
             return None
@@ -161,7 +144,7 @@ async def _fetch_best_match(
     """Execute one Crossref API request and return the highest-scoring match."""
     check_parked_url(CROSSREF_API)
     await rate_limiter.acquire(_HOST, rate=_crossref_pace_seconds())
-    async with session.get(CROSSREF_API, params=params, headers=_build_headers()) as resp:
+    async with session.get(CROSSREF_API, params=params, headers=build_headers()) as resp:
         check_rate_limit(resp)
         if resp.status != 200:
             return None

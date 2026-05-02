@@ -8,7 +8,12 @@ import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import (
+    build_headers,
+    check_parked_url,
+    check_rate_limit,
+    get_session,
+)
 
 TRDIZIN_API = "https://search.trdizin.gov.tr/api/defaultSearch/publication/"
 
@@ -30,11 +35,20 @@ async def search(source: ParsedSource) -> MatchResult | None:
 
     session = get_session()
     check_parked_url(TRDIZIN_API)
-    async with session.get(TRDIZIN_API, params=params) as resp:
+    async with session.get(TRDIZIN_API, params=params, headers=build_headers()) as resp:
         check_rate_limit(resp)
         if resp.status != 200:
             return None
-        data = await resp.json()
+        # search.trdizin.gov.tr intermittently returns HTML error pages or
+        # text/plain payloads on transient backend hiccups. Tolerate those
+        # as a silent no-match rather than letting aiohttp's ContentTypeError
+        # bubble up to the orchestrator's generic ``error`` handler — that
+        # would paint a red dot with a cryptic exception string for what is
+        # really just an upstream blip.
+        try:
+            data = await resp.json(content_type=None)
+        except (aiohttp.ContentTypeError, ValueError):
+            return None
 
         hits = data.get("hits", {}).get("hits", [])
         if not hits:

@@ -1,4 +1,13 @@
-"""arXiv API verifier - search via Atom feed API."""
+"""arXiv API verifier - search via Atom feed API.
+
+Only runs when the source already contains an arXiv URL or ID. The previous
+title-fallback path was removed: arXiv's Lucene query is fragile on cleaned
+non-English titles, and across humanities / Turkish references it is almost
+always a no-op anyway. Issuing a request per source piled them up behind the
+3 s pacing window and surfaced as ``timeout`` dots once the queue depth
+crossed the search-timeout budget. Now arXiv only fires when there is a
+genuine arXiv identifier to look up — which is precise, fast, and rate-safe.
+"""
 
 import re
 import xml.etree.ElementTree as ET
@@ -8,65 +17,24 @@ import aiohttp
 
 from models.source import ParsedSource
 from models.verification_result import MatchResult
-from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from services.search_settings import get_polite_pool_email
 from utils.doi_extractor import extract_arxiv_id
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import (
+    acquire_or_rate_limited,
+    build_headers,
+    check_parked_url,
+    check_rate_limit,
+    get_session,
+)
 
 ARXIV_API = "https://export.arxiv.org/api/query"
+ARXIV_HOST = "export.arxiv.org"
 NS = {"atom": "http://www.w3.org/2005/Atom"}
 
-
-def _build_headers() -> dict[str, str]:
-    """Return a User-Agent header; includes polite-pool mailto when configured.
-
-    arXiv's Terms of Use ask API users to identify themselves via User-Agent
-    so operators can contact us if a client misbehaves. A real mailto also
-    reduces the chance of soft-blocks during traffic spikes.
-    """
-    email = get_polite_pool_email()
-    if email:
-        ua = f"AtfiMemnu/1.0 (Citation Search and Verification; mailto:{email})"
-    else:
-        ua = "AtfiMemnu/1.0 (Citation Search and Verification)"
-    return {"User-Agent": ua}
-
-
-def _build_arxiv_query(source: ParsedSource) -> str:
-    """Build an arXiv structured title query: ti:"{sanitized title}".
-
-    Title-only by design. The previous implementation optionally ANDed
-    ``au:{lastname}`` onto the query, but our author extraction depends
-    on NER output being in ``"Family, Given"`` shape; for sources
-    parsed as ``"Given Family"`` the splitter returns the whole string
-    and arXiv's strict ``au:`` operator filters out what would otherwise
-    be correct matches. On distinctive arXiv titles the author filter
-    contributes almost nothing anyway — arXiv's corpus is small and its
-    title index is strong — so dropping it improves recall without
-    costing precision.
-
-    The date filter is intentionally omitted: arXiv preprints are often
-    submitted months or years before the citing paper's publication year,
-    so a year window would incorrectly exclude valid matches.
-
-    Colons are stripped from the title before quoting because the arXiv
-    Lucene parser treats ":" as a field separator even inside a quoted
-    phrase, turning e.g. ti:"16x16 words: Transformers..." into a broken
-    query that returns zero results.
-    """
-    title = source.title or ""
-    # Remove characters that are Lucene field-separator or escape tokens.
-    # The colon is the critical one (field:value syntax breaks phrase search).
-    # The hyphen sits at the end of the character class on purpose — putting
-    # it mid-class would let the regex parser interpret it as a range
-    # (which it did until this fix — "bad character range \-!" swallowed
-    # by the old bare except and turning every arxiv title search into a
-    # silent no-op).
-    sanitized = re.sub(r'[:"+!(){}\[\]^~*?/\\-]', " ", title)
-    sanitized = " ".join(sanitized.split())  # collapse whitespace
-
-    return f'ti:"{sanitized}"'
+# Cap on how long the rate-limiter is allowed to make us wait. Fail fast as
+# ``rate_limited`` past this — the per-DB search timeout is typically 20 s
+# and we don't want the queue alone to consume the entire budget.
+_PACING_MAX_WAIT_SECONDS = 8.0
 
 
 def _strip_arxiv_version(url: str) -> str:
@@ -79,49 +47,32 @@ def _strip_arxiv_version(url: str) -> str:
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
-    """Search arXiv — direct ID lookup first, title search as fallback.
+    """Search arXiv by ID only — no title fallback.
 
-    When the source text already contains an arXiv URL
-    (e.g. https://arxiv.org/abs/2010.11929) we extract the ID and call the
-    arXiv API with ``id_list`` for a guaranteed exact match, bypassing the
-    fragile title-based Lucene query entirely.  This is by far the most
-    common case for arXiv citations and produces a score of 1.0 via the
-    arXiv-ID branch of ``_url_match_score`` in match_scorer.py.
-
-    The title search is kept as a fallback for sources that cite an arXiv
-    paper without including its URL.
-
-    Rate limiting: arXiv recommends ≤ 3 req/s.  With up to 3 sources
-    verified in parallel each triggering an id_list lookup, un-throttled
-    concurrent requests cause the API to return empty responses silently.
-    The rate_limiter serialises calls to export.arxiv.org at 0.5 s gaps
-    (~2/s), preventing that failure mode.
+    Extracts an arXiv identifier from the source URL or raw text and
+    issues an ``id_list`` lookup, which is precise and produces a 1.0
+    score via the arXiv-ID branch of ``_url_match_score``. When no ID
+    is present we return ``None`` immediately, which the orchestrator
+    paints as a ``no_match`` dot — informative, and crucially without
+    eating a slot in the 3 s-paced rate-limiter queue.
     """
-    # Throttle before any network activity.
-    await rate_limiter.acquire("export.arxiv.org")
-
-    session = get_session()
-    # ── Priority 1: direct lookup by embedded arXiv ID ──────────────
     arxiv_id = extract_arxiv_id(source.url or "") or extract_arxiv_id(
         source.raw_text
     )
-    if arxiv_id:
-        # Strip any version suffix so the API returns the canonical
-        # record; the scored URL will also be version-free.
-        base_id = re.sub(r"v\d+$", "", arxiv_id)
-        result = await _lookup_by_id(session, base_id, source)
-        if result:
-            return result
-
-    # ── Priority 2: title-based search ──────────────────────────────
-    # Single title-only request. Author filter was removed because our
-    # NER-based author extraction can't reliably produce the lastname
-    # arXiv's strict ``au:`` operator needs, and arXiv's title index is
-    # strong enough that authors rarely help disambiguate anyway.
-    if not source.title:
+    if not arxiv_id:
         return None
 
-    return await _fetch_best_match(session, _build_arxiv_query(source), source)
+    # Strip any version suffix so the API returns the canonical record;
+    # the scored URL will also be version-free.
+    base_id = re.sub(r"v\d+$", "", arxiv_id)
+
+    # Pacing happens here, only on the path that actually issues a
+    # request, and bounded so a deep queue surfaces as ``rate_limited``
+    # instead of swallowing the search timeout.
+    await acquire_or_rate_limited(ARXIV_HOST, _PACING_MAX_WAIT_SECONDS)
+
+    session = get_session()
+    return await _lookup_by_id(session, base_id, source)
 
 
 async def _lookup_by_id(
@@ -132,26 +83,7 @@ async def _lookup_by_id(
     """Fetch a single arXiv paper by its ID using the id_list parameter."""
     params = {"id_list": arxiv_id}
     check_parked_url(ARXIV_API)
-    async with session.get(ARXIV_API, params=params, headers=_build_headers()) as resp:
-        check_rate_limit(resp)
-        if resp.status != 200:
-            return None
-        text = await resp.text()
-        return _parse_atom_response(text, source)
-
-
-async def _fetch_best_match(
-    session: aiohttp.ClientSession,
-    search_query: str,
-    source: ParsedSource,
-) -> MatchResult | None:
-    """Execute one arXiv title-search request and return the best match."""
-    params = {
-        "search_query": search_query,
-        "max_results": "5",
-    }
-    check_parked_url(ARXIV_API)
-    async with session.get(ARXIV_API, params=params, headers=_build_headers()) as resp:
+    async with session.get(ARXIV_API, params=params, headers=build_headers()) as resp:
         check_rate_limit(resp)
         if resp.status != 200:
             return None

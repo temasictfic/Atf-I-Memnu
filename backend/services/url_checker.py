@@ -18,7 +18,7 @@ from urllib.parse import urljoin, urlparse
 
 import aiohttp
 
-from services.search_settings import get_polite_pool_email
+from verifiers._http import build_headers
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,13 @@ _MAX_REDIRECTS = 5
 
 
 def _build_headers() -> dict[str, str]:
-    """Return liveness-check headers; includes polite-pool mailto when set."""
-    email = get_polite_pool_email()
-    if email:
-        ua = f"AtfiMemnu/1.0 (Citation Verification; mailto:{email})"
-    else:
-        ua = "AtfiMemnu/1.0 (Citation Verification)"
-    return {"User-Agent": ua, "Accept": "*/*"}
+    """Return liveness-check headers — shared polite-pool UA plus ``Accept: */*``.
+
+    Reusing the verifier UA keeps the polite-pool advertising consistent across
+    API and liveness traffic, so a server admin who whitelists or rate-shapes
+    one channel sees the same client identity on the other.
+    """
+    return {**build_headers(), "Accept": "*/*"}
 
 
 def is_doi_or_arxiv_url(url: str) -> bool:

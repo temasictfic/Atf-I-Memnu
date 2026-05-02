@@ -80,6 +80,16 @@ class RateLimiter:
         if expiry > current:
             self._parked_until[domain] = expiry
 
+    def rate_for(self, domain: str) -> float:
+        """Return the configured inter-request gap (seconds) for a domain.
+
+        Used by the orchestrator to decide whether a timed-out DB is even
+        worth retrying inside the short retry window — if pacing alone is
+        wider than the retry timeout, the retry is guaranteed to time out
+        again before its first packet leaves the box.
+        """
+        return self._rates.get(domain, self._default_rate)
+
     def parked_remaining(self, domain: str) -> float:
         """Return seconds remaining on a park window (0.0 if not parked)."""
         expiry = self._parked_until.get(domain)
