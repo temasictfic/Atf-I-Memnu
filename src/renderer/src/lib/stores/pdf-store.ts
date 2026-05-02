@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { PdfDocument } from '../api/types'
-import { parseAndDetect } from '../pdf/orchestrator'
+import { parseAndDetect, pdfIdFromPath } from '../pdf/orchestrator'
 import { clearDocumentCache, evictDocument } from '../pdf/document-cache'
 import { setSources } from './sources-store'
 import { wsClient } from '../api/ws-client'
@@ -9,9 +9,9 @@ type ParsingSortKey = 'name' | 'status' | 'count' | 'numbered'
 
 interface PdfState {
   pdfs: PdfDocument[]
-  // Absolute file system paths keyed by pdf_id (filename stem). Populated from
-  // loadFiles/loadDirectory so the renderer can read PDF bytes locally without
-  // round-tripping through the backend.
+  // Absolute file system paths keyed by pdf_id (path-derived hash). Populated
+  // from loadFiles/loadDirectory so the renderer can read PDF bytes locally
+  // without round-tripping through the backend.
   pathsById: Record<string, string>
   selectedPdfId: string | null
   loading: boolean
@@ -27,11 +27,6 @@ interface PdfState {
   loadDirectory: (directory: string) => Promise<void>
   loadFiles: (filePaths: string[]) => Promise<void>
   clearPdfs: () => void
-}
-
-function stemFromPath(filePath: string): string {
-  const base = filePath.split(/[/\\]/).pop() ?? filePath
-  return base.replace(/\.pdf$/i, '')
 }
 
 function nameFromPath(filePath: string): string {
@@ -85,7 +80,7 @@ async function processPdfBatch(filePaths: string[]): Promise<void> {
     const nextPaths = { ...state.pathsById }
     const existing = new Map(state.pdfs.map(p => [p.id, p]))
     for (const fp of filePaths) {
-      const id = stemFromPath(fp)
+      const id = pdfIdFromPath(fp)
       nextPaths[id] = fp
       if (!existing.has(id)) {
         existing.set(id, {
