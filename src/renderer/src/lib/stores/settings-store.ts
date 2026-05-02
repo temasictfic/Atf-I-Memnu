@@ -21,6 +21,12 @@ const defaultDatabases: DatabaseConfig[] = [
 
 interface SettingsState {
   settings: AppSettings
+  // True once loadSettings has finished (success or failure). Mutators
+  // gate the autosave on this flag so user edits made before the initial
+  // load resolves don't get persisted as partial-defaults; the load's
+  // set() will overwrite with server values, and from then on edits
+  // autosave normally.
+  settingsLoaded: boolean
   saveStatus: 'idle' | 'saving' | 'saved' | 'error'
   loadSettings: () => Promise<void>
   saveSettings: (s: AppSettings) => Promise<void>
@@ -34,10 +40,29 @@ interface SettingsState {
   disconnectOpenaire: () => Promise<void>
 }
 
-// Auto-save settings to backend after a short debounce
+// Auto-save debounce. Two durations: a short one for cheap, idempotent
+// settings (database toggles, dropdowns) where the user wants quick
+// feedback, and a longer one for api_keys / secrets where each keystroke
+// would otherwise persist a half-typed token to disk + trigger an OpenAIRE
+// cache invalidation. Timer is single-shot — the most recent caller's
+// requested delay wins, which is the behaviour we want (a secret edit
+// resets the cooldown to the longer interval).
+const SETTINGS_AUTOSAVE_DEBOUNCE_MS = 500
+const SECRETS_AUTOSAVE_DEBOUNCE_MS = 1500
+
 let _saveTimer: ReturnType<typeof setTimeout> | null = null
 let _savedTimer: ReturnType<typeof setTimeout> | null = null
-function _debouncedSave(get: () => SettingsState) {
+function _debouncedSave(
+  get: () => SettingsState,
+  delayMs: number = SETTINGS_AUTOSAVE_DEBOUNCE_MS,
+) {
+  // Skip autosave entirely until the initial load has resolved. Without
+  // this, a user edit made during the load's in-flight window would race
+  // with the load's set({ settings: s }) and the server's response could
+  // either overwrite the user's edit (if it lands second) or persist a
+  // mostly-default settings object (if the save fires first).
+  if (!get().settingsLoaded) return
+
   if (_saveTimer) clearTimeout(_saveTimer)
   if (_savedTimer) clearTimeout(_savedTimer)
   useSettingsStore.setState({ saveStatus: 'saving' })
@@ -51,11 +76,12 @@ function _debouncedSave(get: () => SettingsState) {
       useSettingsStore.setState({ saveStatus: 'error' })
       _savedTimer = setTimeout(() => useSettingsStore.setState({ saveStatus: 'idle' }), SETTINGS_ERROR_FLASH_MS)
     }
-  }, 500)
+  }, delayMs)
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   saveStatus: 'idle' as const,
+  settingsLoaded: false,
   settings: {
     annotated_pdf_dir: '',
     databases: defaultDatabases,
@@ -71,14 +97,20 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   loadSettings: async () => {
+    // Idempotent: subsequent calls after the first successful load are
+    // no-ops. Stops a remount or duplicate caller from clobbering live
+    // user edits with a stale server snapshot.
+    if (get().settingsLoaded) return
     try {
       const s = await api.getSettings()
-      set({ settings: s })
+      set({ settings: s, settingsLoaded: true })
       if (s.language && i18n.language !== s.language) {
         i18n.changeLanguage(s.language)
       }
     } catch {
-      // Use defaults
+      // Mark loaded anyway so autosave can fire — otherwise a one-time
+      // backend hiccup leaves the form silently un-savable.
+      set({ settingsLoaded: true })
     }
   },
 
@@ -151,7 +183,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         api_keys: { ...(state.settings.api_keys || {}), [key]: value },
       },
     }))
-    _debouncedSave(get)
+    // Longer debounce on secrets so a typing burst doesn't persist a
+    // dozen partial-key states to disk (and, for OpenAIRE, doesn't keep
+    // re-invalidating the access-token cache between keystrokes).
+    _debouncedSave(get, SECRETS_AUTOSAVE_DEBOUNCE_MS)
   },
 
   connectOpenaire: async (refreshToken: string) => {

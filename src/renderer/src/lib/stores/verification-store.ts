@@ -398,6 +398,20 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
     }),
 
   startVerification: async (pdfIds) => {
+    // Snapshot the pieces of state we're about to mutate optimistically so
+    // we can roll back if the backend call fails. Without this, a network
+    // error on api.verifyBatch leaves every targeted source stuck on
+    // status='in_progress' with no way to recover short of a page reload.
+    const rollback = (() => {
+      const s = get()
+      return {
+        summaries: s.summaries,
+        sourceProgress: s.sourceProgress,
+        resultsByPdf: s.resultsByPdf,
+        cancelledSourceIds: s.cancelledSourceIds,
+        priorResultsByPdf: s.priorResultsByPdf,
+      }
+    })()
     try {
       const { verifyTexts, enabledSources, sourceOrder } = get()
       const texts: Record<string, string> = {}
@@ -499,10 +513,20 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       startPolling(pdfIds, response.job_id)
     } catch (e) {
       console.error('Failed to start verification:', e)
+      set(rollback)
     }
   },
 
   startVerificationNonHighForPdf: async (pdfId) => {
+    const rollback = (() => {
+      const s = get()
+      return {
+        summaries: s.summaries,
+        sourceProgress: s.sourceProgress,
+        resultsByPdf: s.resultsByPdf,
+        priorResultsByPdf: s.priorResultsByPdf,
+      }
+    })()
     try {
       const { verifyTexts, enabledSources, sourceOrder, resultsByPdf } = get()
       const texts: Record<string, string> = {}
@@ -602,10 +626,20 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       startPolling([pdfId], response.job_id)
     } catch (e) {
       console.error('Failed to start non-high PDF verification:', e)
+      set(rollback)
     }
   },
 
   reverifySource: async (pdfId, sourceId, text) => {
+    const rollback = (() => {
+      const s = get()
+      return {
+        resultsByPdf: s.resultsByPdf,
+        sourceProgress: s.sourceProgress,
+        cancelledSourceIds: s.cancelledSourceIds,
+        priorResultsByPdf: s.priorResultsByPdf,
+      }
+    })()
     try {
       // Init a mini batch for single verify logging
       initVerifyBatch(1, 1)
@@ -654,6 +688,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       await api.verifySource(pdfId, sourceId, sanitizeSourceText(text ?? ''))
     } catch (e) {
       console.error('Failed to verify source:', e)
+      set(rollback)
     }
   },
 

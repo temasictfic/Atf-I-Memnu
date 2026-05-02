@@ -11,6 +11,10 @@ class WebSocketClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private url = ''
   private _connected = false
+  // Set by disconnect() so the next onclose doesn't kick off a reconnect.
+  // A subsequent connect() resets it. Without this, app teardown / explicit
+  // disconnect attempts would race against the auto-reconnect timer.
+  private intentionalClose = false
 
   get connected(): boolean {
     return this._connected
@@ -19,6 +23,7 @@ class WebSocketClient {
   connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return
 
+    this.intentionalClose = false
     void this.connectInternal()
   }
 
@@ -47,7 +52,9 @@ class WebSocketClient {
         console.log('%c[WS] Disconnected', 'color: #ef4444; font-weight: bold', `code=${ev.code}`)
         this._connected = false
         this.emit('ws:disconnected', {})
-        this.scheduleReconnect()
+        if (!this.intentionalClose) {
+          this.scheduleReconnect()
+        }
       }
 
       this.ws.onerror = (err) => {
@@ -56,7 +63,9 @@ class WebSocketClient {
       }
     } catch (e) {
       console.error('[WS] Connection failed:', e)
-      this.scheduleReconnect()
+      if (!this.intentionalClose) {
+        this.scheduleReconnect()
+      }
     }
   }
 
@@ -90,6 +99,7 @@ class WebSocketClient {
   }
 
   disconnect(): void {
+    this.intentionalClose = true
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
