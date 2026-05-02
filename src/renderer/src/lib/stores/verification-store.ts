@@ -849,14 +849,20 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         let changed = false
         for (const sourceId of Object.keys(pdfResults)) {
           if (pdfResults[sourceId].status === 'in_progress') {
-            // Restore the pre-rerun snapshot if one exists; otherwise fall
-            // back to the original status='low' behaviour.
             const snapshot = pdfPriorSnapshot[sourceId]
             if (snapshot) {
               pdfResults[sourceId] = snapshot
               delete pdfPriorSnapshot[sourceId]
             } else {
-              pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'low' as VerifyStatus }
+              // First-time verify cancelled before this source produced any
+              // result — drop the optimistic in_progress entry entirely so
+              // the row reads as unverified, matching the disk state on
+              // restart (the orchestrator never persisted an entry because
+              // _verify_source never ran far enough). The previous 'low'
+              // fallback rendered as low/fabricated due to the missing
+              // decision_tag, which mis-represented sources the user
+              // explicitly cancelled before they ever started.
+              delete pdfResults[sourceId]
             }
             newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
             nextCancelled.add(sourceId)
@@ -903,15 +909,17 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       for (const sourceId of allSourceIds) {
         nextCancelled.add(sourceId)
         if (pdfResults[sourceId]?.status === 'in_progress') {
-          // Restore the pre-rerun snapshot if one exists so the row colour
+          // Restore the pre-rerun snapshot when one exists so the row colour
           // and decision tag match what they looked like before the re-run.
-          // Without a snapshot (first-time verification) fall back to 'low'.
+          // For first-time verifies (no snapshot) drop the optimistic entry
+          // entirely so the row reads as unverified — see the matching
+          // comment in cancelAll for why we no longer fall back to 'low'.
           const snapshot = pdfPriorSnapshot[sourceId]
           if (snapshot) {
             pdfResults[sourceId] = snapshot
             delete pdfPriorSnapshot[sourceId]
           } else {
-            pdfResults[sourceId] = { ...pdfResults[sourceId], status: 'low' as VerifyStatus }
+            delete pdfResults[sourceId]
           }
           newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
           changed = true
@@ -956,18 +964,20 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       for (const pdfId of Object.keys(newResults)) {
         const pdfResults = newResults[pdfId]
         if (pdfResults[sourceId]?.status === 'in_progress') {
-          // Restore from snapshot if available; otherwise fall back to 'low'.
+          // Restore from snapshot when available; otherwise drop the
+          // optimistic entry entirely so the row reads as unverified
+          // (see cancelAll comment for the rationale).
           const snapshot = state.priorResultsByPdf[pdfId]?.[sourceId]
-          const replacement = snapshot
-            ? snapshot
-            : { ...pdfResults[sourceId], status: 'low' as VerifyStatus }
-          newResults[pdfId] = { ...pdfResults, [sourceId]: replacement }
-          newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
           if (snapshot) {
+            newResults[pdfId] = { ...pdfResults, [sourceId]: snapshot }
             const pdfPriorSnapshot = { ...(state.priorResultsByPdf[pdfId] ?? {}) }
             delete pdfPriorSnapshot[sourceId]
             nextPriorResults = { ...state.priorResultsByPdf, [pdfId]: pdfPriorSnapshot }
+          } else {
+            const { [sourceId]: _dropped, ...rest } = pdfResults
+            newResults[pdfId] = rest
           }
+          newProgress[sourceId] = { currentDb: null, checkedDbs: newProgress[sourceId]?.checkedDbs ?? [] }
           targetPdfId = pdfId
           break
         }
@@ -1181,17 +1191,25 @@ export function initVerificationListeners(): () => void {
       const sourceId = data.source_id as string
       const status = data.status as string
 
-      // For cancelled sources, still accept verify_source_done — the backend's
-      // finally block sends real partial results that are more accurate than
-      // the optimistic low we set client-side. Remove from cancelled set
-      // so the final status from backend takes precedence.
-      const wasCancelled = useVerificationStore.getState().cancelledSourceIds.has(sourceId)
-      if (wasCancelled) {
-        useVerificationStore.setState(state => {
-          const next = new Set(state.cancelledSourceIds)
-          next.delete(sourceId)
-          return { cancelledSourceIds: next }
-        })
+      // Cancel handlers already restored the correct UI state (snapshot for
+      // re-runs; entry deleted for first-time verifies). The backend's late
+      // verify_source_done from _finalize_result carries a partial-pass
+      // scoring (typically low/fabricated) that is strictly worse, so ignore
+      // it. Resolve the in-progress dot and bail. Don't remove sourceId from
+      // cancelledSourceIds — startVerification / reverifySource / reverifyPdf
+      // clear it themselves on the next run, and leaving it set means
+      // subsequent late events for this run also drop.
+      if (useVerificationStore.getState().cancelledSourceIds.has(sourceId)) {
+        useVerificationStore.setState(state => ({
+          sourceProgress: {
+            ...state.sourceProgress,
+            [sourceId]: {
+              currentDb: null,
+              checkedDbs: state.sourceProgress[sourceId]?.checkedDbs ?? [],
+            },
+          },
+        }))
+        return
       }
 
       // Buffer logging
