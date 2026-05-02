@@ -83,6 +83,7 @@ export default function VerificationPage() {
   const sourcesByPdf = useSourcesStore(s => s.sourcesByPdf)
 
   const resultsByPdf = useVerificationStore(s => s.resultsByPdf)
+  const priorResultsByPdf = useVerificationStore(s => s.priorResultsByPdf)
   const summaries = useVerificationStore(s => s.summaries)
   const sourceProgress = useVerificationStore(s => s.sourceProgress)
   const selectedSourceId = useVerificationStore(s => s.selectedSourceId)
@@ -125,19 +126,6 @@ export default function VerificationPage() {
   // Cross-PDF right-click jump: remembers the target source to select+scroll
   // after selectPdf swaps the card list.
   const pendingJumpRef = useRef<{ pdfId: string; sourceId: string } | null>(null)
-  // Snapshot of the left-panel count pills captured whenever a PDF finishes a
-  // complete verification run. While a re-verify is in flight on a PDF that
-  // already has a complete snapshot, we render this snapshot instead of the
-  // live (in-progress, decrementing) counts so the user's source point
-  // doesn't jitter until the new run finishes or is stopped.
-  const frozenPdfCountsRef = useRef<Record<string, {
-    high: number
-    medium: number
-    low: number
-    decisionValid: number
-    decisionCitation: number
-    decisionFabricated: number
-  }>>({})
   const currentSummary = useMemo(() => (effectivePdfId ? summaries[effectivePdfId] : undefined), [summaries, effectivePdfId])
   const orderedSourceIds = useMemo(() => (effectivePdfId ? (sourceOrder[effectivePdfId] ?? []) : []), [sourceOrder, effectivePdfId])
 
@@ -326,35 +314,61 @@ export default function VerificationPage() {
   // --- Left panel sorting (persisted in store) ---
   const { togglePdfSort } = useVerificationStore.getState()
 
-  // Per-PDF decision counts, computed from the in-memory results map.
-  // Kept in sync with the left-panel count pills and the new decision sorts.
-  const decisionCountsByPdf = useMemo(() => {
-    const out: Record<string, { valid: number; citation: number; fabricated: number }> = {}
+  // Per-PDF display counts for both match (high/medium/low) and decision
+  // (valid/citation/fabricated) pills. For sources currently in_progress,
+  // fall back to their priorResultsByPdf snapshot if one exists — this
+  // makes counts update smoothly during a re-verify of a partially or
+  // fully verified PDF: each completing source replaces its snapshot's
+  // contribution with its new result, instead of dragging the totals to
+  // zero on optimistic in_progress and climbing back up. For first-time
+  // verifies (no snapshot), in_progress sources contribute nothing,
+  // matching the previous live-from-summary behaviour.
+  const displayCountsByPdf = useMemo(() => {
+    const out: Record<string, {
+      high: number
+      medium: number
+      low: number
+      valid: number
+      citation: number
+      fabricated: number
+    }> = {}
     for (const pdfId of Object.keys(resultsByPdf)) {
-      let v = 0, c = 0, f = 0
-      for (const r of Object.values(resultsByPdf[pdfId] ?? {})) {
-        // Skip sources still mid-verification — they'd otherwise get
-        // classified as Fabricated before the best match lands.
-        if (r.status === 'in_progress' || r.status === 'pending') continue
-        // Cancelling a Verify All run flips every in-flight source to
-        // low optimistically. Sources the backend never got to touch
-        // arrive with an empty databases_searched and no best_match, which
-        // would otherwise inflate the Fabricated pill to the full ref count
-        // until the PDF is reopened and loadResults re-syncs.
+      const pdfResults = resultsByPdf[pdfId] ?? {}
+      const priorMap = priorResultsByPdf[pdfId] ?? {}
+      let high = 0, medium = 0, low = 0
+      let valid = 0, citation = 0, fabricated = 0
+      for (const [sourceId, r] of Object.entries(pdfResults)) {
+        // Pick the "effective" result: settled current result wins,
+        // otherwise the pre-rerun snapshot, otherwise nothing.
+        let eff: typeof r | undefined
+        if (r.status === 'high' || r.status === 'medium' || r.status === 'low') {
+          eff = r
+        } else if (r.status === 'in_progress' && priorMap[sourceId]) {
+          eff = priorMap[sourceId]
+        }
+        if (!eff) continue
+        if (eff.status === 'high') high++
+        else if (eff.status === 'medium') medium++
+        else if (eff.status === 'low') low++
+        // Skip cancelled-with-no-data rows so the Fabricated pill doesn't
+        // inflate to the full ref count after a Stop on a partially-completed
+        // run. Pre-Edit-A cache files can still carry these; post-Edit-A
+        // cancel deletes the entry so this guard becomes redundant for new
+        // data but stays safe for the rest.
         if (
-          r.status === 'low'
-          && !r.best_match
-          && (r.databases_searched?.length ?? 0) === 0
+          eff.status === 'low'
+          && !eff.best_match
+          && (eff.databases_searched?.length ?? 0) === 0
         ) continue
-        const tt = effectiveDecisionTag(r)
-        if (tt === 'valid') v++
-        else if (tt === 'citation') c++
-        else if (tt === 'fabricated') f++
+        const tt = effectiveDecisionTag(eff)
+        if (tt === 'valid') valid++
+        else if (tt === 'citation') citation++
+        else if (tt === 'fabricated') fabricated++
       }
-      out[pdfId] = { valid: v, citation: c, fabricated: f }
+      out[pdfId] = { high, medium, low, valid, citation, fabricated }
     }
     return out
-  }, [resultsByPdf])
+  }, [resultsByPdf, priorResultsByPdf])
 
   const sortedPdfs = useMemo(() => {
     // Free mode: read order from pdfOrder, append any new PDFs at the end,
@@ -373,24 +387,11 @@ export default function VerificationPage() {
     }
     const list = [...pdfs]
     const dir = pdfSortAsc ? 1 : -1
-    // Mirror of the render-time freeze: if a PDF is currently re-verifying
-    // and we have a snapshot from its last complete run, sort by that
-    // snapshot so the row doesn't drop to the bottom and climb back up as
-    // the live counts decrement and recover.
+    // displayCountsByPdf already accounts for the snapshot fallback during
+    // a re-verify, so the row no longer drops to the bottom and climbs
+    // back as live counts decrement and recover — they update smoothly.
     const getSortValues = (pdfId: string) => {
-      const pdfResults = resultsByPdf[pdfId]
-      const verifying = pdfResults ? Object.values(pdfResults).some(r => r.status === 'in_progress') : false
-      const frozen = verifying ? frozenPdfCountsRef.current[pdfId] : undefined
-      const s = summaries[pdfId]
-      const t = decisionCountsByPdf[pdfId] ?? { valid: 0, citation: 0, fabricated: 0 }
-      return {
-        high: frozen ? frozen.high : (s?.high ?? 0),
-        medium: frozen ? frozen.medium : (s?.medium ?? 0),
-        low: frozen ? frozen.low : (s?.low ?? 0),
-        valid: frozen ? frozen.decisionValid : t.valid,
-        citation: frozen ? frozen.decisionCitation : t.citation,
-        fabricated: frozen ? frozen.decisionFabricated : t.fabricated,
-      }
+      return displayCountsByPdf[pdfId] ?? { high: 0, medium: 0, low: 0, valid: 0, citation: 0, fabricated: 0 }
     }
     list.sort((a, b) => {
       const sa = summaries[a.id]
@@ -424,7 +425,7 @@ export default function VerificationPage() {
       return 0
     })
     return list
-  }, [pdfs, pdfSortKey, pdfSortAsc, pdfOrder, summaries, decisionCountsByPdf, resultsByPdf])
+  }, [pdfs, pdfSortKey, pdfSortAsc, pdfOrder, summaries, displayCountsByPdf, resultsByPdf])
 
   // --- Center panel sorting (persisted in store) ---
   const { toggleCardSort } = useVerificationStore.getState()
@@ -628,28 +629,6 @@ export default function VerificationPage() {
     if (!pdfResults) return false
     return Object.values(pdfResults).some(r => r.status === 'in_progress')
   }, [resultsByPdf])
-
-  // Refresh the frozen snapshot whenever a PDF is idle AND its counts cover
-  // the full source total — that's the moment the pills show a complete
-  // run. The snapshot is then rendered in place of the live counts while a
-  // re-verify is running (see the left-panel render below).
-  useEffect(() => {
-    for (const pdf of pdfs) {
-      if (isPdfVerifying(pdf.id)) continue
-      const summary = summaries[pdf.id]
-      if (!summary || summary.total <= 0) continue
-      if (summary.high + summary.medium + summary.low < summary.total) continue
-      const decision = decisionCountsByPdf[pdf.id] ?? { valid: 0, citation: 0, fabricated: 0 }
-      frozenPdfCountsRef.current[pdf.id] = {
-        high: summary.high,
-        medium: summary.medium,
-        low: summary.low,
-        decisionValid: decision.valid,
-        decisionCitation: decision.citation,
-        decisionFabricated: decision.fabricated,
-      }
-    }
-  }, [pdfs, summaries, decisionCountsByPdf, isPdfVerifying])
 
   // Actions
   async function handleStartOrCancel(mode: 'all' | 'nonHigh' = 'all') {
@@ -1983,24 +1962,20 @@ export default function VerificationPage() {
               const pdfVerifying = isPdfVerifying(pdf.id)
               const pdfResults = resultsByPdf[pdf.id] ?? {}
               const hasPdfResults = Object.keys(pdfResults).length > 0
-              let decisionValid = 0, decisionCitation = 0, decisionFabricated = 0
-              for (const r of Object.values(pdfResults)) {
-                if (r.status === 'in_progress' || r.status === 'pending') continue
-                const tt = effectiveDecisionTag(r)
-                if (tt === 'valid') decisionValid++
-                else if (tt === 'citation') decisionCitation++
-                else if (tt === 'fabricated') decisionFabricated++
-              }
-              // While re-verifying a PDF that already had a complete run,
-              // hold the pills at the prior snapshot so they don't drop to
-              // zero and climb back up during the new run.
-              const frozen = pdfVerifying ? frozenPdfCountsRef.current[pdf.id] : undefined
-              const dispHigh = frozen ? frozen.high : summary?.high ?? 0
-              const dispMedium = frozen ? frozen.medium : summary?.medium ?? 0
-              const dispLow = frozen ? frozen.low : summary?.low ?? 0
-              const dispDecisionValid = frozen ? frozen.decisionValid : decisionValid
-              const dispDecisionCitation = frozen ? frozen.decisionCitation : decisionCitation
-              const dispDecisionFabricated = frozen ? frozen.decisionFabricated : decisionFabricated
+              // displayCountsByPdf folds in priorResultsByPdf snapshots so
+              // the pills update smoothly during a re-verify of an already-
+              // (partly-)settled PDF: each completing source replaces its
+              // snapshot with the new result rather than dragging the
+              // totals to zero on optimistic in_progress and climbing back
+              // up. For first-time verifies (no snapshot) it behaves
+              // identically to the old summary-derived counts.
+              const counts = displayCountsByPdf[pdf.id] ?? { high: 0, medium: 0, low: 0, valid: 0, citation: 0, fabricated: 0 }
+              const dispHigh = counts.high
+              const dispMedium = counts.medium
+              const dispLow = counts.low
+              const dispDecisionValid = counts.valid
+              const dispDecisionCitation = counts.citation
+              const dispDecisionFabricated = counts.fabricated
               nodes.push(
                 <div
                   key={pdf.id}
@@ -2047,12 +2022,12 @@ export default function VerificationPage() {
                       title={isPdfVerifying(pdf.id) ? t('verification.stopVerification') : t('verification.verifyThisPdf')}
                     >{isPdfVerifying(pdf.id) ? '\u25A0' : '\u25B6'}</button>
                   </div>
-                  {(summary || frozen) && (
+                  {(summary || hasPdfResults) && (
                     <div className={styles['verify-counts']}>
                       <span className={`${styles['vc']} ${styles['vc-high']}`}>{dispHigh}</span>
                       <span className={`${styles['vc']} ${styles['vc-medium']}`}>{dispMedium}</span>
                       <span className={`${styles['vc']} ${styles['vc-low']}`}>{dispLow}</span>
-                      {(hasPdfResults || frozen) && (
+                      {hasPdfResults && (
                         <>
                           <span className={styles['vc-divider']} aria-hidden="true" />
                           <span className={`${styles['vc']} ${styles['vc-valid']}`}>{dispDecisionValid}</span>
