@@ -54,6 +54,9 @@ async function findAvailablePort(): Promise<number> {
 }
 
 function getBackendLaunchCommand(port: number): { command: string, args: string[] } {
+  // Always pass --host 127.0.0.1 explicitly so the backend default and the
+  // launcher agree, even if someone changes the default later. This is a
+  // desktop companion backend; it should never bind beyond loopback.
   if (app.isPackaged) {
     const backendExe = join(getBackendPath(), 'atfi-memnu-backend.exe')
     if (!existsSync(backendExe)) {
@@ -61,7 +64,7 @@ function getBackendLaunchCommand(port: number): { command: string, args: string[
     }
     return {
       command: backendExe,
-      args: ['--port', String(port)]
+      args: ['--host', '127.0.0.1', '--port', String(port)]
     }
   }
 
@@ -74,7 +77,7 @@ function getBackendLaunchCommand(port: number): { command: string, args: string[
   }
   return {
     command: venvPython,
-    args: ['-u', '-X', 'utf8', mainPy, '--port', String(port)]
+    args: ['-u', '-X', 'utf8', mainPy, '--host', '127.0.0.1', '--port', String(port)]
   }
 }
 

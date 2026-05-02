@@ -37,7 +37,11 @@ def _default_ner_local_model_path() -> str:
 
 class Settings(BaseSettings):
     port: int = 0
-    host: str = "0.0.0.0"
+    # Loopback only: this is a desktop companion backend, not a network
+    # service. Binding 0.0.0.0 would expose it to the LAN whenever the
+    # firewall permits it, plus enable trivial DoS via /api/shutdown from
+    # any same-LAN host.
+    host: str = "127.0.0.1"
     output_dir: str = _default_output_dir()
 
     # Search
