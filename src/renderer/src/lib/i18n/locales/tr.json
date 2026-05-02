@@ -92,8 +92,8 @@
       "annotatedPdfLabel": "PDF dışa aktarma konumu",
       "annotatedPdfDesc": "Not eklenmiş PDF'ler ve doğrulama raporları kayıt konumu",
       "annotatedPdfPlaceholder": "(her seferinde sor)",
-      "reportBibliographicLabel": "En iyi eşleşmede daha fazla bilgi göster",
-      "reportBibliographicDesc": "Doğrulama raporundaki en iyi eşleşme kartında künye bilgileri bloğunu (cilt, sayfa, yayınevi, ISSN vb.) yazdır"
+      "reportBibliographicLabel": "En yüksek eşleşmede daha fazla bilgi göster",
+      "reportBibliographicDesc": "Doğrulama raporundaki en yüksek eşleşme kartında künye bilgileri bloğunu (cilt, sayfa, yayınevi, ISSN vb.) yazdır"
     },
     "cache": {
       "title": "Önbellek",

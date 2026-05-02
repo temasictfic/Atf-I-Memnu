@@ -92,8 +92,8 @@
       "annotatedPdfLabel": "PDF export folder",
       "annotatedPdfDesc": "Save location for annotated PDFs and verification reports",
       "annotatedPdfPlaceholder": "(prompt each time)",
-      "reportBibliographicLabel": "Include more info in best match",
-      "reportBibliographicDesc": "Print the bibliographic details block (volume, pages, publisher, ISSN, etc.) under each best match card in the verification report"
+      "reportBibliographicLabel": "Include more info in highest match",
+      "reportBibliographicDesc": "Print the bibliographic details block (volume, pages, publisher, ISSN, etc.) under each highest match card in the verification report"
     },
     "cache": {
       "title": "Cache",
