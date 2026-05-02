@@ -44,7 +44,7 @@
     "apiKeys": {
       "title": "API Keys",
       "description": "Optional API keys for improved rate limits and access",
-      "politeEmailLabel": "Polite Pool Email for Crossref, arXiv, and OpenAlex",
+      "politeEmailLabel": "Polite Pool Email for Crossref, arXiv, TRDizin and OpenAlex",
       "politeEmailDesc": "Your contact email. Sent to Crossref, arXiv, and OpenAlex",
       "politeEmailPlaceholder": "Optional - you@example.com",
       "semanticScholarLabel": "Semantic Scholar API Key",

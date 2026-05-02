@@ -44,7 +44,7 @@
     "apiKeys": {
       "title": "API Anahtarları",
       "description": "Geliştirilmiş istek limitleri ve erişim için isteğe bağlı API anahtarları",
-      "politeEmailLabel": "Crossref, arXiv ve OpenAlex için Polite Pool e-postası",
+      "politeEmailLabel": "Crossref, arXiv, TRDizin ve OpenAlex için Polite Pool e-postası",
       "politeEmailDesc": "İletişim e-postanız. Crossref, arXiv ve OpenAlex'e gönderilir",
       "politeEmailPlaceholder": "İsteğe bağlı — you@example.com",
       "semanticScholarLabel": "Semantic Scholar API Anahtarı",
