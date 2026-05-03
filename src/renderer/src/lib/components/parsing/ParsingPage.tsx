@@ -521,6 +521,14 @@ export default function ParsingPage() {
       // the fit-to-width scale before the browser paints — so there is no
       // visible "100% then fit" jump when switching PDFs.
       pendingFitRef.current = true;
+      // Reset virtualization scroll state so page 0 is inside the visible
+      // viewport on first paint. Without this, stale scrollTop from the
+      // previous PDF can leave page 0 outside visiblePageIndices, so
+      // PdfPageCanvas never mounts while source-rect overlays render
+      // unconditionally — leaving yellow boxes on a blank background until
+      // the user scrolls.
+      if (viewerRef.current) viewerRef.current.scrollTop = 0;
+      setScrollTop(0);
       setPages(pageDataList);
       setPdfDoc(entry.doc);
 
