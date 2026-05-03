@@ -31,17 +31,18 @@ The whole UI is fully localized in **English** and **Turkish**, switchable from 
 
 ## Supported verifiers
 
-**Tier 1 — parallel API search (10 databases):**
+**Tier 1 — parallel API search (11 databases):**
 
 - [Crossref](https://www.crossref.org/) · [OpenAlex](https://openalex.org/) · [OpenAIRE](https://explore.openaire.eu/) · [Europe PMC](https://europepmc.org/)
 - [arXiv](https://arxiv.org/) · [PubMed](https://pubmed.ncbi.nlm.nih.gov/) · [TR Dizin](https://trdizin.gov.tr/)
 - [Open Library](https://openlibrary.org/) · [Semantic Scholar](https://www.semanticscholar.org/) · [BASE](https://www.base-search.net/) (Bielefeld Academic Search Engine — strong on non-English / open-access repository sources)
+- [Web of Science](https://www.webofscience.com/) (Clarivate WoS Starter API — opt-in, requires a free Starter or institutional Expanded API key from [developer.clarivate.com](https://developer.clarivate.com/))
 
 **Tier 2 — Google Scholar scan (user-triggered):** sources that Tier 1 can't confirm can be re-checked through a hidden Electron `<webview>` against `scholar.google.com`. Real browser session (cookies + CAPTCHA handoff via overlay), tuned rate limit (4 s + jitter, slowing to 8–15 s after a CAPTCHA), top result optionally enriched with the APA citation string before being scored against the source.
 
 All Tier 1 verifiers share a single pooled `aiohttp` session and run behind a per-host token-bucket rate limiter tuned for each provider's published caps (e.g. arXiv 1 req / 3 s, OpenAlex polite-pool, Crossref 1 req/s). 429 responses temporarily "park" the host with a dynamic retry window, and the orchestrator does a final retry pass for parked hosts before returning. Each verifier returns up to its top 5 candidates plus a search URL; the orchestrator merges them, picks the best, and resolves the source's lifecycle from `pending` → `in_progress` → one of the three `high` / `medium` / `low` status bands.
 
-The Settings page accepts API credentials for **OpenAlex**, **Semantic Scholar**, **PubMed**, **BASE** (IP-allowlist contact identifier), and an **OpenAIRE** refresh token. OpenAIRE tokens expire 30 days after issue; the UI shows a warning starting 7 days before expiry. A polite-pool email (used by Crossref / arXiv / OpenAlex for attribution) can also be set there.
+The Settings page accepts API credentials for **OpenAlex**, **Semantic Scholar**, **PubMed**, **BASE** (IP-allowlist contact identifier), **Web of Science** (Clarivate Starter / Expanded API key), and an **OpenAIRE** refresh token. OpenAIRE tokens expire 30 days after issue; the UI shows a warning starting 7 days before expiry. A polite-pool email (used by Crossref / arXiv / OpenAlex for attribution) can also be set there.
 
 ## Scoring & Decisions
 
