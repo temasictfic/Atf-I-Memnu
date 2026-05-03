@@ -10,11 +10,18 @@ backend_dir = project_root
 # Hidden imports for servers and ML runtime. Uvicorn/fastapi use dynamic
 # import strings; onnxruntime/tokenizers are safer to force-include so
 # PyInstaller's static analysis doesn't miss native module loaders.
+# `onnxruntime.quantization` hard-imports `onnx` (a model-conversion dep we
+# don't ship), so collect_submodules emits a warning and would try to bundle
+# it. We only use onnxruntime for inference — drop the quantization subtree.
+onnxruntime_modules = [
+    m for m in collect_submodules("onnxruntime")
+    if not m.startswith("onnxruntime.quantization")
+]
 hiddenimports = sorted(
     set(
         collect_submodules("uvicorn")
         + collect_submodules("fastapi")
-        + collect_submodules("onnxruntime")
+        + onnxruntime_modules
         + ["tokenizers"]
     )
 )
@@ -60,6 +67,8 @@ excludes = [
     "optimum",
     "optimum.onnxruntime",
     "optimum_onnx",
+    "onnx",
+    "onnxruntime.quantization",
     # scipy is pulled in transitively (no `import scipy` in our code).
     # Excluding it drops scipy/optimize/_highspy and scipy.libs' OpenBLAS
     # (~45-50 MB combined). numpy keeps its own bundled OpenBLAS in
