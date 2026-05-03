@@ -56,6 +56,9 @@
       "baseLabel": "BASE Search API",
       "baseDesc": "Apply for API key via BASE's contact form. Choose \"Access BASE's HTTP API\" when filling the form",
       "requestBaseAccess": "Request HTTP API access",
+      "wosLabel": "Web of Science API Key",
+      "wosDesc": "Apply via the Clarivate Developer Portal. Institutional subscriptions unlock the Expanded API; free registration grants Starter access",
+      "requestWosKey": "Request a Clarivate key",
       "optional": "Optional"
     },
     "openaire": {

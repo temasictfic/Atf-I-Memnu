@@ -17,6 +17,7 @@ const defaultDatabases: DatabaseConfig[] = [
   { id: 'semantic_scholar', name: 'Semantic Scholar', enabled: true },
   { id: 'trdizin', name: 'TRDizin', enabled: true },
   { id: 'open_library', name: 'Open Library', enabled: true },
+  { id: 'wos', name: 'Web of Science', enabled: false },
 ]
 
 interface SettingsState {

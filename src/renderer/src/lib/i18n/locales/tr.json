@@ -56,6 +56,9 @@
       "baseLabel": "BASE Arama API'si",
       "baseDesc": "BASE'in iletişim formundan API anahtarı için başvurun. Formu doldururken mutlaka \"Access BASE's HTTP API\" seçeneğini işaretleyin",
       "requestBaseAccess": "HTTP API erişimi iste",
+      "wosLabel": "Web of Science API Anahtarı",
+      "wosDesc": "Clarivate Developer Portal üzerinden başvurun. Kurumsal abonelik Expanded API'ye, ücretsiz kayıt Starter API'ye erişim sağlar",
+      "requestWosKey": "Clarivate'tan anahtar iste",
       "optional": "İsteğe bağlı"
     },
     "openaire": {

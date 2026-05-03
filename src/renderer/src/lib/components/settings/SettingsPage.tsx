@@ -14,6 +14,7 @@ const defaultDatabaseIds = new Set([
   'trdizin',
   'open_library',
   'semantic_scholar',
+  'wos',
 ])
 
 const GITHUB_REPO_URL = 'https://github.com/temasictfic/Atf-I-Memnu'
@@ -309,6 +310,31 @@ export default function SettingsPage() {
               value={settings.api_keys?.base ?? ''}
               placeholder={t('settings.apiKeys.optional')}
               onChange={e => updateApiKey('base', e.target.value)}
+            />
+          </div>
+
+          <div className={styles['setting-row']}>
+            <div className={styles['setting-info']}>
+              <span className={styles['setting-label']}>{t('settings.apiKeys.wosLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.apiKeys.wosDesc')}</span>
+            </div>
+            <a
+              className={styles['request-key-link']}
+              href="https://developer.clarivate.com/"
+              onClick={handleOpenExternalLink('https://developer.clarivate.com/')}
+            >
+              {t('settings.apiKeys.requestWosKey')}
+              <svg viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M2 2h5v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </a>
+            <input
+              type="password"
+              className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
+              value={settings.api_keys?.wos ?? ''}
+              placeholder={t('settings.apiKeys.optional')}
+              onChange={e => updateApiKey('wos', e.target.value)}
             />
           </div>
         </section>

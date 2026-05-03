@@ -49,6 +49,7 @@ _DB_ID_TO_HOST = {
     "pubmed": "eutils.ncbi.nlm.nih.gov",
     "open_library": "openlibrary.org",
     "base": "api.base-search.net",
+    "wos": "api.clarivate.com",
 }
 
 
@@ -449,6 +450,7 @@ async def _run_tier1_apis(
     from verifiers.pubmed import search as pubmed_search
     from verifiers.open_library import search as open_library_search
     from verifiers.base import search as base_search
+    from verifiers.wos import search as wos_search
 
     # Map database id → (display name, search function)
     verifier_registry = {
@@ -462,6 +464,7 @@ async def _run_tier1_apis(
         "pubmed": ("PubMed", pubmed_search),
         "open_library": ("Open Library", open_library_search),
         "base": ("BASE", base_search),
+        "wos": ("Web of Science", wos_search),
     }
 
     # Build verifier list in the order defined by user settings. The
@@ -507,6 +510,7 @@ async def _run_tier1_apis(
                     "semantic_scholar": "semantic_scholar",
                     "pubmed": "pubmed",
                     "base": "base",
+                    "wos": "wos",
                 }
                 api_key_name = api_key_names.get(db_id)
                 api_key = (api_keys.get(api_key_name, "") or "").strip() if api_key_name else None

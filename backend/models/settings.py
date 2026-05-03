@@ -57,6 +57,10 @@ class AppSettings(BaseModel):
                 # ("Access BASE's HTTP API"), so it's off by default. Users opt in
                 # from Settings once they have allowlist access.
                 DatabaseConfig(id="base", name="BASE", enabled=False),
+                # Web of Science requires a Clarivate API key (Starter free token
+                # or Expanded institutional key from developer.clarivate.com), so
+                # off by default — same opt-in pattern as BASE.
+                DatabaseConfig(id="wos", name="Web of Science", enabled=False),
             ],
             search_timeout=app_config.search_timeout,
             max_concurrent_apis=app_config.max_concurrent_apis,
