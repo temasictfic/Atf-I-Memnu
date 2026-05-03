@@ -1,3 +1,30 @@
+<#
+.SYNOPSIS
+  Builds the Python backend into a standalone Windows executable via PyInstaller.
+
+.DESCRIPTION
+  Packages the FastAPI backend in `backend/` into a single distributable folder
+  used by the Electron app.
+
+  Steps:
+    1. Verifies `uv` is on PATH (used to manage the Python environment from
+       `backend/pyproject.toml`).
+    2. Wipes any previous artifacts:
+         backend/build/pyinstaller
+         backend/dist/atfi-memnu-backend
+    3. Runs `uv run --with pyinstaller pyinstaller` against
+       `backend/atfi-memnu-backend.spec`.
+    4. Confirms `backend/dist/atfi-memnu-backend/atfi-memnu-backend.exe` exists.
+
+  This script takes no parameters. Run from the repo root or via:
+    npm run build:backend
+
+  For full help:
+    Get-Help .\scripts\build-backend.ps1 -Full
+#>
+[CmdletBinding()]
+param()
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
