@@ -119,6 +119,18 @@ def _hit_to_match(hit: dict[str, Any], source: ParsedSource, search_url: str) ->
     lang_raw = src.get("lang") or src.get("language") or ""
     language = str(lang_raw).strip().lower() if lang_raw else ""
 
+    # TRDizin nests bibliographic detail inside `issue` (an object, not a
+    # string): {"number": "2", "volume": "6", "year": "2023", ...}. The
+    # top-level `volume` field is always null — the real volume lives at
+    # issue.volume. Pull both from the nested object; fall back to the
+    # top-level keys only if the schema ever flattens them.
+    raw_issue = src.get("issue")
+    issue_obj = raw_issue if isinstance(raw_issue, dict) else {}
+    volume_raw = issue_obj.get("volume") or src.get("volume")
+    issue_raw = issue_obj.get("number") or (raw_issue if not isinstance(raw_issue, dict) else None)
+    volume = str(volume_raw).strip() if volume_raw not in (None, "") else None
+    issue = str(issue_raw).strip() if issue_raw not in (None, "") else None
+
     candidate = {
         "database": "TRDizin",
         "title": title,
@@ -128,8 +140,8 @@ def _hit_to_match(hit: dict[str, Any], source: ParsedSource, search_url: str) ->
         "journal": journal,
         "url": url,
         "search_url": search_url,
-        "volume": src.get("volume") or None,
-        "issue": src.get("issue") or None,
+        "volume": volume,
+        "issue": issue,
         "pages": pages,
         "language": language,
     }

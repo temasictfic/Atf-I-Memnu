@@ -168,6 +168,7 @@ export interface DbCheckEntry {
   name: string
   status: DbCheckStatus
   searchUrl?: string
+  errorMessage?: string
 }
 
 export interface SourceVerifyProgress {

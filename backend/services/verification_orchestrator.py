@@ -550,6 +550,7 @@ async def _run_tier1_apis(
                         "database": name,
                         "found": False,
                         "db_status": "timeout",
+                        "error_message": f"Timeout after {search_timeout}s",
                         "search_url": fallback_url,
                     })
                 except RateLimitedError as e:

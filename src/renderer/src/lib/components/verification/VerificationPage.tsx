@@ -2366,7 +2366,7 @@ export default function VerificationPage() {
                                 <span
                                   key={db}
                                   className={dotClass}
-                                  title={`${db}${check ? `: ${check.status}` : ''}`}
+                                  title={`${db}${check ? `: ${check.status}${check.errorMessage ? ` — ${check.errorMessage}` : ''}` : ''}`}
                                 />
                               )
                             })}

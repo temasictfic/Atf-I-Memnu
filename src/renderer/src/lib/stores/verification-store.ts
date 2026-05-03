@@ -1159,6 +1159,7 @@ export function initVerificationListeners(): () => void {
           searchUrl: (data.search_url as string)
             ?? ((data.match as Record<string, unknown> | undefined)?.search_url as string | undefined)
             ?? '',
+          errorMessage: (data.error_message as string | undefined) ?? undefined,
         }
 
         return {
