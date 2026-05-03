@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "build:backend": "powershell -ExecutionPolicy Bypass -File ./scripts/build-backend.ps1",
-    "release:tag": "powershell -ExecutionPolicy Bypass -File ./scripts/release.ps1",
+    "build:backend": "pwsh -ExecutionPolicy Bypass -File ./scripts/build-backend.ps1",
+    "release:tag": "pwsh -ExecutionPolicy Bypass -File ./scripts/release.ps1",
     "optimize:assets": "node scripts/optimize-assets.mjs",
     "pack": "npm run build:backend && npm run build && electron-builder --dir",
     "dist:win": "npm run build:backend && npm run build && electron-builder --win",
