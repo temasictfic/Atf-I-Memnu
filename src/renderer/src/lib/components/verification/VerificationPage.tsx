@@ -2632,16 +2632,19 @@ export default function VerificationPage() {
               </div>
             )}
 
-            {/* Hidden webview for Scholar scanner */}
-            <webview
-              ref={scholarScanWebviewRef}
-              src="about:blank"
-              partition="persist:scholar-panel"
-              {...(scholarPanelUserAgent ? ({ useragent: scholarPanelUserAgent } as Record<string, string>) : {})}
-              style={{ position: 'fixed', left: '-9999px', top: '0', width: '1280px', height: '800px', opacity: 0, pointerEvents: 'none' } as React.CSSProperties}
-            />
           </>
         )}
+        {/* Hidden webview for Scholar scanner. Mounted unconditionally
+            (sibling of the empty-state branches above) so switching PDFs
+            doesn't unmount/remount the underlying Electron guest while
+            sources are being lazy-loaded into the store. */}
+        <webview
+          ref={scholarScanWebviewRef}
+          src="about:blank"
+          partition="persist:scholar-panel"
+          {...(scholarPanelUserAgent ? ({ useragent: scholarPanelUserAgent } as Record<string, string>) : {})}
+          style={{ position: 'fixed', left: '-9999px', top: '0', width: '1280px', height: '800px', opacity: 0, pointerEvents: 'none' } as React.CSSProperties}
+        />
       </section>
 
       {/* Right Panel: Source Detail */}
