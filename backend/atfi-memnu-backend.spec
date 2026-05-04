@@ -10,14 +10,23 @@ backend_dir = project_root
 # Hidden imports for servers and ML runtime. Uvicorn/fastapi use dynamic
 # import strings; onnxruntime/tokenizers are safer to force-include so
 # PyInstaller's static analysis doesn't miss native module loaders.
-# `onnxruntime.quantization` hard-imports `onnx` (a model-conversion dep we
-# don't ship), which makes collect_submodules emit a warning when it probes
-# the submodule. We only use onnxruntime for inference, so skip the
-# quantization subtree via the `filter` arg — applied before the import
-# probe so the warning is suppressed at the source.
+# Several onnxruntime subtrees hard-import `onnx` (a model-conversion dep we
+# don't ship) or are otherwise irrelevant for pure InferenceSession use:
+# `quantization`, `backend`, `tools`, `transformers`, `training`. Probing
+# them during collect_submodules raises ModuleNotFoundError and emits a
+# warning. Filter them out before the import probe — applied via `filter`
+# so the warning is suppressed at the source. The core inference path
+# (`onnxruntime.capi`, top-level package) is preserved.
+_onnxruntime_skip_prefixes = (
+    "onnxruntime.quantization",
+    "onnxruntime.backend",
+    "onnxruntime.tools",
+    "onnxruntime.transformers",
+    "onnxruntime.training",
+)
 onnxruntime_modules = collect_submodules(
     "onnxruntime",
-    filter=lambda name: not name.startswith("onnxruntime.quantization"),
+    filter=lambda name: not name.startswith(_onnxruntime_skip_prefixes),
 )
 hiddenimports = sorted(
     set(
@@ -71,6 +80,10 @@ excludes = [
     "optimum_onnx",
     "onnx",
     "onnxruntime.quantization",
+    "onnxruntime.backend",
+    "onnxruntime.tools",
+    "onnxruntime.transformers",
+    "onnxruntime.training",
     # scipy is pulled in transitively (no `import scipy` in our code).
     # Excluding it drops scipy/optimize/_highspy and scipy.libs' OpenBLAS
     # (~45-50 MB combined). numpy keeps its own bundled OpenBLAS in
