@@ -7,6 +7,15 @@ import { CancellationToken } from 'builder-util-runtime'
 import type { ProgressInfo, UpdateInfo } from 'builder-util-runtime'
 import { startPythonBackend, stopPythonBackend, getPythonBackendPort } from './python-bridge'
 
+// Pin userData to a stable directory so renaming the installer's productName
+// in electron-builder never moves the user's settings, API keys, or saved
+// folder paths. Must run before any code reads app.getPath('userData') —
+// keep at the very top of the module, before app.whenReady() and before
+// anything that touches paths. Matches package.json#name (the historical
+// userData location since the project's first build). MUST NOT change.
+const STABLE_USERDATA_DIR = 'atfi-memnu-app'
+app.setPath('userData', join(app.getPath('appData'), STABLE_USERDATA_DIR))
+
 const isDev = !app.isPackaged
 
 // Plain-Chrome UA so Cloudflare/WAFs (e.g. IEEE Xplore) don't 418 our webviews

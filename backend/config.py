@@ -10,7 +10,13 @@ def _default_output_dir() -> str:
         return env_output
 
     if getattr(sys, "frozen", False):
-        fallback = Path.home() / "AppData" / "Roaming" / "AtfiMemnu" / "output"
+        # Mirror src/main/index.ts STABLE_USERDATA_DIR. Keep this string in
+        # sync with that constant — both must point at the same directory
+        # so the backend reads the same settings.json the renderer writes,
+        # even if the env var is somehow not propagated.
+        fallback = (
+            Path.home() / "AppData" / "Roaming" / "atfi-memnu-app" / "output"
+        )
         return str(fallback)
 
     return str(Path(__file__).resolve().parent.parent / "output")

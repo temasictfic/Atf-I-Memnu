@@ -27,11 +27,33 @@ async def get_settings():
 
 @router.put("/settings")
 async def update_settings(new_settings: AppSettings):
-    # If the user cleared or rotated the OpenAIRE refresh token via the
-    # generic settings path, drop our cached access token so the next
-    # verifier request re-exchanges against the new value.
+    previous = get_current_settings()
+
+    # Merge api_keys: never wipe an existing key with an empty incoming
+    # value. A renderer that hasn't yet received the initial GET response
+    # would otherwise autosave seed defaults (empty api_keys) and overwrite
+    # the on-disk file. Explicit removals are routed through dedicated
+    # endpoints (e.g. /settings/openaire/disconnect) which bypass this
+    # merge by calling save_settings directly.
+    merged_api_keys = dict(previous.api_keys)
+    for key, value in (new_settings.api_keys or {}).items():
+        if value:
+            merged_api_keys[key] = value
+
+    # Preserve non-empty string fields when incoming is empty — the same
+    # renderer race that empties api_keys also empties these.
+    overrides: dict = {"api_keys": merged_api_keys}
+    for field in ("annotated_pdf_dir", "polite_pool_email", "openaire_token_saved_at"):
+        incoming = getattr(new_settings, field)
+        existing = getattr(previous, field)
+        if not incoming and existing:
+            overrides[field] = existing
+
+    new_settings = new_settings.model_copy(update=overrides)
+
+    # OpenAIRE cache invalidation: compare AFTER the merge so a no-op save
+    # (incoming empty, existing preserved) doesn't trigger a refresh.
     try:
-        previous = get_current_settings()
         if previous.api_keys.get("openaire", "") != new_settings.api_keys.get(
             "openaire", ""
         ):
