@@ -100,10 +100,29 @@
   margin: 0 0 4px 0;
 }
 .section-desc {
-  font-size: 12px;
+  font-size: 11px;
   color: #a8a29e;
   margin: 0 0 16px 0;
 }
+
+/* Section heading + action-button row. Used by sections (Web of Science,
+   OpenAIRE) where the "open external portal" button conceptually belongs
+   with the section identity rather than with any one input below. The
+   inner title/desc block sits on the left, the button hugs the right. */
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.section-header-row > div { flex: 1; min-width: 0; }
+.section-header-row > div > .section-title { margin-bottom: 4px; }
+.section-header-row > div > .section-desc { margin-bottom: 0; }
+/* Drop the title's stub bottom margin when no description follows — keeps
+   title-only headers the same total height as title+desc headers because
+   the container's own 16px margin-bottom already provides the gap. */
+.section-header-row > div > .section-title:last-child { margin-bottom: 0; }
 
 .db-list {
   display: flex;
@@ -122,8 +141,14 @@
 .db-row:last-child { border-bottom: none; }
 .db-row-dragging { opacity: 0.4; }
 .db-row-over { border-top-color: #0ea5e9; }
-.db-info { flex: 1; }
-.db-name { font-size: 13px; color: #292524; display: block; }
+.db-info {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.db-name { font-size: 13px; color: #292524; }
 .db-type { font-size: 10px; color: #a8a29e; }
 .db-order {
   font-size: 11px;
@@ -229,7 +254,7 @@
   background: #fafaf9;
 }
 .setting-input:focus { border-color: #d97706; }
-.setting-input-wide { width: 200px; text-align: left; }
+.setting-input-wide { width: 220px; text-align: left; }
 
 .action-row {
   display: flex;
@@ -328,6 +353,12 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* Match the vertical breathing room that .setting-row provides in other
+     sections (10px top + 10px bottom). Without this the OpenAIRE card sits
+     flush against the section-header gap above and the section's bottom
+     padding below, making it visually 10px tighter on both edges than
+     every neighbouring section. */
+  padding: 10px 0;
 }
 .openaire-status-row {
   display: flex;
@@ -382,7 +413,7 @@
   align-items: center;
 }
 .openaire-input {
-  flex: 1;
+  flex: 0 0 450px;
   padding: 8px 10px;
   border: 1px solid #d6d3d1;
   border-radius: 6px;
@@ -393,6 +424,11 @@
 }
 .openaire-input:focus { border-color: #d97706; }
 .openaire-paste-btn {
+  /* Push the Paste button (and the Connect button trailing it via flex
+     gap) flush against the right edge of .openaire-input-row, leaving
+     the empty space between it and the fixed-width token input on the
+     left rather than after the buttons on the right. */
+  margin-left: auto;
   padding: 8px 10px;
   border: 1px solid #d6d3d1;
   background: white;

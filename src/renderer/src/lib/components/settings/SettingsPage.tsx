@@ -166,8 +166,12 @@ export default function SettingsPage() {
 
         {/* Databases Section */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>{t('settings.databases.title')}</h2>
-          <p className={styles['section-desc']}>{t('settings.databases.description')}</p>
+          <div className={styles['section-header-row']}>
+            <div>
+              <h2 className={styles['section-title']}>{t('settings.databases.title')}</h2>
+              <p className={styles['section-desc']}>{t('settings.databases.description')}</p>
+            </div>
+          </div>
 
           <div className={styles['db-list']}>
             {settings.databases.map((db, i) => {
@@ -234,6 +238,9 @@ export default function SettingsPage() {
                   </label>
                   <div className={styles['db-info']}>
                     <span className={styles['db-name']}>{db.name}</span>
+                    <span className={styles['db-type']}>
+                      {t(`settings.databases.descriptions.${db.id}`, { defaultValue: '' })}
+                    </span>
                   </div>
                   {!defaultDatabaseIds.has(db.id) && (
                     <button className={styles['db-remove']} onClick={() => removeDatabase(db.id)} title={t('settings.databases.removeTitle')}>&#10005;</button>
@@ -246,8 +253,12 @@ export default function SettingsPage() {
 
         {/* API Keys Section */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>{t('settings.apiKeys.title')}</h2>
-          <p className={styles['section-desc']}>{t('settings.apiKeys.description')}</p>
+          <div className={styles['section-header-row']}>
+            <div>
+              <h2 className={styles['section-title']}>{t('settings.apiKeys.title')}</h2>
+              <p className={styles['section-desc']}>{t('settings.apiKeys.description')}</p>
+            </div>
+          </div>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
@@ -283,7 +294,7 @@ export default function SettingsPage() {
               type="password"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.semantic_scholar ?? ''}
-              placeholder={t('settings.apiKeys.optional')}
+              placeholder={t('settings.apiKeys.semanticScholarPlaceholder')}
               onChange={e => updateApiKey('semantic_scholar', e.target.value)}
             />
           </div>
@@ -333,7 +344,7 @@ export default function SettingsPage() {
               type="password"
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.base ?? ''}
-              placeholder={t('settings.apiKeys.optional')}
+              placeholder={t('settings.apiKeys.basePlaceholder')}
               onChange={e => updateApiKey('base', e.target.value)}
             />
           </div>
@@ -342,8 +353,25 @@ export default function SettingsPage() {
 
         {/* OpenAIRE Connection */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>{t('settings.openaire.title')}</h2>
-          <p className={styles['section-desc']}>{t('settings.openaire.description')}</p>
+          <div className={styles['section-header-row']}>
+            <div>
+              <h2 className={styles['section-title']}>{t('settings.openaire.title')}</h2>
+              <p className={styles['section-desc']}>{t('settings.openaire.description')}</p>
+            </div>
+            {!openaireConnected && (
+              <button
+                type="button"
+                className={styles['action-button']}
+                onClick={() =>
+                  window.electronAPI
+                    .openExternal(OPENAIRE_TOKEN_PAGE_URL)
+                    .catch(err => console.error('Failed to open URL:', err))
+                }
+              >
+                {t('settings.openaire.openTokenPage')}
+              </button>
+            )}
+          </div>
 
           <div className={styles['openaire-card']}>
             {openaireConnected ? (
@@ -385,28 +413,6 @@ export default function SettingsPage() {
               </div>
             ) : (
               <>
-                <div className={styles['setting-row']} style={{ borderBottom: 'none', padding: 0 }}>
-                  <div className={styles['setting-info']}>
-                    <span className={styles['setting-label']}>
-                      {t('settings.openaire.tokenPageLabel')}
-                    </span>
-                    <span className={styles['setting-desc']}>
-                      {t('settings.openaire.tokenPageDesc')}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className={styles['action-button']}
-                    onClick={() =>
-                      window.electronAPI
-                        .openExternal(OPENAIRE_TOKEN_PAGE_URL)
-                        .catch(err => console.error('Failed to open URL:', err))
-                    }
-                  >
-                    {t('settings.openaire.openTokenPage')}
-                  </button>
-                </div>
-
                 <p className={styles['openaire-step-hint']}>{t('settings.openaire.stepHint')}</p>
 
                 <div className={styles['openaire-input-row']}>
@@ -457,39 +463,28 @@ export default function SettingsPage() {
 
         {/* Web of Science */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>{t('settings.wos.title')}</h2>
-          <p className={styles['section-desc']}>{t('settings.wos.description')}</p>
-
-          <div className={styles['setting-row']}>
-            <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>{t('settings.wos.keyLabel')}</span>
-              <span className={styles['setting-desc']}>{t('settings.wos.keyDesc')}</span>
+          <div className={styles['section-header-row']}>
+            <div>
+              <h2 className={styles['section-title']}>{t('settings.wos.title')}</h2>
+              <p className={styles['section-desc']}>{t('settings.wos.description')}</p>
             </div>
-            <a
-              className={styles['request-key-link']}
-              href="https://developer.clarivate.com/"
-              onClick={handleOpenExternalLink('https://developer.clarivate.com/')}
+            <button
+              type="button"
+              className={styles['action-button']}
+              onClick={() =>
+                window.electronAPI
+                  .openExternal('https://developer.clarivate.com/')
+                  .catch(err => console.error('Failed to open URL:', err))
+              }
             >
               {t('settings.wos.requestKey')}
-              <svg viewBox="0 0 10 10" aria-hidden="true">
-                <path d="M2 2h5v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-            </a>
-            <input
-              type="password"
-              className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
-              value={settings.api_keys?.wos ?? ''}
-              placeholder={t('settings.apiKeys.optional')}
-              onChange={e => updateApiKey('wos', e.target.value)}
-            />
+            </button>
           </div>
 
-          <div className={styles['setting-row']}>
-            <div className={styles['setting-info']}>
-              <span className={styles['setting-label']}>{t('settings.wos.tierLabel')}</span>
-              <span className={styles['setting-desc']}>{t('settings.wos.tierDesc')}</span>
-            </div>
+          <div className={styles['setting-row']} style={{ gap: 8, borderBottom: 'none' }}>
+            <span className={styles['setting-desc']} style={{ flex: 1 }}>
+              {t('settings.wos.tierDesc')}
+            </span>
             <select
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.wos_tier ?? 'starter_free'}
@@ -498,12 +493,23 @@ export default function SettingsPage() {
               <option value="starter_free">{t('settings.wos.tierStarterFree')}</option>
               <option value="starter_institutional">{t('settings.wos.tierStarterInstitutional')}</option>
             </select>
+            <input
+              type="password"
+              className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
+              value={settings.api_keys?.wos ?? ''}
+              placeholder={t('settings.wos.keyPlaceholder')}
+              onChange={e => updateApiKey('wos', e.target.value)}
+            />
           </div>
         </section>
 
         {/* Search Configuration */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>{t('settings.search.title')}</h2>
+          <div className={styles['section-header-row']}>
+            <div>
+              <h2 className={styles['section-title']}>{t('settings.search.title')}</h2>
+            </div>
+          </div>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
@@ -549,7 +555,11 @@ export default function SettingsPage() {
 
         {/* Notes */}
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>{t('settings.notes.title')}</h2>
+          <div className={styles['section-header-row']}>
+            <div>
+              <h2 className={styles['section-title']}>{t('settings.notes.title')}</h2>
+            </div>
+          </div>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
@@ -593,7 +603,11 @@ export default function SettingsPage() {
         </section>
 
         <section className={styles['settings-section']}>
-          <h2 className={styles['section-title']}>{t('settings.cache.title')}</h2>
+          <div className={styles['section-header-row']}>
+            <div>
+              <h2 className={styles['section-title']}>{t('settings.cache.title')}</h2>
+            </div>
+          </div>
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>

@@ -29,25 +29,34 @@ async def get_settings():
 async def update_settings(new_settings: AppSettings):
     previous = get_current_settings()
 
-    # Merge api_keys: never wipe an existing key with an empty incoming
-    # value. A renderer that hasn't yet received the initial GET response
-    # would otherwise autosave seed defaults (empty api_keys) and overwrite
-    # the on-disk file. Explicit removals are routed through dedicated
-    # endpoints (e.g. /settings/openaire/disconnect) which bypass this
-    # merge by calling save_settings directly.
-    merged_api_keys = dict(previous.api_keys)
-    for key, value in (new_settings.api_keys or {}).items():
-        if value:
+    # Detect the wipe pattern: a renderer that hasn't yet received the
+    # initial GET response autosaves the seed defaults, which has an empty
+    # api_keys dict. We use that as the signal — only when the body looks
+    # like an unloaded-renderer wipe do we preserve fields against empty
+    # incoming values. Otherwise we trust the body (so users can clear an
+    # api_key by emptying the input, or clear a folder path on purpose).
+    incoming_api_keys = new_settings.api_keys or {}
+    is_wipe_pattern = not incoming_api_keys and bool(previous.api_keys)
+
+    # api_keys merge: incoming wins for every key it lists (including
+    # explicit clears via empty string). Keys that are *missing* from
+    # incoming are restored from previous — that's how we survive the wipe
+    # signature where the seed dict is `{}`.
+    merged_api_keys = dict(incoming_api_keys)
+    for key, value in previous.api_keys.items():
+        if key not in merged_api_keys:
             merged_api_keys[key] = value
 
-    # Preserve non-empty string fields when incoming is empty — the same
-    # renderer race that empties api_keys also empties these.
     overrides: dict = {"api_keys": merged_api_keys}
-    for field in ("annotated_pdf_dir", "polite_pool_email", "openaire_token_saved_at"):
-        incoming = getattr(new_settings, field)
-        existing = getattr(previous, field)
-        if not incoming and existing:
-            overrides[field] = existing
+    if is_wipe_pattern:
+        # The same race that empties api_keys also empties these scalar
+        # fields. Only preserve them when the wipe pattern is detected so
+        # legitimate clears still go through during a normal save.
+        for field in ("annotated_pdf_dir", "polite_pool_email", "openaire_token_saved_at"):
+            incoming = getattr(new_settings, field)
+            existing = getattr(previous, field)
+            if not incoming and existing:
+                overrides[field] = existing
 
     new_settings = new_settings.model_copy(update=overrides)
 
