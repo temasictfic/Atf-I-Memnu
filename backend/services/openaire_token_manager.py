@@ -78,6 +78,24 @@ def invalidate_cache() -> None:
     _cached_refresh_fingerprint = None
 
 
+def _refresh_window_cap(*, authenticated: bool) -> None:
+    """Swap the OpenAIRE rate-limiter window cap to match auth state.
+
+    Hour-window caps are 60 (anon) vs 7,200 (authed). Bump (or roll back)
+    whenever the cached access-token validity flips. Imported lazily to
+    keep this module free of a verifier import at the top — the token
+    manager loads earlier than verifiers in some import orders.
+    """
+    try:
+        from verifiers.openaire import update_window_for_auth_state
+    except Exception:
+        return
+    try:
+        update_window_for_auth_state(authenticated=authenticated)
+    except Exception:
+        pass
+
+
 def get_runtime_status() -> dict:
     """Return the most recent exchange outcome for the Settings UI."""
     return {
@@ -141,12 +159,17 @@ async def _refresh_and_cache(refresh_token: str) -> str | None:
     except RuntimeError as exc:
         _runtime_status = "failed"
         _runtime_last_error = str(exc)
+        # Exchange failed — verifier will fall back to anonymous requests,
+        # so the rate-limiter window must roll back to the anon cap (60/hr)
+        # or we'll cheerfully send the 61st request straight into a 429.
+        _refresh_window_cap(authenticated=False)
         return None
 
     access_token = data.get("access_token")
     if not isinstance(access_token, str) or not access_token:
         _runtime_status = "failed"
         _runtime_last_error = "OpenAIRE returned no access token."
+        _refresh_window_cap(authenticated=False)
         return None
 
     # OpenAIRE advertises expires_in in seconds (usually 3600). Be defensive —
@@ -165,6 +188,10 @@ async def _refresh_and_cache(refresh_token: str) -> str | None:
     _cached_refresh_fingerprint = _fingerprint_of(refresh_token)
     _runtime_status = "ok"
     _runtime_last_error = None
+    # User has a working access token now — lift the OpenAIRE hour-window
+    # cap from 60 (anon) to 7,200 (authed). Idempotent: re-calling on
+    # successive refreshes is a no-op replacement of the same cap.
+    _refresh_window_cap(authenticated=True)
 
     # OpenAIRE may rotate the refresh token. Persist the new one so the user
     # doesn't hit an unexpected sign-out next month. settings_store is a
@@ -214,6 +241,9 @@ async def get_access_token() -> str | None:
         # User disconnected. Clear cached token so a later reconnect with a
         # different token can't round-trip the previous bearer.
         invalidate_cache()
+        # Roll the hour-window cap back to anon (60) — the user is no
+        # longer authenticated and must respect the stricter limit.
+        _refresh_window_cap(authenticated=False)
         return None
 
     fingerprint = _fingerprint_of(refresh_token)

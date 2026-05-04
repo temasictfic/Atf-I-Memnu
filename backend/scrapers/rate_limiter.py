@@ -1,13 +1,48 @@
 """Per-domain rate limiter using token bucket algorithm."""
 
 import asyncio
+import collections
 import time
+
+
+class SlidingWindowQuota:
+    """Cap requests within a rolling time window.
+
+    Pacing alone (the token bucket below) cannot enforce hour-window or
+    multi-minute caps — a 1.0 s gap technically permits 3,600 req/hr, which
+    blows past OpenAIRE's anonymous 60/hr budget 60× over. This class
+    tracks request timestamps in a deque and refuses to admit a new one
+    when the deque is at capacity within the window. Used preventively
+    (before the request is sent), in contrast with the reactive 429-park
+    path which only kicks in after the server has already counted us.
+    """
+
+    def __init__(self, max_requests: int, window_seconds: float):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.timestamps: collections.deque[float] = collections.deque()
+
+    def consume(self) -> bool:
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+        while self.timestamps and self.timestamps[0] < cutoff:
+            self.timestamps.popleft()
+        if len(self.timestamps) >= self.max_requests:
+            return False
+        self.timestamps.append(now)
+        return True
+
+    def seconds_until_slot(self) -> float:
+        if not self.timestamps:
+            return 0.0
+        return max(0.0, self.timestamps[0] + self.window_seconds - time.monotonic())
 
 
 class RateLimiter:
     def __init__(self):
         self._buckets: dict[str, dict] = {}
         self._parked_until: dict[str, float] = {}
+        self._windows: dict[str, SlidingWindowQuota] = {}
         self._lock = asyncio.Lock()
 
         # Default rates: seconds between requests per host.
@@ -100,6 +135,39 @@ class RateLimiter:
             self._parked_until.pop(domain, None)
             return 0.0
         return remaining
+
+    def register_window(
+        self, domain: str, max_requests: int, window_seconds: float
+    ) -> None:
+        """Register or replace a sliding-window quota for ``domain``.
+
+        Idempotent and safe to call repeatedly — used by OpenAIRE to swap
+        the anonymous (60/hr) cap for the authenticated (7,200/hr) cap when
+        the user adds or rotates a refresh token, without restarting the
+        process. The replacement preserves no history; it starts a fresh
+        window so a previously full anon-bucket doesn't strand an authed
+        user behind 60 dead timestamps.
+        """
+        self._windows[domain] = SlidingWindowQuota(max_requests, window_seconds)
+
+    def consume_window(self, domain: str) -> bool:
+        """Consume one slot from the window quota; True if no window registered.
+
+        Default-allow keeps verifiers without window caps (most of them)
+        completely unaffected. The window composes with ``acquire()`` —
+        both gates must pass before a request fires.
+        """
+        window = self._windows.get(domain)
+        if window is None:
+            return True
+        return window.consume()
+
+    def window_seconds_until_slot(self, domain: str) -> float:
+        """Seconds until the next slot frees up (0.0 if no window or empty)."""
+        window = self._windows.get(domain)
+        if window is None:
+            return 0.0
+        return window.seconds_until_slot()
 
     async def acquire(self, domain: str, *, rate: float | None = None):
         """Wait for the inter-request pacing window for this domain.

@@ -9,10 +9,18 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from verifiers._http import check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
+from verifiers._http import RateLimitedError, check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
 
 API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 _HOST = "api.semanticscholar.org"
+
+# When the anonymous shared pool throttles us, S2 frequently omits the
+# Retry-After header. The default 10 s park (in _http.check_rate_limit) is
+# too short for the 5-minute global bucket the shared pool resets on, so a
+# rapid retry just trips the same 429 again — and repeat 429s on the same
+# IP are the pattern that gets keys flagged. Treat the floor as 5 minutes
+# to match the documented bucket window.
+_ANON_PARK_FLOOR_SECONDS = 300.0
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -59,7 +67,17 @@ async def _fetch_best_match(
     check_parked_url(API_URL)
     await rate_limiter.acquire(_HOST)
     async with session.get(API_URL, params=params, headers=headers or {}) as resp:
-        check_rate_limit(resp)
+        try:
+            check_rate_limit(resp)
+        except RateLimitedError:
+            # Anonymous (no x-api-key) means the shared 5k/5min pool —
+            # extend the park to 5 min so a rapid retry doesn't re-hit
+            # the same exhausted bucket. Keyed users hit the per-user
+            # 1 rps cap which recovers in seconds, so leave the default
+            # park behavior for them.
+            if not (headers and headers.get("x-api-key")):
+                rate_limiter.park(_HOST, _ANON_PARK_FLOOR_SECONDS)
+            raise
         if resp.status != 200:
             return None
         data = await resp.json()

@@ -16,17 +16,40 @@ from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.openaire_token_manager import get_access_token
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
-from verifiers._http import check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
+from verifiers._http import RateLimitedError, check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
 
 OPENAIRE_API = "https://api.openaire.eu/graph/v2/researchProducts"
 _HOST = "api.openaire.eu"
 
 # Authenticated OpenAIRE users get 7,200 req/hour — a safe per-request
 # cadence of 0.5 s (2 req/s) leaves ample headroom. Anonymous users cap
-# at 60 req/hour, which simple inter-request pacing can't enforce; for
-# that case we leave the host-level default (1.0 s) in charge and let
-# 429-park cycles average us under the hour window.
+# at 60 req/hour, which simple inter-request pacing can't enforce; the
+# sliding-window quota below is the actual enforcement mechanism.
 _AUTHENTICATED_PACE_SECONDS = 0.5
+
+# Hour-window caps (sliding). Updated live when the user adds, refreshes,
+# or removes a refresh token via openaire_token_manager. The window is
+# preventive — we refuse to send the 61st (anon) / 7,201st (authed)
+# request rather than relying on reactive 429-park.
+_ANON_HOURLY_CAP = 60
+_AUTHED_HOURLY_CAP = 7200
+_HOUR_SECONDS = 3600
+
+# Register the safe (anonymous) cap at import time. The token manager
+# upgrades to the authed cap whenever a refresh token is configured.
+rate_limiter.register_window(_HOST, _ANON_HOURLY_CAP, _HOUR_SECONDS)
+
+
+def update_window_for_auth_state(*, authenticated: bool) -> None:
+    """Swap the OpenAIRE hour-window cap to match the current auth state.
+
+    Called by openaire_token_manager whenever the refresh token is added,
+    rotated, or cleared. Re-registering replaces the deque (i.e. clears
+    the timestamp history) so a previously full anon-bucket can't strand
+    a freshly authed user behind 60 dead timestamps.
+    """
+    cap = _AUTHED_HOURLY_CAP if authenticated else _ANON_HOURLY_CAP
+    rate_limiter.register_window(_HOST, cap, _HOUR_SECONDS)
 
 
 def _openaire_pace_seconds() -> float | None:
@@ -93,6 +116,13 @@ async def _fetch_best_match(
     back to anonymous so a bad paste never breaks verification.
     """
     check_parked_url(OPENAIRE_API)
+    if not rate_limiter.consume_window(_HOST):
+        wait = rate_limiter.window_seconds_until_slot(_HOST)
+        # Park the host so sibling sources fail-fast via check_parked_url
+        # for the rest of the window — no point letting them waste task
+        # slots queueing for pacing only to be refused by the window.
+        rate_limiter.park(_HOST, wait)
+        raise RateLimitedError(_HOST, retry_after=wait, status=429)
     await rate_limiter.acquire(_HOST, rate=_openaire_pace_seconds())
     access_token = await get_access_token()
     headers = (

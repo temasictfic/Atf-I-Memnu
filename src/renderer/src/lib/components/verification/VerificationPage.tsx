@@ -2014,6 +2014,7 @@ export default function VerificationPage() {
                     <button
                       className={styles['vi-verify-btn']}
                       draggable={false}
+                      disabled={isAnyVerifying && !isPdfVerifying(pdf.id)}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => { e.stopPropagation(); handleVerifyOrCancelPdf(pdf.id) }}
                       title={isPdfVerifying(pdf.id) ? t('verification.stopVerification') : t('verification.verifyThisPdf')}
@@ -2070,7 +2071,7 @@ export default function VerificationPage() {
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
                   onClick={() => effectivePdfId && handleVerifyNonHighPdf(effectivePdfId)}
-                  disabled={!effectivePdfId || (effectivePdfId ? isPdfVerifying(effectivePdfId) : true)}
+                  disabled={!effectivePdfId || isAnyVerifying}
                   title={t('verification.verifyNonHigh')}
                 ><span aria-hidden="true">&#x25B6;</span>{t('verification.nfShort')}</button>
               </div>

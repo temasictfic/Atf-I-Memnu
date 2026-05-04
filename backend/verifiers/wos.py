@@ -20,22 +20,64 @@ import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
+from services.daily_quota import daily_quota
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
+from services.settings_store import get_current_settings
 from verifiers._http import (
+    RateLimitedError,
     build_headers,
     check_parked_url,
     check_rate_limit,
     get_session,
 )
 
-WOS_API = "https://api.clarivate.com/apis/wos-starter/v1/documents"
+# Clarivate's OpenAPI spec lists both /v1 and /v2 as supported servers with
+# identical paths and auth. v2's response shape is a superset of v1 (adds
+# names.contributors[] sourced from ORCID, which we don't currently parse
+# but could later); every field score_match consumes — title, names.authors,
+# source.sourceTitle / publishYear / volume / issue / pages, identifiers.doi,
+# links.record, types — is unchanged. Use v2 since it's the actively
+# extended surface; v1 is still live but receives no new fields.
+WOS_API = "https://api.clarivate.com/apis/wos-starter/v2/documents"
 _HOST = "api.clarivate.com"
 
 _log = logging.getLogger(__name__)
 # Single-shot warn so the user sees one info line per process when their key
 # is rejected, not one per source in a 200-citation batch.
 _warned_unauthorized = False
+
+# Daily request caps for the two user-selectable Web of Science *Starter*
+# API tiers. The Clarivate signup form at developer.clarivate.com only
+# offers Free Trial and Institutional Member; the Free Institutional
+# Integration plan (20,000/day) exists in the docs but is a custom
+# contract arrangement that no end user picks during normal registration,
+# so it's intentionally omitted here.
+#
+# The verifier only hits the Starter endpoint — the WoS API Expanded
+# product (separate endpoint, separate key, multi-tier annual/monthly
+# pricing) is not represented here. Free is the default because a user
+# who pasted a key without telling us which tier it is is safer treated
+# as the strictest cap: over-spending on the free trial just slows us
+# down for the rest of the day, but over-spending on a tier we don't
+# actually have can get the key revoked.
+_DAILY_CAPS: dict[str, int] = {
+    # "Free Trial Plan" — open-registration developer key, 1 req/s.
+    "starter_free": 50,
+    # "Institutional Plan" — granted to users at WoS-subscribing
+    # institutions, 5 req/s.
+    "starter_institutional": 5000,
+}
+_DEFAULT_TIER = "starter_free"
+
+
+def _wos_tier() -> str:
+    """Read the user-selected WoS tier from settings, defaulting to the free cap."""
+    try:
+        tier = (get_current_settings().api_keys.get("wos_tier") or "").strip()
+    except Exception:
+        tier = ""
+    return tier if tier in _DAILY_CAPS else _DEFAULT_TIER
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -98,6 +140,16 @@ async def _query(
     """Execute one WoS request and return the highest-scoring hit."""
     global _warned_unauthorized
     check_parked_url(WOS_API)
+    tier = _wos_tier()
+    cap = _DAILY_CAPS[tier]
+    if not daily_quota.consume(f"wos:{tier}", cap):
+        # Daily cap exhausted — park siblings until close to UTC midnight
+        # so the rest of this PDF (and later PDFs in a batch) fail-fast
+        # without re-checking the quota each time. Cap the park at 1 hour
+        # to keep the limiter's worst-case stall bounded.
+        reset = daily_quota.seconds_until_reset()
+        rate_limiter.park(_HOST, min(reset, 3600.0))
+        raise RateLimitedError(_HOST, retry_after=reset, status=429)
     await rate_limiter.acquire(_HOST)
     async with session.get(WOS_API, params=params, headers=headers) as resp:
         check_rate_limit(resp)
