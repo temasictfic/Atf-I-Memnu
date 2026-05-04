@@ -361,7 +361,7 @@ export default function SettingsPage() {
             {!openaireConnected && (
               <button
                 type="button"
-                className={styles['action-button']}
+                className={`${styles['action-button']} ${styles['action-button-portal']}`}
                 onClick={() =>
                   window.electronAPI
                     .openExternal(OPENAIRE_TOKEN_PAGE_URL)
@@ -470,7 +470,7 @@ export default function SettingsPage() {
             </div>
             <button
               type="button"
-              className={styles['action-button']}
+              className={`${styles['action-button']} ${styles['action-button-portal']}`}
               onClick={() =>
                 window.electronAPI
                   .openExternal('https://developer.clarivate.com/')

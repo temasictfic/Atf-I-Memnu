@@ -228,6 +228,9 @@
 .request-key-link {
   display: inline-flex;
   align-items: center;
+  /* Center the text + arrow group inside the button so content stays
+     visually balanced when min-width pads the surrounding pill. */
+  justify-content: center;
   gap: 4px;
   margin-right: 10px;
   padding: 4px 10px;
@@ -239,6 +242,12 @@
   text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
+  /* Common floor across the three request-link buttons (Semantic Scholar,
+     PubMed, BASE) so they render at the same width regardless of label
+     length. Sized to fit the longest TR/EN label ("NCBI API anahtarı iste"
+     / "Request an NCBI API key") plus the trailing arrow icon. */
+  box-sizing: border-box;
+  min-width: 160px;
 }
 .request-key-link:hover { background: #d97706; color: #fff; }
 .request-key-link svg { width: 10px; height: 10px; }
@@ -262,6 +271,10 @@
   gap: 12px;
 }
 .action-button {
+  /* Minimum button width keeps short labels ("Open"/"Aç", "Clear"/"Temizle"
+     in the Cache section) at the same visible size as their longer
+     siblings. Wider labels grow past this floor naturally via padding. */
+  min-width: 80px;
   padding: 8px 14px;
   border: 1px solid #d97706;
   background: transparent;
@@ -270,6 +283,7 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  text-align: center;
 }
 .action-button:hover { background: #d97706; color: white; }
 .action-message {
@@ -429,6 +443,13 @@
      the empty space between it and the fixed-width token input on the
      left rather than after the buttons on the right. */
   margin-left: auto;
+  /* Paste + 8px gap + Connect rendered total must equal the header
+     "Open OpenAIRE token page" button so both action surfaces share
+     the same left edge. border-box makes the width below the actual
+     outer width (no padding/border surprise), which is what the math
+     in .openaire-token-btn assumes. */
+  box-sizing: border-box;
+  width: 100px;
   padding: 8px 10px;
   border: 1px solid #d6d3d1;
   background: white;
@@ -441,6 +462,19 @@
   gap: 4px;
 }
 .openaire-paste-btn:hover { background: #f5f5f4; color: #292524; }
+/* Connect button: use border-box so its width matches the Paste button's
+   outer dimension exactly (without box-sizing the action-button's heavier
+   horizontal padding would inflate it past the Paste button). */
+.openaire-input-row .action-button {
+  box-sizing: border-box;
+  width: 100px;
+  min-width: 0;
+}
+/* Header "open external portal" buttons (OpenAIRE token page, Clarivate
+   Dev Portal). Locked to 208px so they line up with each other AND with
+   the combined Paste + 8px gap + Connect group below the OpenAIRE input
+   (100 + 8 + 100 = 208px). */
+.action-button-portal { box-sizing: border-box; width: 208px; }
 .openaire-error {
   font-size: 11px;
   color: #dc2626;
