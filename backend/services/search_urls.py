@@ -32,6 +32,7 @@ _TEMPLATES_PCT = {
     "OpenAIRE":         "https://explore.openaire.eu/search/find?fv0={q}&f0=q",
     "Open Library":     "https://openlibrary.org/search?q={q}",
     "BASE":             "https://www.base-search.net/Search/Results?lookfor={q}",
+    "Web of Science":   "https://www.webofscience.com/wos/alldb/basic-search?q={q}",
 }
 
 
