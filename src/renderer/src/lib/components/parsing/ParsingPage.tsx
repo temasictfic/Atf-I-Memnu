@@ -953,16 +953,22 @@ export default function ParsingPage() {
     }
     setExportingPdf(true);
     try {
-      const defaultName = `${selectedPdfId}-annotated.pdf`;
+      const pdfName = selectedPdf?.name ?? selectedPdfId;
+      const defaultName = `${pdfName.replace(/\.[^.]+$/, "")}-annotated.pdf`;
       const configuredDir = useSettingsStore
         .getState()
         .settings.annotated_pdf_dir?.trim();
-      const defaultPath = buildDefaultSavePath(configuredDir, defaultName);
-      const target = await window.electronAPI.showSaveAs({
-        title: "Save annotated PDF",
-        defaultPath,
-        filters: [{ name: "PDF Files", extensions: ["pdf"] }],
-      });
+
+      let target: string | null;
+      if (configuredDir) {
+        target = buildDefaultSavePath(configuredDir, defaultName);
+      } else {
+        target = await window.electronAPI.showSaveAs({
+          title: "Save annotated PDF",
+          defaultPath: defaultName,
+          filters: [{ name: "PDF Files", extensions: ["pdf"] }],
+        });
+      }
       if (!target) return;
       const bytes = await window.electronAPI.readPdfFile(localPath);
       // Lazy-load pdf-lib + fontkit (~1.2 MB) only on first export.
