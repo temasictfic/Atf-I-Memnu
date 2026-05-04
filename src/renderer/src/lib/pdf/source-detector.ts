@@ -286,6 +286,15 @@ function filterSourceBlocks(blocks: PageBlock[]): PageBlock[] {
     // legitimately as article/page IDs at the end of a citation.
     if (isDigits(text) && text.length <= 3) continue
     if (isInstructionText(text)) continue
+    // Drop any block whose text is itself a section header (KAYNAKÇA,
+    // KAYNAKLAR, EK-X: KAYNAKLAR, REFERENCES, BIBLIOGRAPHY, …). The chosen
+    // refStartIdx is already excluded by the slice in detectSources, but a
+    // second header block — duplicated heading, reprinted continuation
+    // header, or appendix divider — survives that slice and would otherwise
+    // land inside a detected rectangle. Length gate on the loose pattern
+    // mirrors findSourceHeader so it doesn't over-match long lines.
+    if (testAny(HEADER_PATTERNS_STRICT, text)) continue
+    if (text.length < 50 && testAny(HEADER_PATTERNS_LOOSE, text)) continue
     if (text.toLowerCase().includes('tubitak.gov.tr') && !hasRefNumber(text)) continue
     filtered.push(entry)
   }
