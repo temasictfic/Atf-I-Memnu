@@ -24,10 +24,8 @@ jobs:
           cache: npm
 
       - uses: astral-sh/setup-uv@v8.0.0
-
-      - name: Install Python 3.12 via uv
-        run: uv python install 3.12
-        working-directory: backend
+        with:
+          python-version: "3.12"
 
       - name: Install Node dependencies
         run: npm ci
