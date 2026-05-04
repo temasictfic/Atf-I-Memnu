@@ -11,12 +11,14 @@ backend_dir = project_root
 # import strings; onnxruntime/tokenizers are safer to force-include so
 # PyInstaller's static analysis doesn't miss native module loaders.
 # `onnxruntime.quantization` hard-imports `onnx` (a model-conversion dep we
-# don't ship), so collect_submodules emits a warning and would try to bundle
-# it. We only use onnxruntime for inference — drop the quantization subtree.
-onnxruntime_modules = [
-    m for m in collect_submodules("onnxruntime")
-    if not m.startswith("onnxruntime.quantization")
-]
+# don't ship), which makes collect_submodules emit a warning when it probes
+# the submodule. We only use onnxruntime for inference, so skip the
+# quantization subtree via the `filter` arg — applied before the import
+# probe so the warning is suppressed at the source.
+onnxruntime_modules = collect_submodules(
+    "onnxruntime",
+    filter=lambda name: not name.startswith("onnxruntime.quantization"),
+)
 hiddenimports = sorted(
     set(
         collect_submodules("uvicorn")
