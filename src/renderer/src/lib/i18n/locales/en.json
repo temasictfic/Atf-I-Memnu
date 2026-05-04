@@ -37,8 +37,7 @@
     "databases": {
       "title": "Search Databases",
       "description": "Enable or disable databases and drag to reorder. Databases search first in this order and lists",
-      "moveUp": "Move up",
-      "moveDown": "Move down",
+      "dragHandle": "Drag to reorder",
       "removeTitle": "Remove"
     },
     "apiKeys": {

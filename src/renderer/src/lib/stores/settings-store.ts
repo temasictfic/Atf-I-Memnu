@@ -7,7 +7,10 @@ import {
 } from '../constants/timings'
 import i18n from '../i18n'
 
-const defaultDatabases: DatabaseConfig[] = [
+// Must mirror backend `AppSettings.default().databases` in
+// `backend/models/settings.py`. The backend is authoritative — these are
+// only the seed values shown until the initial /settings GET resolves.
+export const defaultDatabases: DatabaseConfig[] = [
   { id: 'crossref', name: 'Crossref', enabled: true },
   { id: 'openalex', name: 'OpenAlex', enabled: true },
   { id: 'openaire', name: 'OpenAIRE', enabled: true },
@@ -17,8 +20,13 @@ const defaultDatabases: DatabaseConfig[] = [
   { id: 'semantic_scholar', name: 'Semantic Scholar', enabled: true },
   { id: 'trdizin', name: 'TRDizin', enabled: true },
   { id: 'open_library', name: 'Open Library', enabled: true },
+  { id: 'base', name: 'BASE', enabled: false },
   { id: 'wos', name: 'Web of Science', enabled: false },
 ]
+
+export const defaultDatabaseIds: ReadonlySet<string> = new Set(
+  defaultDatabases.map(db => db.id),
+)
 
 interface SettingsState {
   settings: AppSettings
@@ -35,7 +43,7 @@ interface SettingsState {
   toggleDatabase: (dbId: string) => void
   addDatabase: (db: DatabaseConfig) => void
   removeDatabase: (dbId: string) => void
-  moveDatabase: (dbId: string, direction: 'up' | 'down') => void
+  reorderDatabases: (fromIdx: number, toIdx: number) => void
   updateApiKey: (key: string, value: string) => void
   connectOpenaire: (refreshToken: string) => Promise<{ ok: boolean; error?: string }>
   disconnectOpenaire: () => Promise<void>
@@ -164,14 +172,20 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     _debouncedSave(get)
   },
 
-  moveDatabase: (dbId: string, direction: 'up' | 'down') => {
+  reorderDatabases: (fromIdx: number, toIdx: number) => {
     set(state => {
       const dbs = [...state.settings.databases]
-      const idx = dbs.findIndex(db => db.id === dbId)
-      if (idx < 0) return state
-      const targetIdx = direction === 'up' ? idx - 1 : idx + 1
-      if (targetIdx < 0 || targetIdx >= dbs.length) return state
-      ;[dbs[idx], dbs[targetIdx]] = [dbs[targetIdx], dbs[idx]]
+      if (
+        fromIdx < 0 ||
+        toIdx < 0 ||
+        fromIdx >= dbs.length ||
+        toIdx >= dbs.length ||
+        fromIdx === toIdx
+      ) {
+        return state
+      }
+      const [moved] = dbs.splice(fromIdx, 1)
+      dbs.splice(toIdx, 0, moved)
       return { settings: { ...state.settings, databases: dbs } }
     })
     _debouncedSave(get)

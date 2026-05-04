@@ -1,21 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useSettingsStore } from '../../stores/settings-store'
+import { defaultDatabaseIds, useSettingsStore } from '../../stores/settings-store'
 import styles from './SettingsPage.module.css'
 import pkg from '../../../../../../package.json'
-
-const defaultDatabaseIds = new Set([
-  'crossref',
-  'openalex',
-  'openaire',
-  'europe_pmc',
-  'arxiv',
-  'pubmed',
-  'trdizin',
-  'open_library',
-  'semantic_scholar',
-  'wos',
-])
 
 const GITHUB_REPO_URL = 'https://github.com/temasictfic/Atf-I-Memnu'
 
@@ -44,7 +31,7 @@ export default function SettingsPage() {
     toggleDatabase,
     updateSetting,
     removeDatabase,
-    moveDatabase,
+    reorderDatabases,
     updateApiKey,
     connectOpenaire,
     disconnectOpenaire,
@@ -55,6 +42,8 @@ export default function SettingsPage() {
   const [openaireTokenInput, setOpenaireTokenInput] = useState('')
   const [openaireError, setOpenaireError] = useState<string | null>(null)
   const [openaireBusy, setOpenaireBusy] = useState(false)
+  const [dragDbId, setDragDbId] = useState<string | null>(null)
+  const [dragOverDbId, setDragOverDbId] = useState<string | null>(null)
 
   const openaireConnected = !!settings.api_keys?.openaire
   const openaireDaysLeft = daysUntilOpenaireExpiry(settings.openaire_token_saved_at)
@@ -124,13 +113,13 @@ export default function SettingsPage() {
   return (
     <div className={styles['settings-page']}>
       <div className={styles['settings-container']}>
-        {saveStatus !== 'idle' && (
-          <div className={styles['save-toast']}>
+        <div className={styles['save-toast']}>
+          {saveStatus !== 'idle' && (
             <span className={`${styles['save-toast-inner']} ${styles[`save-toast-inner--${saveStatus}`]}`}>
               {saveStatus === 'saving' ? t('settings.save.saving') : saveStatus === 'saved' ? t('settings.save.saved') : t('settings.save.error')}
             </span>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className={styles['settings-header']}>
           <h1 className={styles['settings-title']}>{t('settings.title')}</h1>
@@ -181,41 +170,77 @@ export default function SettingsPage() {
           <p className={styles['section-desc']}>{t('settings.databases.description')}</p>
 
           <div className={styles['db-list']}>
-            {settings.databases.map((db, i) => (
-              <div key={db.id} className={styles['db-row']}>
-                <span className={styles['db-order']}>{i + 1}</span>
-                <div className={styles['db-reorder']}>
-                  <button
-                    className={styles['db-reorder-btn']}
-                    disabled={i === 0}
-                    onClick={() => moveDatabase(db.id, 'up')}
-                    title={t('settings.databases.moveUp')}
-                    aria-label={`${t('settings.databases.moveUp')}: ${db.name}`}
+            {settings.databases.map((db, i) => {
+              const rowClass = [
+                styles['db-row'],
+                dragDbId === db.id ? styles['db-row-dragging'] : '',
+                dragOverDbId === db.id && dragDbId !== db.id ? styles['db-row-over'] : '',
+              ]
+                .filter(Boolean)
+                .join(' ')
+              return (
+                <div
+                  key={db.id}
+                  className={rowClass}
+                  draggable
+                  onDragStart={e => {
+                    setDragDbId(db.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                    // Required by Firefox to actually start a drag; the value is unused.
+                    e.dataTransfer.setData('text/plain', db.id)
+                  }}
+                  onDragOver={e => {
+                    if (!dragDbId) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    if (dragOverDbId !== db.id) setDragOverDbId(db.id)
+                  }}
+                  onDragLeave={() => {
+                    setDragOverDbId(prev => (prev === db.id ? null : prev))
+                  }}
+                  onDrop={e => {
+                    e.preventDefault()
+                    if (dragDbId && dragDbId !== db.id) {
+                      const from = settings.databases.findIndex(x => x.id === dragDbId)
+                      const to = settings.databases.findIndex(x => x.id === db.id)
+                      if (from >= 0 && to >= 0) reorderDatabases(from, to)
+                    }
+                    setDragDbId(null)
+                    setDragOverDbId(null)
+                  }}
+                  onDragEnd={() => {
+                    setDragDbId(null)
+                    setDragOverDbId(null)
+                  }}
+                >
+                  <span className={styles['db-order']}>{i + 1}</span>
+                  <span
+                    className={styles['db-drag-handle']}
+                    title={t('settings.databases.dragHandle')}
+                    aria-label={`${t('settings.databases.dragHandle')}: ${db.name}`}
                   >
-                    <svg width="10" height="10" viewBox="0 0 10 10"><path d="M5 2L1 7h8z" fill="currentColor" /></svg>
-                  </button>
-                  <button
-                    className={styles['db-reorder-btn']}
-                    disabled={i === settings.databases.length - 1}
-                    onClick={() => moveDatabase(db.id, 'down')}
-                    title={t('settings.databases.moveDown')}
-                    aria-label={`${t('settings.databases.moveDown')}: ${db.name}`}
-                  >
-                    <svg width="10" height="10" viewBox="0 0 10 10"><path d="M5 8L1 3h8z" fill="currentColor" /></svg>
-                  </button>
+                    <svg width="10" height="16" viewBox="0 0 10 16" aria-hidden="true">
+                      <circle cx="3" cy="3" r="1.3" fill="currentColor" />
+                      <circle cx="7" cy="3" r="1.3" fill="currentColor" />
+                      <circle cx="3" cy="8" r="1.3" fill="currentColor" />
+                      <circle cx="7" cy="8" r="1.3" fill="currentColor" />
+                      <circle cx="3" cy="13" r="1.3" fill="currentColor" />
+                      <circle cx="7" cy="13" r="1.3" fill="currentColor" />
+                    </svg>
+                  </span>
+                  <label className={styles['db-toggle']}>
+                    <input type="checkbox" checked={db.enabled} onChange={() => toggleDatabase(db.id)} />
+                    <span className={styles['toggle-track']}><span className={styles['toggle-thumb']} /></span>
+                  </label>
+                  <div className={styles['db-info']}>
+                    <span className={styles['db-name']}>{db.name}</span>
+                  </div>
+                  {!defaultDatabaseIds.has(db.id) && (
+                    <button className={styles['db-remove']} onClick={() => removeDatabase(db.id)} title={t('settings.databases.removeTitle')}>&#10005;</button>
+                  )}
                 </div>
-                <label className={styles['db-toggle']}>
-                  <input type="checkbox" checked={db.enabled} onChange={() => toggleDatabase(db.id)} />
-                  <span className={styles['toggle-track']}><span className={styles['toggle-thumb']} /></span>
-                </label>
-                <div className={styles['db-info']}>
-                  <span className={styles['db-name']}>{db.name}</span>
-                </div>
-                {!defaultDatabaseIds.has(db.id) && (
-                  <button className={styles['db-remove']} onClick={() => removeDatabase(db.id)} title={t('settings.databases.removeTitle')}>&#10005;</button>
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
         </section>
 

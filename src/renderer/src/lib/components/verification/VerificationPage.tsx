@@ -64,6 +64,8 @@ function buildDbSearchUrl(db: string, text: string): string {
     'PubMed': `https://pubmed.ncbi.nlm.nih.gov/?term=${q}`,
     'OpenAIRE': `https://explore.openaire.eu/search/find?fv0=${q}&f0=q`,
     'Open Library': `https://openlibrary.org/search?q=${q}`,
+    'BASE': `https://www.base-search.net/Search/Results?lookfor=${q}`,
+    'Web of Science': `https://www.webofscience.com/wos/alldb/basic-search?q=${q}`,
     'Google Scholar': `https://scholar.google.com/scholar?q=${q}`,
   }
   return urls[db] ?? ''
@@ -100,15 +102,10 @@ export default function VerificationPage() {
   const setVerifyCutoffIndex = useVerificationStore(s => s.setVerifyCutoffIndex)
 
   const configuredDatabases = useSettingsStore(s => s.settings.databases)
-  const enabledDatabases = useMemo(() => {
-    const known = new Set([
-      'Crossref', 'OpenAlex', 'OpenAIRE', 'Europe PMC', 'arXiv',
-      'PubMed', 'TRDizin', 'Open Library', 'Semantic Scholar',
-    ])
-    return configuredDatabases
-      .filter(db => db.enabled && known.has(db.name))
-      .map(db => db.name)
-  }, [configuredDatabases])
+  const enabledDatabases = useMemo(
+    () => configuredDatabases.filter(db => db.enabled).map(db => db.name),
+    [configuredDatabases],
+  )
 
   const pdfs = useMemo(() => allPdfs.filter(p => p.status === 'approved'), [allPdfs])
   const effectivePdfId = useMemo(

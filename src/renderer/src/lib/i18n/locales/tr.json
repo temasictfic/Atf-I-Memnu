@@ -37,8 +37,7 @@
     "databases": {
       "title": "Arama Veritabanları",
       "description": "Veritabanlarını etkinleştirin veya devre dışı bırakın ve sırayı değiştirmek için sürükleyin. Veritabanları bu sırayla aranır ve listelenir",
-      "moveUp": "Yukarı taşı",
-      "moveDown": "Aşağı taşı",
+      "dragHandle": "Sıralamak için sürükleyin",
       "removeTitle": "Kaldır"
     },
     "apiKeys": {

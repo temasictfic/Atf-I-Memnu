@@ -63,16 +63,22 @@ def _load_settings() -> AppSettings:
 def _migrate_databases(s: AppSettings) -> AppSettings:
     """Reconcile stored databases with current defaults.
 
-    Adds new defaults, removes obsolete entries, preserves user enabled/disabled state.
+    Preserves the user's chosen order and enabled state. New defaults are
+    appended at the tail; entries no longer in defaults are dropped. The
+    display name is refreshed from defaults so a renamed verifier picks up
+    the new label on next load.
     """
     defaults = AppSettings.default()
-    stored_map = {db.id: db for db in s.databases}
+    defaults_by_id = {db.id: db for db in defaults.databases}
+    stored_ids = {db.id for db in s.databases}
 
     merged = []
+    for db in s.databases:
+        if db.id in defaults_by_id:
+            merged.append(db.model_copy(update={"name": defaults_by_id[db.id].name}))
+
     for db in defaults.databases:
-        if db.id in stored_map:
-            merged.append(db.model_copy(update={"enabled": stored_map[db.id].enabled}))
-        else:
+        if db.id not in stored_ids:
             merged.append(db)
 
     changed = s.databases != merged
