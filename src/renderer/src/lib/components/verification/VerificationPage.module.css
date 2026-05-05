@@ -1226,10 +1226,13 @@
 
 /* Diagonal "best" ribbon, top-right of the best-match card. CSS-only:
    absolutely positioned, rotated 45deg with a gold gradient and tiny
-   shadow for the corner-folded look. The card padding nudges right to
-   keep the ribbon from clipping over the title text. */
-.match-card-with-ribbon {
-  padding-right: 36px;
+   shadow for the corner-folded look. Only the *title* needs to dodge
+   the ribbon — the rest of the card (extras block, toggle row, etc.)
+   stays on the normal symmetric 12 px padding so "More" sits flush at
+   the right edge and the gray extras block has equal left/right
+   margins. */
+.match-card-with-ribbon .match-title {
+  padding-right: 32px;
 }
 .match-card-ribbon {
   position: absolute;
