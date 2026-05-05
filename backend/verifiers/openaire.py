@@ -25,6 +25,7 @@ from verifiers._http import (
     fetch_with_year_fallback,
     get_session,
     raise_for_unexpected_status,
+    strip_lucene_special,
 )
 
 OPENAIRE_API = "https://api.openaire.eu/graph/v2/researchProducts"
@@ -99,8 +100,11 @@ async def search(source: ParsedSource) -> MatchResult | None:
         if result and result.score >= DOI_MATCH_MIN_SCORE:
             return result
 
-    # Priority 2: Title search. `mainTitle` is the structured title filter on v2.
-    query = source.title
+    # Priority 2: Title search. `mainTitle` is the structured title filter on
+    # v2 — Lucene-backed, so a stray ``(`` (e.g. titles ending with "...
+    # (DCNN" with a missing close paren) is a hard parse error and surfaces
+    # as 400. Strip the Lucene special chars before sending.
+    query = strip_lucene_special(source.title or "")
     if not query:
         return None
 

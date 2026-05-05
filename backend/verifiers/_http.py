@@ -119,6 +119,29 @@ def strip_phrase_chars(s: str) -> str:
     return " ".join(cleaned.split())
 
 
+# Chars that break a *bare* (unquoted) Lucene/CQL query value: grouping that
+# must balance, field separator, escape, boost/fuzz operators, phrase delim
+# and the boolean ``!``. Chars deliberately left in: ``+ - * ? / & |`` —
+# they're either common in legitimate titles ("real-time", "I/O") or are
+# only operator-meaningful when prefixing a term, so leaving them avoids
+# mangling matches.
+_LUCENE_DANGER_CHARS = set('()[]{}^~:\\"!')
+
+
+def strip_lucene_special(s: str) -> str:
+    """Strip Lucene/CQL syntax characters from a bare-query value.
+
+    Used by verifiers (currently OpenAIRE Graph v2) that pass the title
+    straight into a Lucene-backed filter without wrapping it in a quoted
+    phrase. An unbalanced ``(`` is the most common offender and surfaces
+    as HTTP 400 from the upstream parser.
+    """
+    if not s:
+        return ""
+    cleaned = "".join(" " if c in _LUCENE_DANGER_CHARS else c for c in s)
+    return " ".join(cleaned.split())
+
+
 def _parse_retry_after(value: str | None) -> float | None:
     """Parse a Retry-After header. Accepts delta-seconds or HTTP-date."""
     if not value:
