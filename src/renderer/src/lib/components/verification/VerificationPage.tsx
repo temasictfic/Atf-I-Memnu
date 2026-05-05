@@ -471,6 +471,17 @@ export default function VerificationPage() {
     }
   }, [effectivePdfId])
 
+  // Drop any stale source selection when the active PDF changes — otherwise
+  // the right-side detail panel keeps reading a foreign selectedSourceId and
+  // shows "[?]", a dead Verify button, disabled Mark-as buttons, and
+  // Scholar/Google buttons that search the previous card's title. Skip when
+  // a cross-PDF right-click jump is targeting the new pdf so the jump effect
+  // below can apply its selection without a one-frame flicker.
+  useEffect(() => {
+    if (pendingJumpRef.current && pendingJumpRef.current.pdfId === effectivePdfId) return
+    useVerificationStore.getState().selectSource(null)
+  }, [effectivePdfId])
+
   // Auto-load cached results for all approved PDFs — including any newly
   // imported after initial mount, so left-panel count pills appear without
   // the user having to click each PDF first.
