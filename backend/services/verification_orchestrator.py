@@ -133,19 +133,15 @@ def _is_strong_match(result: MatchResult | None) -> bool:
     """Return True when a single verifier's result is strong enough to
     cancel the remaining parallel verifiers for this source.
 
-    Only triggers on a rock-solid signal: composite score ≥ 0.95 *and* a
-    URL/DOI/arXiv-ID match from the match_scorer. That combination is
-    almost exclusive to DOI lookups (or direct arXiv-ID lookups), which
-    are the cases where continuing to query 9 more APIs is pure quota
-    waste — no other DB is going to improve on a DOI-exact hit. Ambiguous
-    sources (title-only, editor citations, retracted-era works) stay
-    below this threshold and correctly exercise the full verifier fleet.
+    Composite is clamped to ``[0.0, 1.0]`` in ``score_match``, so a
+    score of 1.0 means the title+author base plus all applicable field
+    bonuses saturated — every signal we can compute is corroborating.
+    No pending verifier can produce a strictly better result, so the
+    remaining 8 DB queries are pure quota waste.
     """
     if result is None:
         return False
-    if result.score < 0.95:
-        return False
-    return bool(result.match_details.url_match)
+    return result.score >= 1.0
 
 
 async def verify_pdf_sources(

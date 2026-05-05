@@ -387,7 +387,7 @@ i18n açıklamalar: [tr.json:333–339](src/renderer/src/lib/i18n/locales/tr.jso
 - Her verifier API'den dönen sonuçların **ilk 5 tanesini** alır (`results[:5]`)
 - Her aday doğrudan `score_match(source, candidate)`'e geçer — **DB-spesifik eşik veya algoritma override'ı yoktur**
 - Tüm verifier'lar paralel çalışır (asyncio gather)
-- **Strong-match early exit:** Bir DB'den gelen sonuç ≥ 0.95 skor + URL/DOI eşleşmesi → kalan DB'ler iptal
+- **Strong-match early exit:** Bir DB'den gelen sonucun composite skoru 1.0'a ulaşırsa (title+author base + uygulanabilir tüm bonus'lar doyuma ulaştı) → kalan DB'ler iptal
 - **Best-match seçimi:** tüm DB'lerden gelen tüm sonuçların en yükseği — `max(all_results, key=lambda m: m.score)`
 - **Retry pass:** Timeout / rate-limit alan DB'ler 5 sn sonra bir kez daha denenir
 
