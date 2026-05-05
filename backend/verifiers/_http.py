@@ -142,6 +142,19 @@ def strip_lucene_special(s: str) -> str:
     return " ".join(cleaned.split())
 
 
+def strip_pubmed_field_chars(s: str) -> str:
+    """Strip ``[`` and ``]`` so PubMed's ``[Field]`` tag syntax can't be
+    hijacked by a title containing brackets.
+
+    PubMed's ESearch builds queries like ``<title>[Title]`` — a title with
+    brackets ("Hidden Markov [Models] ...") would surface ``[Models]`` as
+    an unknown field tag, returning HTTP 400 or empty results.
+    """
+    if not s:
+        return ""
+    return " ".join(s.replace("[", " ").replace("]", " ").split())
+
+
 def _parse_retry_after(value: str | None) -> float | None:
     """Parse a Retry-After header. Accepts delta-seconds or HTTP-date."""
     if not value:

@@ -21,6 +21,7 @@ from verifiers._http import (
     check_rate_limit,
     get_session,
     raise_for_unexpected_status,
+    strip_pubmed_field_chars,
 )
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -50,8 +51,10 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
         if result and result.score >= DOI_MATCH_MIN_SCORE:
             return result
 
-    # Priority 2: Title search
-    query = source.title
+    # Priority 2: Title search. Strip ``[`` ``]`` so a title that contains
+    # brackets ("Hidden Markov [Models] ...") cannot inject an unknown
+    # field tag and 400 PubMed's parser.
+    query = strip_pubmed_field_chars(source.title or "")
     if not query:
         return None
 
