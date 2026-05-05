@@ -74,6 +74,17 @@ def _extract(pipeline, raw_text: str) -> ParsedSource:
     # --- Source (journal/conference/publisher name) ---
     source = _best_text(by_label.get("JOURNAL", []))
 
+    # --- Bibliographic extras (display-only, never feed into scoring).
+    # Confidence floors are slightly above the default 0.3 because volume/
+    # issue tokens are short numeric strings the model occasionally mis-tags
+    # as ISSUE when they're actually authors' initials or stray digits.
+    publisher = _best_text(by_label.get("PUBLISHER", []))
+    volume = _best_text(by_label.get("VOLUME", []), min_score=0.5)
+    issue = _best_text(by_label.get("ISSUE", []), min_score=0.5)
+    pages = _parse_pages(by_label.get("PAGE_FIRST", []), by_label.get("PAGE_LAST", []))
+    issn = _collect_short_codes(by_label.get("ISSN", []), min_score=0.5, limit=2)
+    isbn = _collect_short_codes(by_label.get("ISBN", []), min_score=0.5, limit=2)
+
     # --- DOI --- filter noise (lone periods, short fragments)
     doi = _parse_doi(by_label.get("DOI", []), raw_text)
 
@@ -93,6 +104,12 @@ def _extract(pipeline, raw_text: str) -> ParsedSource:
         year=year,
         url=url,
         journal=source,
+        volume=volume,
+        issue=issue,
+        pages=pages,
+        publisher=publisher,
+        issn=issn,
+        isbn=isbn,
         extraction_method="ner",
         parse_confidence=confidence,
     )
@@ -105,6 +122,42 @@ def _best_text(entities: list[dict], min_score: float = 0.3) -> str | None:
         return None
     best = max(valid, key=lambda e: e["score"])
     return best["text"].strip()
+
+
+def _best_short_text(entities: list[dict], min_score: float) -> str | None:
+    """Like ``_best_text`` but accepts single-character tokens — page numbers
+    can legitimately be one digit."""
+    valid = [e for e in entities if e["score"] >= min_score and e["text"].strip()]
+    if not valid:
+        return None
+    best = max(valid, key=lambda e: e["score"])
+    return best["text"].strip()
+
+
+def _parse_pages(first_entities: list[dict], last_entities: list[dict]) -> str | None:
+    """Combine PAGE_FIRST + PAGE_LAST entities into ``"first-last"`` (or just
+    ``"first"`` when last is missing)."""
+    first = _best_short_text(first_entities, min_score=0.4)
+    last = _best_short_text(last_entities, min_score=0.4)
+    if first and last and first != last:
+        return f"{first}-{last}"
+    return first or last
+
+
+def _collect_short_codes(entities: list[dict], min_score: float, limit: int) -> list[str]:
+    """De-duped list of high-confidence ISSN/ISBN-style code strings."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for e in entities:
+        if e["score"] < min_score:
+            continue
+        code = e["text"].strip()
+        if code and code not in seen:
+            seen.add(code)
+            out.append(code)
+            if len(out) >= limit:
+                break
+    return out
 
 
 def _parse_authors_from_raw(raw_text: str, entities: list[dict]) -> list[str]:

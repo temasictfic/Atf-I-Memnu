@@ -37,6 +37,16 @@ class ParsedSource(BaseModel):
     year: int | None = None
     url: str | None = None  # doi/arxiv built URL or first extracted URL
     journal: str | None = None  # journal/conference/publisher name
+    # Bibliographic extras — populated by NER when the underlying entity
+    # labels fire. Display-only; ignored by match_scorer. Currently consumed
+    # only by the Google Scholar path, which forwards them onto MatchResult
+    # so the per-DB card's "More" panel has something to show.
+    volume: str | None = None
+    issue: str | None = None
+    pages: str | None = None
+    publisher: str | None = None
+    issn: list[str] = []
+    isbn: list[str] = []
     citation_format: str | None = None  # "APA", "MLA", "Chicago", "Harvard", "Vancouver", "IEEE"
     extraction_method: str = "regex"  # "regex" or "ner"
     parse_confidence: float = 0.0

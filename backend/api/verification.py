@@ -439,6 +439,15 @@ async def score_scholar(request: ScoreScholarRequest):
         year = cand.year
         doi = cand.doi
         journal = ""
+        # Bibliographic extras only land when the APA "Cite" string is
+        # present and NER hits its confidence floor — otherwise leave them
+        # empty (matches the `journal = ""` fallback above).
+        volume: str | None = None
+        issue: str | None = None
+        pages: str | None = None
+        publisher = ""
+        issn: list[str] = []
+        isbn: list[str] = []
         if cand.apa_citation:
             ner = await extract_fields_ner(cand.apa_citation)
             if ner is not None and ner.parse_confidence >= LOW_PARSE_CONFIDENCE_THRESHOLD:
@@ -452,6 +461,18 @@ async def score_scholar(request: ScoreScholarRequest):
                     doi = ner.doi
                 if ner.journal:
                     journal = ner.journal
+                if ner.volume:
+                    volume = ner.volume
+                if ner.issue:
+                    issue = ner.issue
+                if ner.pages:
+                    pages = ner.pages
+                if ner.publisher:
+                    publisher = ner.publisher
+                if ner.issn:
+                    issn = ner.issn
+                if ner.isbn:
+                    isbn = ner.isbn
 
         match = score_match(parsed, {
             "title": title,
@@ -462,6 +483,12 @@ async def score_scholar(request: ScoreScholarRequest):
             "journal": journal,
             "database": "Google Scholar",
             "search_url": search_url,
+            "volume": volume,
+            "issue": issue,
+            "pages": pages,
+            "publisher": publisher,
+            "issn": issn,
+            "isbn": isbn,
         })
         scholar_matches.append(match)
 
