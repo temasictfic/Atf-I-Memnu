@@ -1147,11 +1147,138 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Carousel: dots + card stacked tightly. The wrapper keeps them visually
+   grouped despite the parent .detail-body's 12px gap rule, so the dots
+   sit immediately above their card (and the dotted row doesn't look like
+   it belongs to the section header). */
+.match-card-carousel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Carousel dots: one per per-DB result. Each non-best dot is tinted by
+   its own score (green/amber/red) via inline style; the ".best" dot
+   keeps its gold gradient regardless of score so the canonical winner
+   stays visually identifiable even when the user is browsing a
+   different DB's card. The ".active" modifier marks the dot whose card
+   is currently visible (slight scale + dark ring). */
+.match-card-dots {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  width: 100%;
+  padding: 2px 2px 4px;
+  /* Gap is sized so the worst case — 12 dots, the full Tier 1 fleet
+     plus Google Scholar — exactly spans the card width:
+       12 × 10 px dots + 11 × gap = 100% (the carousel/card width).
+     Solving: gap = (100% − 120 px) / 11. With fewer dots the row is
+     left-aligned at the same gap, so spacing stays consistent across
+     sources. ``max(2px, …)`` protects against extremely narrow cards
+     where the calc would otherwise go negative and dots would overlap. */
+  gap: max(2px, calc((100% - 120px) / 11));
+}
+.match-card-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid #d6d3d1;
+  background: #fafaf9;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+/* Score colour (set inline as --dot-color) is only painted on hover —
+   the carousel stays neutral grey otherwise. The active dot is marked
+   purely by its scale + dark ring (see .match-card-dot-active below)
+   so the score colour stays a hover-time hint, not a persistent label. */
+.match-card-dot:hover {
+  background: var(--dot-color);
+  border-color: var(--dot-color);
+  transform: scale(1.15);
+}
+.match-card-dot-active {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 2px rgba(68, 64, 60, 0.18);
+}
+/* Best dot: keeps its score color as the inner fill (set inline by JS);
+   the gold marker is a 2 px box-shadow ring around the dot plus a soft
+   outer glow. Shadow rings don't grow the dot's bounding box, so size
+   stays consistent across the carousel. Defined AFTER `.dot-active` so
+   the gold ring wins when a dot is both active and best. */
+.match-card-dot-best {
+  box-shadow:
+    0 0 0 2px #ffd700,
+    0 0 5px rgba(255, 215, 0, 0.65);
+}
+.match-card-dot-best.match-card-dot-active {
+  /* Active + best: keep the gold ring, just bump the scale so the
+     active marker is still legible. */
+  transform: scale(1.35);
+  box-shadow:
+    0 0 0 2px #ffd700,
+    0 0 6px rgba(255, 215, 0, 0.75);
+}
+
+/* Diagonal "best" ribbon, top-right of the best-match card. CSS-only:
+   absolutely positioned, rotated 45deg with a gold gradient and tiny
+   shadow for the corner-folded look. The card padding nudges right to
+   keep the ribbon from clipping over the title text. */
+.match-card-with-ribbon {
+  padding-right: 36px;
+}
+.match-card-ribbon {
+  position: absolute;
+  top: 9px;
+  right: -28px;
+  width: 96px;
+  text-align: center;
+  transform: rotate(45deg);
+  /* Shiny light gold — same metallic gradient as the best dot. The
+     embossed text-shadow lifts the white label off the bright midtone
+     so it stays legible across the cornsilk → gold → goldenrod range. */
+  background: linear-gradient(135deg, #fff8dc 0%, #ffd700 50%, #b8860b 100%);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 2px 0;
+  text-shadow: 0 1px 1px rgba(120, 53, 15, 0.55);
+  box-shadow: 0 1px 2px rgba(120, 53, 15, 0.3), inset 0 0 4px rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+  user-select: none;
 }
 .match-title { font-size: 12px; font-weight: 600; color: #44403c; line-height: 1.4; }
 .match-meta { font-size: 10px; color: #78716c; line-height: 1.4; }
 .match-source { font-size: 10px; font-style: italic; color: #57534e; line-height: 1.4; margin-top: 2px; }
 .match-meta-row { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #78716c; flex-wrap: wrap; }
+/* Variant for the pill + "Extra" toggle row: stays single-line so a long
+   DB name like "Semantic Scholar" can't push the toggle to the next row.
+   The DB name renders in full (no truncation). ``space-between`` and the
+   pill's ``flex: 0 0 auto`` keep the pill anchored at the left at its
+   intrinsic content width — clicking Extra/Less only changes the toggle
+   text, never the pill's position or size. */
+.match-meta-row-actions {
+  flex-wrap: nowrap;
+  justify-content: space-between;
+}
+.match-meta-row-actions .match-pill {
+  flex: 0 0 auto;
+}
+/* Toggle text swaps between "Extra ◂" and "Less ▾", which would
+   otherwise change the button width and ripple through the auto-margin
+   layout (perceived as the pill widening). A fixed min-width sized for
+   the longer of the two labels (in either language) keeps the toggle
+   constant across collapsed/expanded states. */
+.match-meta-row-actions > .match-toggle {
+  min-width: 56px;
+  margin-left: 0;
+}
 .match-doi { color: #d97706; word-break: break-all; }
 .match-db {
   font-size: 9px;
@@ -1208,6 +1335,8 @@
   text-align: right;
   padding: 2px 0;
   font-weight: 500;
+  flex-shrink: 0;
+  white-space: nowrap;
   margin-top: 2px;
   margin-left: auto;
 }

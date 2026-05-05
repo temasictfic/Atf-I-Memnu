@@ -496,6 +496,12 @@ export default function VerificationPage() {
   const [matchExpanded, setMatchExpanded] = useState(false)
   useEffect(() => { setMatchExpanded(false) }, [selectedSourceId])
 
+  // Carousel: which DB result card is currently shown. ``null`` = default
+  // to the best match (highest raw_score, kept first in all_results).
+  // Resets on source change so each card opens on its best result.
+  const [selectedMatchDb, setSelectedMatchDb] = useState<string | null>(null)
+  useEffect(() => { setSelectedMatchDb(null); setMatchExpanded(false) }, [selectedSourceId])
+
   const filteredSourceCards = useMemo(() => {
     const q = cardSearchQuery.trim().toLowerCase()
     if (!q) return sortedSourceCards
@@ -2739,13 +2745,20 @@ export default function VerificationPage() {
                     title={t('verification.openGoogleSearch')}
                   >{t('verification.googleSearch')}</button>
                 </div>
-                <div className={styles['section-title']}>{t('verification.bestMatch')}</div>
+                <div className={styles['section-title']}>{t('verification.databaseResults')}</div>
 
                 {hasCompletedResult && r && (
                   <>
-                    {r.best_match ? (
+                    {r.all_results.length > 0 ? (
                       (() => {
-                        const bm = r.best_match
+                        // ``all_results`` is sorted by raw_score desc on the backend,
+                        // so index 0 is the canonical "best" — that's what the ribbon
+                        // marks. The user can click any dot to flip to another DB's
+                        // card; default (no selection) shows the best.
+                        const bestDb = r.all_results[0].database
+                        const activeDb = selectedMatchDb ?? bestDb
+                        const bm = r.all_results.find(m => m.database === activeDb) ?? r.all_results[0]
+                        const isBestVisible = bm.database === bestDb
                         const extras: { key: string; label: string; value: string }[] = []
                         if (bm.volume) extras.push({ key: 'volume', label: t('verification.volume'), value: bm.volume })
                         if (bm.issue) extras.push({ key: 'issue', label: t('verification.issue'), value: bm.issue })
@@ -2758,61 +2771,96 @@ export default function VerificationPage() {
                         if (bm.isbn && bm.isbn.length > 0) extras.push({ key: 'isbn', label: t('verification.isbn'), value: bm.isbn.join(', ') })
                         const hasExtras = extras.length > 0
                         return (
-                          <div className={styles['match-card']}>
-                            <div className={styles['match-title']}>{bm.title}</div>
-                            {bm.authors.length > 0 && (
-                              <div className={styles['match-meta']}>{bm.authors.join(', ')}</div>
-                            )}
-                            {bm.journal && (
-                              <div className={styles['match-source']}>{bm.journal}</div>
-                            )}
-                            <div className={styles['match-meta-row']}>
-                              {bm.year && <span>{bm.year}</span>}
-                              {bm.doi && <span className={styles['match-doi']}>DOI: {bm.doi}</span>}
-                            </div>
-                            <div className={styles['match-meta-row']}>
-                              {bm.url ? (
-                                <button
-                                  type="button"
-                                  className={styles['match-pill']}
-                                  onClick={() => openOverlayWithUrl(bm.url)}
-                                  title={bm.url}
-                                >
-                                  <span className={styles['match-db']}>{bm.database}</span>
-                                  <span className={styles['match-score']} style={{ color: dbScoreColor(bm.score) }}>
-                                    {Math.round(bm.score * 100)}%
-                                  </span>
-                                  <span className={styles['match-pill-arrow']}>&#x2197;</span>
-                                </button>
-                              ) : (
-                                <>
-                                  <span className={styles['match-db']}>{bm.database}</span>
-                                  <span className={styles['match-score']} style={{ color: dbScoreColor(bm.score) }}>
-                                    {Math.round(bm.score * 100)}%
-                                  </span>
-                                </>
-                              )}
-                              {hasExtras && (
-                                <button
-                                  type="button"
-                                  className={styles['match-toggle']}
-                                  onClick={() => setMatchExpanded(v => !v)}
-                                  aria-expanded={matchExpanded}
-                                >
-                                  {matchExpanded ? `${t('verification.lessDetails')} ▾` : `${t('verification.moreDetails')} ◂`}
-                                </button>
-                              )}
-                            </div>
-                            {hasExtras && matchExpanded && (
-                              <div className={styles['match-extras']}>
-                                {extras.map(ex => (
-                                  <div key={ex.key} className={styles['match-extra-row']}>
-                                    <span className={styles['match-extra-label']}>{ex.label}:</span>
-                                    <span className={styles['match-extra-value']}>{ex.value}</span>
-                                  </div>
-                                ))}
+                          <div className={styles['match-card-carousel']}>
+                            {r.all_results.length > 1 && (
+                              <div className={styles['match-card-dots']} role="tablist">
+                                {r.all_results.map(m => {
+                                  const isActive = m.database === bm.database
+                                  const isBest = m.database === bestDb
+                                  // Each dot publishes its score colour as a
+                                  // CSS variable; the stylesheet only paints
+                                  // it on hover. Defaults stay neutral grey,
+                                  // and the active dot is marked by scale +
+                                  // dark ring rather than a persistent fill.
+                                  // The "best" dot adds a gold ring around
+                                  // the outside (via .match-card-dot-best).
+                                  const dotStyle = { '--dot-color': dbScoreColor(m.score) } as React.CSSProperties
+                                  return (
+                                    <button
+                                      key={m.database}
+                                      type="button"
+                                      role="tab"
+                                      aria-selected={isActive}
+                                      title={t('verification.selectDbResult', { db: m.database })}
+                                      className={`${styles['match-card-dot']} ${isActive ? styles['match-card-dot-active'] : ''} ${isBest ? styles['match-card-dot-best'] : ''}`}
+                                      style={dotStyle}
+                                      onClick={() => { setSelectedMatchDb(m.database); setMatchExpanded(false) }}
+                                    />
+                                  )
+                                })}
                               </div>
                             )}
+                            <div className={`${styles['match-card']} ${isBestVisible ? styles['match-card-with-ribbon'] : ''}`}>
+                              {isBestVisible && (
+                                <span className={styles['match-card-ribbon']} aria-label={t('verification.bestRibbon')}>
+                                  {t('verification.bestRibbon')}
+                                </span>
+                              )}
+                              <div className={styles['match-title']}>{bm.title}</div>
+                              {bm.authors.length > 0 && (
+                                <div className={styles['match-meta']}>{bm.authors.join(', ')}</div>
+                              )}
+                              {bm.journal && (
+                                <div className={styles['match-source']}>{bm.journal}</div>
+                              )}
+                              <div className={styles['match-meta-row']}>
+                                {bm.year && <span>{bm.year}</span>}
+                                {bm.doi && <span className={styles['match-doi']}>DOI: {bm.doi}</span>}
+                              </div>
+                              <div className={`${styles['match-meta-row']} ${styles['match-meta-row-actions']}`}>
+                                {bm.url ? (
+                                  <button
+                                    type="button"
+                                    className={styles['match-pill']}
+                                    onClick={() => openOverlayWithUrl(bm.url)}
+                                    title={bm.url}
+                                  >
+                                    <span className={styles['match-db']}>{bm.database}</span>
+                                    <span className={styles['match-score']} style={{ color: dbScoreColor(bm.score) }}>
+                                      {Math.round(bm.score * 100)}%
+                                    </span>
+                                    <span className={styles['match-pill-arrow']}>&#x2197;</span>
+                                  </button>
+                                ) : (
+                                  <>
+                                    <span className={styles['match-db']}>{bm.database}</span>
+                                    <span className={styles['match-score']} style={{ color: dbScoreColor(bm.score) }}>
+                                      {Math.round(bm.score * 100)}%
+                                    </span>
+                                  </>
+                                )}
+                                {hasExtras && (
+                                  <button
+                                    type="button"
+                                    className={styles['match-toggle']}
+                                    onClick={() => setMatchExpanded(v => !v)}
+                                    aria-expanded={matchExpanded}
+                                  >
+                                    {matchExpanded ? `${t('verification.lessDetails')} ▾` : `${t('verification.moreDetails')} ◂`}
+                                  </button>
+                                )}
+                              </div>
+                              {hasExtras && matchExpanded && (
+                                <div className={styles['match-extras']}>
+                                  {extras.map(ex => (
+                                    <div key={ex.key} className={styles['match-extra-row']}>
+                                      <span className={styles['match-extra-label']}>{ex.label}:</span>
+                                      <span className={styles['match-extra-value']}>{ex.value}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )
                       })()
@@ -2820,8 +2868,9 @@ export default function VerificationPage() {
                       <div className={styles['match-empty']}>{t('verification.noMatchFound')}</div>
                     )}
 
-                    {/* All database results */}
-                    <div className={styles['section-title']}>{t('verification.databaseResults')}</div>
+                    {/* All database results — DB link list under the carousel.
+                        No section title here: the single "DATABASE RESULTS"
+                        header above the carousel covers the whole block. */}
                     <div className={styles['detail-db-list']}>
                       {[...enabledDatabases, ...(r.databases_searched.includes('Google Scholar') ? ['Google Scholar'] : [])].map(db => {
                         const match = r.all_results.find((m: MatchResult) => m.database === db)
