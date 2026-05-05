@@ -106,7 +106,9 @@
       "concurrentSourcesLabel": "Concurrent Sources per PDF",
       "concurrentSourcesDesc": "How many sources verify in parallel for one PDF",
       "autoScholarLabel": "Auto Google Scholar after verify",
-      "autoScholarDesc": "Automatically run Google Scholar scan for non-high sources after verification finishes"
+      "autoScholarDesc": "Automatically run Google Scholar scan for non-high sources after verification finishes",
+      "strongMatchLabel": "Strong-match early exit",
+      "strongMatchDesc": "Skip remaining databases on a 100% score with ≥85% title similarity"
     },
     "notes": {
       "title": "Export as PDF",
@@ -114,7 +116,7 @@
       "annotatedPdfDesc": "Save location for annotated PDFs and verification reports",
       "annotatedPdfPlaceholder": "(prompt each time)",
       "reportBibliographicLabel": "Include more info in highest match",
-      "reportBibliographicDesc": "Print the bibliographic details block (volume, pages, publisher, ISSN, etc.) under each highest match card in the verification report"
+      "reportBibliographicDesc": "Print the additional fields (volume, pages, publisher, ISSN, etc.) under each highest match card in the verification report"
     },
     "cache": {
       "title": "Record / Cache",

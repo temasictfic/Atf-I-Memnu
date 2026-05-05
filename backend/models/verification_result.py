@@ -35,6 +35,11 @@ class MatchResult(BaseModel):
     url: str = ""
     search_url: str = ""
     score: float = 0.0
+    # Unclamped composite (base + bonus). Identical to ``score`` whenever the
+    # sum stays in [0, 1]; only diverges (>1.0) when bonuses push it over the
+    # cap. Used to rank "best match" so two saturated 1.00 candidates can
+    # still be ordered by underlying signal strength.
+    raw_score: float = 0.0
     match_details: MatchDetails = MatchDetails()
     # Bibliographic extras — populated by verifiers when the underlying API
     # returns the field. Display-only; never used in scoring.

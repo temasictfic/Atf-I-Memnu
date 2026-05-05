@@ -479,12 +479,12 @@ async def score_scholar(request: ScoreScholarRequest):
         # Keep only the best Scholar candidate, mirroring how every other
         # verifier returns a single MatchResult. Replace any prior Scholar
         # entries so re-runs (e.g. CAPTCHA retry) don't duplicate.
-        best_scholar = max(scholar_matches, key=lambda m: m.score)
+        best_scholar = max(scholar_matches, key=lambda m: m.raw_score)
         existing.all_results = [m for m in existing.all_results if m.database != "Google Scholar"]
         existing.all_results.append(best_scholar)
-        if existing.best_match is None or best_scholar.score > existing.best_match.score:
+        if existing.best_match is None or best_scholar.raw_score > existing.best_match.raw_score:
             existing.best_match = best_scholar
-        existing.all_results.sort(key=lambda m: m.score, reverse=True)
+        existing.all_results.sort(key=lambda m: m.raw_score, reverse=True)
 
     # Re-determine status with potentially new best match
     status, problem_tags = determine_verification_status(

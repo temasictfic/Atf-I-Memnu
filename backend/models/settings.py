@@ -29,6 +29,11 @@ class AppSettings(BaseModel):
     # Persisted only — frontend-driven. The renderer decides whether to
     # auto-open Scholar after a verification finishes; backend has no knob.
     auto_scholar_after_verify: bool = True
+    # When True, the verification orchestrator cancels still-pending Tier 1
+    # verifiers as soon as one of them returns a saturated composite score
+    # (>= 1.0) with a plausible title. Off → every enabled DB is always
+    # queried, even when an early result already proves the citation.
+    strong_match_enabled: bool = True
     # Persisted only — frontend-driven. The renderer decides whether to render
     # the "Bibliographic details" block in best-match cards on the verification
     # report PDF.

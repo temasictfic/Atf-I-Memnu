@@ -111,7 +111,8 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
     if (source.doi or source.arxiv_id) and details.url_match:
         bonus += FIELD_MATCH_BONUS
 
-    composite = max(0.0, min(1.0, base + bonus))
+    raw = base + bonus
+    composite = max(0.0, min(1.0, raw))
 
     return MatchResult(
         database=candidate.get("database", ""),
@@ -123,6 +124,7 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
         url=candidate.get("url", ""),
         search_url=candidate.get("search_url", ""),
         score=round(composite, 4),
+        raw_score=round(max(0.0, raw), 4),
         match_details=details,
         volume=candidate.get("volume"),
         issue=candidate.get("issue"),

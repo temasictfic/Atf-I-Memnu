@@ -106,15 +106,17 @@
       "concurrentSourcesLabel": "PDF başına eş zamanlı kaynak",
       "concurrentSourcesDesc": "Bir PDF için paralel olarak kaç kaynağın doğrulanacağı",
       "autoScholarLabel": "Doğrulama sonrası otomatik Google Scholar",
-      "autoScholarDesc": "Doğrulama bittikten sonra bulunamayan kaynaklar için otomatik olarak Google Scholar taraması çalıştır"
+      "autoScholarDesc": "Doğrulama bittikten sonra bulunamayan kaynaklar için otomatik olarak Google Scholar taraması çalıştır",
+      "strongMatchLabel": "Güçlü eşleşme erken çıkış",
+      "strongMatchDesc": "%100 skor ve ≥%85 başlık benzerliğinde kalan veritabanlarını atla"
     },
     "notes": {
       "title": "PDF olarak dışa aktar",
       "annotatedPdfLabel": "PDF dışa aktarma konumu",
       "annotatedPdfDesc": "Not eklenmiş PDF'ler ve doğrulama raporları kayıt konumu",
       "annotatedPdfPlaceholder": "(her seferinde sor)",
-      "reportBibliographicLabel": "En yüksek eşleşmede daha fazla bilgi göster",
-      "reportBibliographicDesc": "Doğrulama raporundaki en yüksek eşleşme kartında künye bilgileri bloğunu (cilt, sayfa, yayınevi, ISSN vb.) yazdır"
+      "reportBibliographicLabel": "En yüksek eşleşmede daha çok bilgi göster",
+      "reportBibliographicDesc": "Doğrulama raporundaki en yüksek eşleşme kartında ek alanları (cilt, sayfa, yayınevi, ISSN vb.) yazdır"
     },
     "cache": {
       "title": "Kayıtlar / Önbellek",

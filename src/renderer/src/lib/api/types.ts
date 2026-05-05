@@ -72,6 +72,11 @@ export interface MatchResult {
   url: string
   search_url: string
   score: number
+  // Unclamped composite (base + bonus). Same as ``score`` when the sum
+  // stays in [0, 1]; only diverges (>1.0) when bonuses push it past the
+  // cap. Used for "best match" ranking so two saturated 1.00 candidates
+  // can still be ordered by signal strength.
+  raw_score?: number
   match_details: {
     title_similarity: number
     author_match: number
@@ -138,6 +143,7 @@ export interface AppSettings {
   max_concurrent_apis: number
   max_concurrent_sources_per_pdf: number
   auto_scholar_after_verify?: boolean
+  strong_match_enabled?: boolean
   report_include_bibliographic?: boolean
   language?: 'tr' | 'en'
   auto_callout_text_fabricated?: string

@@ -551,6 +551,20 @@ export default function SettingsPage() {
               </span>
             </label>
           </div>
+
+          <div className={styles['setting-row']}>
+            <div className={styles['setting-info']}>
+              <span className={styles['setting-label']}>{t('settings.search.strongMatchLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.search.strongMatchDesc')}</span>
+            </div>
+            <label className={styles['db-toggle']}>
+              <input type="checkbox" checked={settings.strong_match_enabled ?? true}
+                onChange={e => updateSetting('strong_match_enabled', e.target.checked)} />
+              <span className={styles['toggle-track']}>
+                <span className={styles['toggle-thumb']} />
+              </span>
+            </label>
+          </div>
         </section>
 
         {/* Notes */}

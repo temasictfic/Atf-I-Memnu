@@ -10,7 +10,11 @@ from models.source import SourceRectangle, ParsedSource
 from models.verification_result import VerificationResult, MatchResult
 from services.cache_store import save_verify_cache
 from services.match_scorer import classify_decision, determine_verification_status, score_to_band
-from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD, STATUS_MEDIUM_THRESHOLD
+from services.scoring_constants import (
+    LOW_PARSE_CONFIDENCE_THRESHOLD,
+    STATUS_MEDIUM_THRESHOLD,
+    TITLE_MATCH_THRESHOLD,
+)
 from services.search_settings import (
     get_max_concurrent_apis,
     get_max_concurrent_sources_per_pdf,
@@ -135,11 +139,22 @@ def _is_strong_match(result: MatchResult | None) -> bool:
 
     Composite is clamped to ``[0.0, 1.0]`` in ``score_match``, so a
     score of 1.0 means the title+author base plus all applicable field
-    bonuses saturated — every signal we can compute is corroborating.
-    No pending verifier can produce a strictly better result, so the
-    remaining 8 DB queries are pure quota waste.
+    bonuses saturated. The ``title_similarity`` floor guards against
+    the clamp masking a fuzzy title: bonuses (year + venue + DOI) total
+    0.30 and can carry a title as weak as ~0.75 to a saturated score.
+    Requiring the title to clear the !title chip threshold ensures the
+    candidate is unambiguously about the same paper before we cancel
+    the remaining 8 DB queries.
+
+    User-facing toggle: ``strong_match_enabled`` in settings disables
+    this short-circuit entirely, forcing every enabled DB to be queried
+    even when an early result already proves the citation.
     """
+    if not get_current_settings().strong_match_enabled:
+        return False
     if result is None:
+        return False
+    if result.match_details.title_similarity < TITLE_MATCH_THRESHOLD:
         return False
     return result.score >= 1.0
 
@@ -708,8 +723,10 @@ async def _finalize_result(
     """
     url_liveness = url_liveness or {}
 
-    # Best candidate is the highest-scoring match (composite of title+author).
-    best_match = max(all_matches, key=lambda m: m.score) if all_matches else None
+    # Best candidate is ranked by the *unclamped* raw score so two saturated
+    # 1.00 composites can still be ordered by underlying signal strength
+    # (e.g. a candidate with all three field bonuses beats one with two).
+    best_match = max(all_matches, key=lambda m: m.raw_score) if all_matches else None
 
     if parsed is not None:
         status, problem_tags = determine_verification_status(
@@ -732,7 +749,7 @@ async def _finalize_result(
         decision_tag=decision_tag,
         url_liveness=url_liveness,
         best_match=best_match,
-        all_results=sorted(all_matches, key=lambda m: m.score, reverse=True),
+        all_results=sorted(all_matches, key=lambda m: m.raw_score, reverse=True),
         databases_searched=databases_searched,
         parsed_title=parsed_title,
         scholar_url=scholar_url,
