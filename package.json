@@ -24,7 +24,7 @@
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-i18next": "^17.0.6",
-    "zustand": "^5.0.5"
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.4",
@@ -35,7 +35,7 @@
     "electron": "^41.5.0",
     "electron-builder": "^26.9.0",
     "electron-vite": "^5.0.0",
-    "postcss": "^8.5.13",
+    "postcss": "^8.5.14",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
