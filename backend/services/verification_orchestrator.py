@@ -22,7 +22,7 @@ from scrapers.rate_limiter import rate_limiter
 from services.source_extractor import extract_source_fields
 from services.url_checker import check_urls, is_doi_or_arxiv_url
 from utils.text_cleaning import strip_source_noise
-from verifiers._http import RateLimitedError
+from verifiers._http import RateLimitedError, UnauthorizedError
 
 
 # Short-timeout retry pass: DBs that timed out on the main pass get one more
@@ -572,6 +572,22 @@ async def _run_tier1_apis(
                         "found": False,
                         "db_status": "rate_limited",
                         "retry_after": e.retry_after,
+                        "search_url": fallback_url,
+                    })
+                except UnauthorizedError as e:
+                    searched.append(name)
+                    await manager.send_log(
+                        "warning",
+                        f"{name} unauthorized: {e.detail or 'access denied'}",
+                        pdf_id=pdf_id, source_id=source_id, database=name,
+                    )
+                    await manager.broadcast("verify_db_checked", {
+                        "pdf_id": pdf_id,
+                        "source_id": source_id,
+                        "database": name,
+                        "found": False,
+                        "db_status": "unauthorized",
+                        "error_message": (e.detail or str(e))[:200],
                         "search_url": fallback_url,
                     })
                 except Exception as e:

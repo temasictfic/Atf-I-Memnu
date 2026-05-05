@@ -7,9 +7,16 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import (
+    check_parked_url,
+    check_rate_limit,
+    get_session,
+    raise_for_unexpected_status,
+    strip_phrase_chars,
+)
 
 EUROPE_PMC_API = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+_HOST = "www.ebi.ac.uk"
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
@@ -21,8 +28,10 @@ async def search(source: ParsedSource) -> MatchResult | None:
         if result and result.score >= DOI_MATCH_MIN_SCORE:
             return result
 
-    # Priority 2: Title search
-    query = source.title
+    # Priority 2: Title search. Sanitise the title before wrapping in a
+    # quoted Lucene phrase — embedded ``"`` or ``\`` would unbalance it
+    # and surface as a 400 from Europe PMC.
+    query = strip_phrase_chars(source.title or "")
     if not query:
         return None
 
@@ -41,6 +50,7 @@ async def _search_query(
     check_parked_url(EUROPE_PMC_API)
     async with session.get(EUROPE_PMC_API, params=params) as resp:
         check_rate_limit(resp)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()

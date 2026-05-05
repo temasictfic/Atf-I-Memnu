@@ -20,11 +20,13 @@ from models.verification_result import MatchResult
 from services.match_scorer import score_match
 from utils.doi_extractor import extract_arxiv_id
 from verifiers._http import (
+    UpstreamError,
     acquire_or_rate_limited,
     build_headers,
     check_parked_url,
     check_rate_limit,
     get_session,
+    raise_for_unexpected_status,
 )
 
 ARXIV_API = "https://export.arxiv.org/api/query"
@@ -85,6 +87,7 @@ async def _lookup_by_id(
     check_parked_url(ARXIV_API)
     async with session.get(ARXIV_API, params=params, headers=build_headers()) as resp:
         check_rate_limit(resp)
+        raise_for_unexpected_status(ARXIV_HOST, resp)
         if resp.status != 200:
             return None
         text = await resp.text()
@@ -94,8 +97,8 @@ async def _lookup_by_id(
 def _parse_atom_response(xml_text: str, source: ParsedSource) -> MatchResult | None:
     try:
         root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return None
+    except ET.ParseError as e:
+        raise UpstreamError(ARXIV_HOST, 200, f"invalid Atom XML: {e}") from e
 
     entries = root.findall("atom:entry", NS)
     best: MatchResult | None = None

@@ -5,19 +5,36 @@ PubMed has unique US-focused content and earlier indexing of some records.
 No API key required, but an api_key (NCBI) improves rate limits.
 """
 
-import aiohttp
+import time
 from urllib.parse import quote
+
+import aiohttp
 
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import (
+    UnauthorizedError,
+    check_parked_url,
+    check_rate_limit,
+    get_session,
+    raise_for_unexpected_status,
+)
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 _HOST = "eutils.ncbi.nlm.nih.gov"
+
+# Cooldown after NCBI rejects the supplied key — avoids hammering eutils
+# with denied requests for every reference in a batch.
+_UNAUTHORIZED_COOLDOWN_SEC = 3600.0
+_unauthorized_until: float = 0.0
+_UNAUTHORIZED_HINT = (
+    "NCBI rejected the API key. Update it in Settings → API Keys "
+    "(generate one at https://www.ncbi.nlm.nih.gov/account/settings/)."
+)
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -48,6 +65,12 @@ async def _search_query(
     api_key: str | None = None,
 ) -> MatchResult | None:
     """Execute an ESearch + ESummary and return the best match."""
+    global _unauthorized_until
+    has_key = bool(api_key)
+    now = time.monotonic()
+    if has_key and now < _unauthorized_until:
+        raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT)
+
     params: dict[str, str] = {
         "db": "pubmed",
         "term": query,
@@ -62,6 +85,10 @@ async def _search_query(
     await rate_limiter.acquire(_HOST)
     async with session.get(ESEARCH_URL, params=params) as resp:
         check_rate_limit(resp)
+        if has_key and resp.status in (401, 403):
+            _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
+            raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT, status=resp.status)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()
@@ -82,6 +109,10 @@ async def _search_query(
     await rate_limiter.acquire(_HOST)
     async with session.get(ESUMMARY_URL, params=summary_params) as resp:
         check_rate_limit(resp)
+        if has_key and resp.status in (401, 403):
+            _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
+            raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT, status=resp.status)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()

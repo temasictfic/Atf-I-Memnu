@@ -7,15 +7,18 @@ PubMed, and the other Tier-1 verifiers miss.
 Access requires IP allowlist registration via
 https://www.base-search.net/about/en/contact.php — applicants must select
 **"Access BASE's HTTP API"** (NOT OAI-PMH; this verifier uses the search
-interface). Without an allowlisted IP the API returns 401/403, which this
-verifier handles silently so the remaining 9 verifiers carry on.
+interface). Without an allowlisted IP, BASE returns either HTTP 401/403 OR
+HTTP 200 with a JSON ``{"error": "Access denied for IP address ..."}``
+body — both are surfaced as ``UnauthorizedError`` so the orchestrator can
+broadcast a distinct ``db_status: "unauthorized"`` event instead of the
+misleading ``no_match``.
 
 The optional ``api_key`` (read from ``api_keys["base"]`` in settings) is
 forwarded as a ``user`` parameter — BASE uses it as a contact identifier
 for allowlisted callers.
 """
 
-import logging
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -26,18 +29,24 @@ from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from verifiers._http import (
+    UnauthorizedError,
+    UpstreamError,
     check_parked_url,
     check_rate_limit,
     fetch_with_year_fallback,
     get_session,
+    raise_for_unexpected_status,
+    strip_phrase_chars,
 )
 
 BASE_API = "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi"
 _HOST = "api.base-search.net"
 
-_log = logging.getLogger(__name__)
-# Single-shot warn so the user sees one info line per process, not one per source.
-_warned_unavailable = False
+# Once BASE rejects this process for IP/auth, suppress further outbound
+# requests for an hour so we don't hammer their API on every source.
+# Surfaces UnauthorizedError immediately during the cooldown.
+_UNAUTHORIZED_COOLDOWN_SEC = 3600.0
+_unauthorized_until: float = 0.0
 
 
 def _coerce_str(value: Any) -> str:
@@ -61,7 +70,7 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     Mirrors the OpenAlex / Semantic Scholar pattern: title-quoted Solr query,
     ±1-year filter, single retry without the year filter on empty result.
     """
-    title = (source.title or "").strip()
+    title = strip_phrase_chars(source.title or "")
     if not title:
         return None
 
@@ -70,7 +79,7 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     # titles like "Introduction".
     query_parts = [f'dctitle:"{title}"']
     if source.authors:
-        first = (source.authors[0] or "").split(",")[0].strip()
+        first = strip_phrase_chars((source.authors[0] or "").split(",")[0])
         if first and len(first) > 1:
             query_parts.append(f'dccreator:"{first}"')
     query = " AND ".join(query_parts)
@@ -94,33 +103,45 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     )
 
 
+_UNAUTHORIZED_HINT = (
+    "IP not allowlisted. Register at https://www.base-search.net/about/en/contact.php "
+    "and select \"Access BASE's HTTP API\"."
+)
+
+
 async def _fetch_best_match(
     session: aiohttp.ClientSession,
     params: dict[str, str],
     source: ParsedSource,
 ) -> MatchResult | None:
     """Execute one BASE request and return the highest-scoring hit."""
-    global _warned_unavailable
+    global _unauthorized_until
+    now = time.monotonic()
+    if now < _unauthorized_until:
+        raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT)
+
     check_parked_url(BASE_API)
     await rate_limiter.acquire(_HOST)
     async with session.get(BASE_API, params=params) as resp:
         check_rate_limit(resp)
         if resp.status in (401, 403):
-            if not _warned_unavailable:
-                _log.info(
-                    "BASE returned HTTP %s — IP not allowlisted. Register at "
-                    "https://www.base-search.net/about/en/contact.php and "
-                    "select 'Access BASE's HTTP API' to enable.",
-                    resp.status,
-                )
-                _warned_unavailable = True
-            return None
+            _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
+            raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT, status=resp.status)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         try:
             data = await resp.json(content_type=None)
-        except aiohttp.ContentTypeError:
-            return None
+        except (aiohttp.ContentTypeError, ValueError) as e:
+            raise UpstreamError(_HOST, 200, f"invalid JSON: {e}") from e
+
+        # BASE returns 200 with a top-level ``error`` key (and no ``response``)
+        # for IP/auth denials — see backend/scripts/debug_base.py output.
+        if isinstance(data, dict) and "response" not in data and data.get("error"):
+            err = str(data.get("error", "")).strip()
+            if "access denied" in err.lower() or "ip address" in err.lower():
+                _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
+                raise UnauthorizedError(_HOST, detail=err or _UNAUTHORIZED_HINT, status=200)
 
         docs = (data.get("response") or {}).get("docs") or []
         best: MatchResult | None = None

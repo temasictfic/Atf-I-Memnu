@@ -10,7 +10,13 @@ from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.search_settings import get_polite_pool_email
-from verifiers._http import check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
+from verifiers._http import (
+    check_parked_url,
+    check_rate_limit,
+    fetch_with_year_fallback,
+    get_session,
+    raise_for_unexpected_status,
+)
 
 OPENALEX_API = "https://api.openalex.org/works"
 _HOST = "api.openalex.org"
@@ -66,6 +72,7 @@ async def _fetch_best_match(
     await rate_limiter.acquire(_HOST)
     async with session.get(OPENALEX_API, params=params) as resp:
         check_rate_limit(resp)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()

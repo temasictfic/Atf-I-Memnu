@@ -1,5 +1,6 @@
 """Semantic Scholar API verifier."""
 
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -9,7 +10,15 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
-from verifiers._http import RateLimitedError, check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
+from verifiers._http import (
+    RateLimitedError,
+    UnauthorizedError,
+    check_parked_url,
+    check_rate_limit,
+    fetch_with_year_fallback,
+    get_session,
+    raise_for_unexpected_status,
+)
 
 API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
 _HOST = "api.semanticscholar.org"
@@ -21,6 +30,14 @@ _HOST = "api.semanticscholar.org"
 # IP are the pattern that gets keys flagged. Treat the floor as 5 minutes
 # to match the documented bucket window.
 _ANON_PARK_FLOOR_SECONDS = 300.0
+
+# Cooldown after S2 rejects the supplied x-api-key so we don't spam denied
+# requests at their auth endpoint.
+_UNAUTHORIZED_COOLDOWN_SEC = 3600.0
+_unauthorized_until: float = 0.0
+_UNAUTHORIZED_HINT = (
+    "Semantic Scholar rejected the API key. Update it in Settings → API Keys."
+)
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -64,6 +81,12 @@ async def _fetch_best_match(
     headers: dict[str, str] | None = None,
 ) -> MatchResult | None:
     """Execute one S2 request and return the highest-scoring match."""
+    global _unauthorized_until
+    has_key = bool(headers and headers.get("x-api-key"))
+    now = time.monotonic()
+    if has_key and now < _unauthorized_until:
+        raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT)
+
     check_parked_url(API_URL)
     await rate_limiter.acquire(_HOST)
     async with session.get(API_URL, params=params, headers=headers or {}) as resp:
@@ -75,9 +98,16 @@ async def _fetch_best_match(
             # the same exhausted bucket. Keyed users hit the per-user
             # 1 rps cap which recovers in seconds, so leave the default
             # park behavior for them.
-            if not (headers and headers.get("x-api-key")):
+            if not has_key:
                 rate_limiter.park(_HOST, _ANON_PARK_FLOOR_SECONDS)
             raise
+        # Only treat 401/403 as an auth error when a key was supplied; an
+        # anonymous 401 would be a server-side anomaly, not something the
+        # user can fix by updating settings.
+        if has_key and resp.status in (401, 403):
+            _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
+            raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT, status=resp.status)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()

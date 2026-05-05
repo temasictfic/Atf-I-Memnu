@@ -13,7 +13,13 @@ from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE, HIGH_PARSE_CONFIDENCE_THRESHOLD
 from services.search_settings import get_polite_pool_email
-from verifiers._http import build_headers, check_parked_url, check_rate_limit, get_session
+from verifiers._http import (
+    build_headers,
+    check_parked_url,
+    check_rate_limit,
+    get_session,
+    raise_for_unexpected_status,
+)
 
 CROSSREF_API = "https://api.crossref.org/works"
 _HOST = "api.crossref.org"
@@ -49,6 +55,7 @@ async def search_by_doi(source: ParsedSource) -> MatchResult | None:
     await rate_limiter.acquire(_HOST, rate=_crossref_pace_seconds())
     async with session.get(url, headers=build_headers()) as resp:
         check_rate_limit(resp)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()
@@ -146,6 +153,7 @@ async def _fetch_best_match(
     await rate_limiter.acquire(_HOST, rate=_crossref_pace_seconds())
     async with session.get(CROSSREF_API, params=params, headers=build_headers()) as resp:
         check_rate_limit(resp)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()

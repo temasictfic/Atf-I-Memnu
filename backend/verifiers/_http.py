@@ -41,6 +41,84 @@ class RateLimitedError(Exception):
         super().__init__(msg)
 
 
+class UnauthorizedError(Exception):
+    """Raised when an upstream API rejects the caller's credentials or IP.
+
+    Distinct from RateLimitedError because the remediation is different —
+    register an allowlist entry / fix the API key, not back off and retry.
+    BASE in particular returns HTTP 200 with a JSON ``error`` body for IP
+    denials, so verifiers may need to inspect the response body, not just
+    the status code, before raising this.
+    """
+
+    def __init__(self, host: str, detail: str = "", status: int | None = None):
+        self.host = host
+        self.detail = detail
+        self.status = status
+        msg = f"{host} unauthorized"
+        if status is not None:
+            msg += f" (HTTP {status})"
+        if detail:
+            msg += f": {detail}"
+        super().__init__(msg)
+
+
+class UpstreamError(Exception):
+    """Raised when an upstream API returns a 5xx, an unexpected 4xx, or a
+    malformed body. Falls through to the orchestrator's generic ``except
+    Exception`` clause and surfaces as ``db_status: "error"`` — distinct
+    from a real ``no_match`` so users can tell "DB had a hiccup" apart
+    from "DB doesn't have this paper".
+
+    401/403/404/429 are intentionally NOT raised through this — they have
+    their own typed exceptions or legitimate ``no_match`` semantics.
+    """
+
+    def __init__(self, host: str, status: int | None, detail: str = ""):
+        self.host = host
+        self.status = status
+        self.detail = detail
+        msg = f"{host} returned"
+        if status is not None:
+            msg += f" HTTP {status}"
+        if detail:
+            msg += f": {detail}"
+        super().__init__(msg)
+
+
+def raise_for_unexpected_status(host: str, resp: aiohttp.ClientResponse) -> None:
+    """Raise ``UpstreamError`` for 5xx and unexpected 4xx responses.
+
+    Skips 401/403 (handled by per-verifier ``UnauthorizedError`` raises),
+    404 (legitimate "not found" → silent ``no_match``), and 429 (already
+    raised as ``RateLimitedError`` by ``check_rate_limit`` upstream).
+    Call this immediately after ``check_rate_limit`` and any auth-status
+    check, before the verifier's ``if resp.status != 200: return None``
+    fallthrough — only 404 should reach the silent path now.
+    """
+    status = resp.status
+    if status in (200, 401, 403, 404, 429):
+        return
+    if 500 <= status < 600:
+        raise UpstreamError(host, status, "server error")
+    if 400 <= status < 500:
+        raise UpstreamError(host, status, "bad request")
+
+
+def strip_phrase_chars(s: str) -> str:
+    """Strip characters that break a quoted-phrase query.
+
+    Used by verifiers (BASE Solr, WoS Clarivate) that interpolate the title
+    into ``field:"<title>"``. Inside a quoted phrase, only ``"`` and ``\\``
+    are syntactically dangerous — other Solr/WoS operators lose their
+    special meaning. Whitespace is collapsed for tidier query strings.
+    """
+    if not s:
+        return ""
+    cleaned = s.replace("\\", " ").replace('"', " ")
+    return " ".join(cleaned.split())
+
+
 def _parse_retry_after(value: str | None) -> float | None:
     """Parse a Retry-After header. Accepts delta-seconds or HTTP-date."""
     if not value:

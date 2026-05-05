@@ -5,6 +5,7 @@ open-access journals, and data sources (OpenAlex-like coverage with a European
 and green-OA bias). No API key required.
 """
 
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -16,7 +17,15 @@ from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.openaire_token_manager import get_access_token
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
-from verifiers._http import RateLimitedError, check_parked_url, check_rate_limit, fetch_with_year_fallback, get_session
+from verifiers._http import (
+    RateLimitedError,
+    UnauthorizedError,
+    check_parked_url,
+    check_rate_limit,
+    fetch_with_year_fallback,
+    get_session,
+    raise_for_unexpected_status,
+)
 
 OPENAIRE_API = "https://api.openaire.eu/graph/v2/researchProducts"
 _HOST = "api.openaire.eu"
@@ -38,6 +47,17 @@ _HOUR_SECONDS = 3600
 # Register the safe (anonymous) cap at import time. The token manager
 # upgrades to the authed cap whenever a refresh token is configured.
 rate_limiter.register_window(_HOST, _ANON_HOURLY_CAP, _HOUR_SECONDS)
+
+# Cooldown after OpenAIRE rejects an attached Bearer — usually a stale or
+# revoked access token. Refresh-token exchange failures are already
+# surfaced through openaire_token_manager._runtime_status, so this only
+# fires for the in-flight authenticated request path.
+_UNAUTHORIZED_COOLDOWN_SEC = 3600.0
+_unauthorized_until: float = 0.0
+_UNAUTHORIZED_HINT = (
+    "OpenAIRE rejected the access token. Reconnect your OpenAIRE refresh "
+    "token in Settings → API Keys."
+)
 
 
 def update_window_for_auth_state(*, authenticated: bool) -> None:
@@ -115,6 +135,9 @@ async def _fetch_best_match(
     (anonymous) to 7,200 req/hour. A missing or broken token silently falls
     back to anonymous so a bad paste never breaks verification.
     """
+    global _unauthorized_until
+    now = time.monotonic()
+
     check_parked_url(OPENAIRE_API)
     if not rate_limiter.consume_window(_HOST):
         wait = rate_limiter.window_seconds_until_slot(_HOST)
@@ -128,8 +151,15 @@ async def _fetch_best_match(
     headers = (
         {"Authorization": f"Bearer {access_token}"} if access_token else None
     )
+    has_bearer = access_token is not None
+    if has_bearer and now < _unauthorized_until:
+        raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT)
     async with session.get(OPENAIRE_API, params=params, headers=headers) as resp:
         check_rate_limit(resp)
+        if has_bearer and resp.status in (401, 403):
+            _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
+            raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT, status=resp.status)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()

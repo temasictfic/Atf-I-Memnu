@@ -11,7 +11,7 @@ under an institutional Web of Science Core Collection subscription. Apply
 at https://developer.clarivate.com/.
 """
 
-import logging
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -26,10 +26,14 @@ from services.scoring_constants import DOI_MATCH_MIN_SCORE
 from services.settings_store import get_current_settings
 from verifiers._http import (
     RateLimitedError,
+    UnauthorizedError,
+    UpstreamError,
     build_headers,
     check_parked_url,
     check_rate_limit,
     get_session,
+    raise_for_unexpected_status,
+    strip_phrase_chars,
 )
 
 # Clarivate's OpenAPI spec lists both /v1 and /v2 as supported servers with
@@ -42,10 +46,15 @@ from verifiers._http import (
 WOS_API = "https://api.clarivate.com/apis/wos-starter/v2/documents"
 _HOST = "api.clarivate.com"
 
-_log = logging.getLogger(__name__)
-# Single-shot warn so the user sees one info line per process when their key
-# is rejected, not one per source in a 200-citation batch.
-_warned_unauthorized = False
+# Once Clarivate rejects this process for an invalid/expired key, suppress
+# further outbound requests for an hour so we don't keep burning the daily
+# quota and don't get the key flagged. UnauthorizedError still surfaces per
+# source so the UI stays consistent.
+_UNAUTHORIZED_COOLDOWN_SEC = 3600.0
+_unauthorized_until: float = 0.0
+_UNAUTHORIZED_HINT = (
+    "Invalid or expired Clarivate API key. Update it in Settings → API Keys."
+)
 
 # Daily request caps for the two user-selectable Web of Science *Starter*
 # API tiers. The Clarivate signup form at developer.clarivate.com only
@@ -103,10 +112,12 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
     if not title:
         return None
 
-    # WoS query: TI for the title field. Strip embedded double quotes —
-    # the ``q`` parameter is a single-line query string and a stray quote
-    # would unbalance the phrase wrapper.
-    safe_title = title.replace('"', "")
+    # WoS query: TI for the title field, wrapped in a quoted phrase. Strip
+    # ``"`` and ``\`` — the only chars that can break the phrase syntax —
+    # and collapse whitespace via the shared sanitiser.
+    safe_title = strip_phrase_chars(title)
+    if not safe_title:
+        return None
     base_q = f'TI="{safe_title}"'
 
     # Year-restricted pass first; fall back to a year-less query when the
@@ -138,7 +149,11 @@ async def _query(
     headers: dict[str, str],
 ) -> MatchResult | None:
     """Execute one WoS request and return the highest-scoring hit."""
-    global _warned_unauthorized
+    global _unauthorized_until
+    now = time.monotonic()
+    if now < _unauthorized_until:
+        raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT)
+
     check_parked_url(WOS_API)
     tier = _wos_tier()
     cap = _DAILY_CAPS[tier]
@@ -154,20 +169,15 @@ async def _query(
     async with session.get(WOS_API, params=params, headers=headers) as resp:
         check_rate_limit(resp)
         if resp.status in (401, 403):
-            if not _warned_unauthorized:
-                _log.info(
-                    "Web of Science returned HTTP %s — invalid or expired API key. "
-                    "Update the key in Settings -> API Keys.",
-                    resp.status,
-                )
-                _warned_unauthorized = True
-            return None
+            _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
+            raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT, status=resp.status)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         try:
             data = await resp.json(content_type=None)
-        except (aiohttp.ContentTypeError, ValueError):
-            return None
+        except (aiohttp.ContentTypeError, ValueError) as e:
+            raise UpstreamError(_HOST, 200, f"invalid JSON: {e}") from e
 
         hits = data.get("hits") or []
         if not isinstance(hits, list):

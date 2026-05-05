@@ -9,13 +9,16 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
 from verifiers._http import (
+    UpstreamError,
     build_headers,
     check_parked_url,
     check_rate_limit,
     get_session,
+    raise_for_unexpected_status,
 )
 
 TRDIZIN_API = "https://search.trdizin.gov.tr/api/defaultSearch/publication/"
+_HOST = "search.trdizin.gov.tr"
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
@@ -37,18 +40,18 @@ async def search(source: ParsedSource) -> MatchResult | None:
     check_parked_url(TRDIZIN_API)
     async with session.get(TRDIZIN_API, params=params, headers=build_headers()) as resp:
         check_rate_limit(resp)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         # search.trdizin.gov.tr intermittently returns HTML error pages or
-        # text/plain payloads on transient backend hiccups. Tolerate those
-        # as a silent no-match rather than letting aiohttp's ContentTypeError
-        # bubble up to the orchestrator's generic ``error`` handler — that
-        # would paint a red dot with a cryptic exception string for what is
-        # really just an upstream blip.
+        # text/plain payloads on transient backend hiccups. Surface those
+        # as ``error`` (red dot with detail) so users can tell an upstream
+        # blip from a real "not in TRDizin" miss — matches the policy in
+        # the rest of the verifiers since the JSON-error promotion.
         try:
             data = await resp.json(content_type=None)
-        except (aiohttp.ContentTypeError, ValueError):
-            return None
+        except (aiohttp.ContentTypeError, ValueError) as e:
+            raise UpstreamError(_HOST, 200, f"invalid JSON: {e}") from e
 
         hits = data.get("hits", {}).get("hits", [])
         if not hits:

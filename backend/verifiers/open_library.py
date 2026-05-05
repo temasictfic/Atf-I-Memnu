@@ -11,9 +11,15 @@ from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
-from verifiers._http import check_parked_url, check_rate_limit, get_session
+from verifiers._http import (
+    check_parked_url,
+    check_rate_limit,
+    get_session,
+    raise_for_unexpected_status,
+)
 
 SEARCH_API = "https://openlibrary.org/search.json"
+_HOST = "openlibrary.org"
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
@@ -48,6 +54,7 @@ async def _search_query(
     check_parked_url(SEARCH_API)
     async with session.get(SEARCH_API, params=params) as resp:
         check_rate_limit(resp)
+        raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
         data = await resp.json()

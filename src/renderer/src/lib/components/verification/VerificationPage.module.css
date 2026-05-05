@@ -893,6 +893,7 @@
 .dot-timeout { background: #92400e; }
 .dot-error { background: #000000; }
 .dot-rate_limited { background: #b508ea; }
+.dot-unauthorized { background: #ffff03; border: 1px solid #c2410c; }
 .dot-skipped { background: #cbd5e1; border: 1px dashed #94a3b8; }
 .dot-current { background: #3b82f6; animation: pulse 1s infinite; }
 @keyframes pulse {
