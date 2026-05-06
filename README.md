@@ -1,5 +1,7 @@
 # Atf-ı Memnu
 
+![Atf-ı Memnu](screenshots/atfımemnu-header.png)
+
 A Windows desktop app for parsing academic PDFs, extracting their source lists, and verifying each source against a panel of scholarly databases — with a dedicated review UI for annotating, correcting, and approving the extracted sources before verification, plus an exportable annotated PDF and a from-scratch verification report.
 
 ## What it does
