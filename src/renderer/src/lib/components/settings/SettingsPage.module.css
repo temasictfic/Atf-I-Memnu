@@ -480,3 +480,41 @@
   color: #dc2626;
   margin: 0;
 }
+
+/* Secret-input wrapper. Used for API keys / refresh tokens that ship as
+   <input type="password"> by default and reveal as plain text when the
+   user clicks the eye. The wrapper takes the input's external sizing
+   (width/flex from the parent) and the input itself fills it; the eye
+   button is absolutely positioned over the input's right padding. */
+.secret-input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+.secret-input-wrap > input {
+  width: 100%;
+  padding-right: 34px;
+}
+.secret-reveal-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #a8a29e;
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.secret-reveal-btn:hover { color: #292524; background: #f5f5f4; }
+.secret-reveal-btn:focus-visible {
+  outline: 2px solid #d97706;
+  outline-offset: 1px;
+}

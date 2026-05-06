@@ -1,8 +1,74 @@
 import { useState } from 'react'
+import type { CSSProperties, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { defaultDatabaseIds, useSettingsStore } from '../../stores/settings-store'
 import styles from './SettingsPage.module.css'
 import pkg from '../../../../../../package.json'
+
+interface SecretInputProps {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  className?: string
+  style?: CSSProperties
+  disabled?: boolean
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
+}
+
+// Wraps a password-style input with a per-instance reveal toggle. The
+// outer span inherits the caller's sizing (passed via `style`) so the
+// existing flex layout stays unchanged when this replaces a bare input.
+function SecretInput({
+  value,
+  onChange,
+  placeholder,
+  className,
+  style,
+  disabled,
+  onKeyDown,
+}: SecretInputProps) {
+  const { t } = useTranslation()
+  const [revealed, setRevealed] = useState(false)
+  const label = revealed ? t('settings.apiKeys.hideSecret') : t('settings.apiKeys.revealSecret')
+  return (
+    <span className={styles['secret-input-wrap']} style={style}>
+      <input
+        type={revealed ? 'text' : 'password'}
+        className={className}
+        value={value}
+        placeholder={placeholder}
+        onChange={e => onChange(e.target.value)}
+        disabled={disabled}
+        onKeyDown={onKeyDown}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <button
+        type="button"
+        className={styles['secret-reveal-btn']}
+        onClick={() => setRevealed(r => !r)}
+        title={label}
+        aria-label={label}
+        aria-pressed={revealed}
+        tabIndex={-1}
+      >
+        {revealed ? (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M2 2l12 12" strokeLinecap="round" />
+            <path d="M3.5 6.5C2.5 7.6 2 8 2 8s2.5 4 6 4c1.1 0 2.1-.4 3-.9" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M6.5 4.5C7 4.2 7.5 4 8 4c3.5 0 6 4 6 4s-.6.8-1.6 1.8" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M6.6 6.6a2 2 0 002.8 2.8" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M2 8s2.5-4 6-4 6 4 6 4-2.5 4-6 4-6-4-6-4z" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="8" cy="8" r="2" />
+          </svg>
+        )}
+      </button>
+    </span>
+  )
+}
 
 const GITHUB_REPO_URL = 'https://github.com/temasictfic/Atf-I-Memnu'
 
@@ -290,12 +356,11 @@ export default function SettingsPage() {
                 <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
             </a>
-            <input
-              type="password"
+            <SecretInput
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.semantic_scholar ?? ''}
               placeholder={t('settings.apiKeys.semanticScholarPlaceholder')}
-              onChange={e => updateApiKey('semantic_scholar', e.target.value)}
+              onChange={v => updateApiKey('semantic_scholar', v)}
             />
           </div>
 
@@ -315,12 +380,11 @@ export default function SettingsPage() {
                 <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
             </a>
-            <input
-              type="password"
+            <SecretInput
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.pubmed ?? ''}
               placeholder={t('settings.apiKeys.optional')}
-              onChange={e => updateApiKey('pubmed', e.target.value)}
+              onChange={v => updateApiKey('pubmed', v)}
             />
           </div>
 
@@ -340,12 +404,11 @@ export default function SettingsPage() {
                 <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
             </a>
-            <input
-              type="password"
+            <SecretInput
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
               value={settings.api_keys?.base ?? ''}
               placeholder={t('settings.apiKeys.basePlaceholder')}
-              onChange={e => updateApiKey('base', e.target.value)}
+              onChange={v => updateApiKey('base', v)}
             />
           </div>
 
@@ -416,13 +479,13 @@ export default function SettingsPage() {
                 <p className={styles['openaire-step-hint']}>{t('settings.openaire.stepHint')}</p>
 
                 <div className={styles['openaire-input-row']}>
-                  <input
-                    type="password"
+                  <SecretInput
                     className={styles['openaire-input']}
+                    style={{ flex: 1 }}
                     value={openaireTokenInput}
                     placeholder={t('settings.openaire.tokenPlaceholder')}
-                    onChange={e => {
-                      setOpenaireTokenInput(e.target.value)
+                    onChange={v => {
+                      setOpenaireTokenInput(v)
                       if (openaireError) setOpenaireError(null)
                     }}
                     onKeyDown={e => {
@@ -482,13 +545,12 @@ export default function SettingsPage() {
           </div>
 
           <div className={styles['setting-row']} style={{ gap: 8, borderBottom: 'none' }}>
-            <input
-              type="password"
+            <SecretInput
               className={styles['setting-input']}
-              style={{ flex: '0 0 450px', textAlign: 'left', padding: '8px 10px', boxSizing: 'border-box' }}
+              style={{ flex: '0 0 450px', textAlign: 'left', boxSizing: 'border-box' }}
               value={settings.api_keys?.wos ?? ''}
               placeholder={t('settings.wos.keyPlaceholder')}
-              onChange={e => updateApiKey('wos', e.target.value)}
+              onChange={v => updateApiKey('wos', v)}
             />
             <select
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
@@ -583,16 +645,16 @@ export default function SettingsPage() {
               <input
                 type="text"
                 className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
-                value={settings.annotated_pdf_dir ?? ''}
+                value={settings.exported_pdf_dir ?? ''}
                 placeholder={t('settings.notes.annotatedPdfPlaceholder')}
-                onChange={e => updateSetting('annotated_pdf_dir', e.target.value)}
+                onChange={e => updateSetting('exported_pdf_dir', e.target.value)}
               />
               <button
                 type="button"
                 className={styles['action-button']}
                 onClick={async () => {
                   const dir = await window.electronAPI.selectDirectory()
-                  if (dir) updateSetting('annotated_pdf_dir', dir)
+                  if (dir) updateSetting('exported_pdf_dir', dir)
                 }}
               >
                 {t('common.browse')}
