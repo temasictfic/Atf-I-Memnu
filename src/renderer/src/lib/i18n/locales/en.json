@@ -74,21 +74,20 @@
     },
     "wos": {
       "title": "Web of Science",
-      "description": "Daily-capped API access to the Web of Science Core Collection. Apply via Portal.",
+      "description": "Daily-capped API access to the Web of Science Core Collection. Apply via Portal",
       "keyPlaceholder": "X-ApiKey value",
       "requestKey": "Open Clarivate Dev Portal",
-      "tierDesc": "Stops verifying for the day at the limit.",
-      "tierStarterFree": "Free Trial — 50 reqs/day",
-      "tierStarterInstitutional": "Institutional — 5,000 reqs/day"
+      "tierStarterFree": "Free Trial - 50 reqs/day",
+      "tierStarterInstitutional": "Institutional - 5,000 reqs/day"
     },
     "openaire": {
       "title": "OpenAIRE Connection",
-      "description": "Free registration raises the OpenAIRE rate limit from 60 to 7,200 requests/hour.",
+      "description": "Free registration raises the OpenAIRE rate limit from 60 to 7,200 requests/hour",
       "openTokenPage": "Open OpenAIRE token page",
-      "stepHint": "On OpenAIRE: My Account → Personal access token → Get a refresh token → Copy.",
+      "stepHint": "On OpenAIRE: My Account → Personal access token → Get a refresh token → Copy",
       "tokenPlaceholder": "Paste your OpenAIRE refresh token here",
       "pasteButton": "Paste",
-      "pasteFailed": "Couldn't read from clipboard. Paste manually with Ctrl+V.",
+      "pasteFailed": "Couldn't read from clipboard. Paste manually with Ctrl+V",
       "connectButton": "Connect",
       "connecting": "Connecting…",
       "validationError": "Couldn't verify the token — double-check you copied the whole refresh token, not the access token.",

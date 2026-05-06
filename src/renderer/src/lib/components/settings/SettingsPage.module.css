@@ -449,7 +449,7 @@
      outer width (no padding/border surprise), which is what the math
      in .openaire-token-btn assumes. */
   box-sizing: border-box;
-  width: 100px;
+  width: 106px;
   padding: 8px 10px;
   border: 1px solid #d6d3d1;
   background: white;
@@ -467,14 +467,14 @@
    horizontal padding would inflate it past the Paste button). */
 .openaire-input-row .action-button {
   box-sizing: border-box;
-  width: 100px;
+  width: 106px;
   min-width: 0;
 }
 /* Header "open external portal" buttons (OpenAIRE token page, Clarivate
-   Dev Portal). Locked to 208px so they line up with each other AND with
+   Dev Portal). Locked to 220px so they line up with each other AND with
    the combined Paste + 8px gap + Connect group below the OpenAIRE input
-   (100 + 8 + 100 = 208px). */
-.action-button-portal { box-sizing: border-box; width: 208px; }
+   (106 + 8 + 106 = 220px), matching the API-keys section input width. */
+.action-button-portal { box-sizing: border-box; width: 220px; }
 .openaire-error {
   font-size: 11px;
   color: #dc2626;

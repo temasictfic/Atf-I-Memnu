@@ -482,24 +482,23 @@ export default function SettingsPage() {
           </div>
 
           <div className={styles['setting-row']} style={{ gap: 8, borderBottom: 'none' }}>
-            <span className={styles['setting-desc']} style={{ flex: 1 }}>
-              {t('settings.wos.tierDesc')}
-            </span>
+            <input
+              type="password"
+              className={styles['setting-input']}
+              style={{ flex: '0 0 450px', textAlign: 'left', padding: '8px 10px', boxSizing: 'border-box' }}
+              value={settings.api_keys?.wos ?? ''}
+              placeholder={t('settings.wos.keyPlaceholder')}
+              onChange={e => updateApiKey('wos', e.target.value)}
+            />
             <select
               className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
+              style={{ padding: '8px 10px', boxSizing: 'border-box' }}
               value={settings.api_keys?.wos_tier ?? 'starter_free'}
               onChange={e => updateApiKey('wos_tier', e.target.value)}
             >
               <option value="starter_free">{t('settings.wos.tierStarterFree')}</option>
               <option value="starter_institutional">{t('settings.wos.tierStarterInstitutional')}</option>
             </select>
-            <input
-              type="password"
-              className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
-              value={settings.api_keys?.wos ?? ''}
-              placeholder={t('settings.wos.keyPlaceholder')}
-              onChange={e => updateApiKey('wos', e.target.value)}
-            />
           </div>
         </section>
 

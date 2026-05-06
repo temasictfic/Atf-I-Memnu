@@ -74,18 +74,17 @@
     },
     "wos": {
       "title": "Web of Science",
-      "description": "Web of Science Core Collection'a günlük kotalı API erişimi. Portal üzerinden başvurun.",
+      "description": "Web of Science Core Collection'a günlük kotalı API erişimi. Portal üzerinden başvurun",
       "keyPlaceholder": "X-ApiKey değeri",
       "requestKey": "Clarivate Dev Portal'ı aç",
-      "tierDesc": "Limit dolunca o gün için doğrulama durur.",
-      "tierStarterFree": "Free Trial — 50 istek/gün",
-      "tierStarterInstitutional": "Institutional — 5.000 istek/gün"
+      "tierStarterFree": "Free Trial - 50 istek/gün",
+      "tierStarterInstitutional": "Institutional - 5.000 istek/gün"
     },
     "openaire": {
       "title": "OpenAIRE Bağlantısı",
-      "description": "Ücretsiz kayıt, OpenAIRE saatlik istek limitini 60'tan 7.200'e çıkarır.",
+      "description": "Ücretsiz kayıt, OpenAIRE saatlik istek limitini 60'tan 7.200'e çıkarır",
       "openTokenPage": "OpenAIRE jeton sayfasını aç",
-      "stepHint": "OpenAIRE'de: Hesabım → Kişisel erişim jetonu → Yenileme jetonu al → Kopyala.",
+      "stepHint": "OpenAIRE'de: Hesabım → Kişisel erişim jetonu → Yenileme jetonu al → Kopyala",
       "tokenPlaceholder": "OpenAIRE yenileme jetonunuzu buraya yapıştırın",
       "pasteButton": "Yapıştır",
       "pasteFailed": "Panodan okunamadı. Ctrl+V ile elle yapıştırın.",
