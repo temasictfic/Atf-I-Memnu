@@ -70,7 +70,9 @@
       "baseDesc": "\"Access BASE's HTTP API\" seçeneğini işaretleyin",
       "basePlaceholder": "Zorunlu",
       "requestBaseAccess": "HTTP API erişimi iste",
-      "optional": "İsteğe bağlı"
+      "optional": "İsteğe bağlı",
+      "revealSecret": "Göster",
+      "hideSecret": "Gizle"
     },
     "wos": {
       "title": "Web of Science",
@@ -352,7 +354,10 @@
       "medium": "Orta",
       "low": "Düşük",
       "pending": "Beklemede",
-      "in_progress": "Aranıyor…"
+      "in_progress": "Aranıyor…",
+      "searchingDb": "{{db}} aranıyor…",
+      "waiting": "Bekleniyor…",
+      "searchedCount": "{{count}} arandı"
     },
     "titleShort": "başlık",
     "validTag": "Geçerli",
@@ -376,7 +381,11 @@
       "title": "Başlık benzerliği %85'in altında"
     },
     "exportPdf": "Doğrulama Sonuçlarını PDF'e Aktar",
+    "exportPdfRunning": "Doğrulama sürerken dışa aktarma devre dışı",
     "exportPdfNoResults": "Dışa aktarılacak doğrulama sonucu yok.",
+    "exportPdfBatch": "Sınır çizgisi üstündeki PDF'ler için raporları dışa aktar",
+    "exportPdfBatchDone": "Dışa aktarıldı: {{exported}} / {{total}} ({{skipped}} atlandı)",
+    "exportPdfBatchNothing": "Sınır çizgisi üstünde doğrulama sonucu olan PDF yok.",
     "exportPdfHeader": "ARDEB Kaynakça Kontrol Sistemi\nDoğrulama Raporu",
     "exportPdfProblems": "Sorunlar",
     "exportPdfNoMatch": "Eşleşme bulunamadı",

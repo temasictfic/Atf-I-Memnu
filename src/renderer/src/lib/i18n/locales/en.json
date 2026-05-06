@@ -70,7 +70,9 @@
       "baseDesc": "Tick \"Access BASE's HTTP API\"",
       "basePlaceholder": "Required",
       "requestBaseAccess": "Request HTTP API access",
-      "optional": "Optional"
+      "optional": "Optional",
+      "revealSecret": "Show",
+      "hideSecret": "Hide"
     },
     "wos": {
       "title": "Web of Science",
@@ -352,7 +354,10 @@
       "medium": "Medium",
       "low": "Low",
       "pending": "Pending",
-      "in_progress": "Searching…"
+      "in_progress": "Searching…",
+      "searchingDb": "Searching {{db}}…",
+      "waiting": "Waiting…",
+      "searchedCount": "{{count}} searched"
     },
     "titleShort": "title",
     "validTag": "Valid",
@@ -376,7 +381,11 @@
       "title": "Title similarity is below 85%"
     },
     "exportPdf": "Export Verification Results to PDF",
+    "exportPdfRunning": "Export disabled while verification is running",
     "exportPdfNoResults": "No verification results to export.",
+    "exportPdfBatch": "Export reports for PDFs above the cutoff",
+    "exportPdfBatchDone": "Exported {{exported}} / {{total}} ({{skipped}} skipped)",
+    "exportPdfBatchNothing": "No PDFs above the cutoff have verification results yet.",
     "exportPdfHeader": "ARDEB Citation Control System\nVerification Report",
     "exportPdfProblems": "Problems",
     "exportPdfNoMatch": "No match found",
