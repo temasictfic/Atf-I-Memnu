@@ -53,15 +53,26 @@ export default function App() {
     }
   }, [])
 
-  // Initialize WebSocket, listeners, and settings on mount
+  // Initialize WebSocket, listeners, and settings on mount.
+  // loadSettings is idempotent (no-op once successfully loaded). It runs
+  // once at mount AND on every WebSocket (re)connect — the backend's
+  // FastAPI HTTP server is up at the same time as its WS, so a successful
+  // ws:connected event is a reliable signal that GET /settings is now
+  // ready to answer. This is how we recover from a cold-start race
+  // without an explicit retry loop in the store.
   useEffect(() => {
     wsClient.connect()
     const cleanupPdf = initPdfListeners()
     const cleanupVerify = initVerificationListeners()
-    useSettingsStore.getState().loadSettings()
+    const reloadSettings = () => {
+      useSettingsStore.getState().loadSettings()
+    }
+    reloadSettings()
+    const cleanupWsConnect = wsClient.on('ws:connected', reloadSettings)
     return () => {
       cleanupPdf()
       cleanupVerify()
+      cleanupWsConnect()
       wsClient.disconnect()
     }
   }, [])

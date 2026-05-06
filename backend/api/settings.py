@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from models.settings import AppSettings
+from models.settings import AppSettings, DatabaseConfig
 from services.openaire_token_manager import (
     exchange_refresh_token,
     get_runtime_status,
@@ -26,50 +27,148 @@ async def get_settings():
 
 
 @router.put("/settings")
-async def update_settings(new_settings: AppSettings):
+async def update_settings(patch: dict[str, Any]):
+    """Apply a partial update for scalar fields.
+
+    The body is a JSON object whose keys are AppSettings field names —
+    the renderer sends only the fields that actually changed. Unknown keys
+    and fields that fail per-field Pydantic validation are silently
+    dropped, so a stale-renderer race or a model rename can't wipe
+    unrelated fields.
+
+    Two fields are handled specially:
+
+    - ``databases`` is rejected here — use the granular /settings/databases/*
+      endpoints, which apply per-row operations to the current on-disk
+      list and so cannot lose user reordering on a stale-renderer save.
+    - ``api_keys`` is merged into the existing dict rather than replacing
+      it. This means a stale-renderer PATCH carrying only the one key the
+      user just typed can't drop the others. Keys explicitly listed in
+      the patch (including with empty-string values) override; keys
+      missing from the patch are preserved.
+    """
     previous = get_current_settings()
 
-    # Detect the wipe pattern: a renderer that hasn't yet received the
-    # initial GET response autosaves the seed defaults, which has an empty
-    # api_keys dict. We use that as the signal — only when the body looks
-    # like an unloaded-renderer wipe do we preserve fields against empty
-    # incoming values. Otherwise we trust the body (so users can clear an
-    # api_key by emptying the input, or clear a folder path on purpose).
-    incoming_api_keys = new_settings.api_keys or {}
-    is_wipe_pattern = not incoming_api_keys and bool(previous.api_keys)
+    updates: dict[str, Any] = {}
+    for key, value in (patch or {}).items():
+        if key == "databases":
+            # Defence in depth — the renderer routes database edits to
+            # the granular endpoints. Drop any here so a future caller
+            # mistake can't replace the on-disk list.
+            continue
+        if key not in AppSettings.model_fields:
+            continue
+        try:
+            AppSettings.model_validate({key: value})
+        except Exception:
+            continue
+        updates[key] = value
 
-    # api_keys merge: incoming wins for every key it lists (including
-    # explicit clears via empty string). Keys that are *missing* from
-    # incoming are restored from previous — that's how we survive the wipe
-    # signature where the seed dict is `{}`.
-    merged_api_keys = dict(incoming_api_keys)
-    for key, value in previous.api_keys.items():
-        if key not in merged_api_keys:
-            merged_api_keys[key] = value
+    if "api_keys" in updates:
+        # Per-key merge: existing keys not listed in the patch survive,
+        # listed keys take the incoming value (empty string clears).
+        incoming_keys = updates["api_keys"] or {}
+        updates["api_keys"] = {**previous.api_keys, **incoming_keys}
 
-    overrides: dict = {"api_keys": merged_api_keys}
-    if is_wipe_pattern:
-        # The same race that empties api_keys also empties these scalar
-        # fields. Only preserve them when the wipe pattern is detected so
-        # legitimate clears still go through during a normal save.
-        for field in ("annotated_pdf_dir", "polite_pool_email", "openaire_token_saved_at"):
-            incoming = getattr(new_settings, field)
-            existing = getattr(previous, field)
-            if not incoming and existing:
-                overrides[field] = existing
+    if not updates:
+        return previous.model_dump()
 
-    new_settings = new_settings.model_copy(update=overrides)
+    new_settings = previous.model_copy(update=updates)
 
-    # OpenAIRE cache invalidation: compare AFTER the merge so a no-op save
-    # (incoming empty, existing preserved) doesn't trigger a refresh.
-    try:
-        if previous.api_keys.get("openaire", "") != new_settings.api_keys.get(
-            "openaire", ""
-        ):
-            invalidate_cache()
-    except Exception:
-        pass
+    # OpenAIRE cache invalidation: only fires when api_keys was in the
+    # patch and the openaire entry actually changed.
+    if "api_keys" in updates:
+        try:
+            if previous.api_keys.get("openaire", "") != new_settings.api_keys.get(
+                "openaire", ""
+            ):
+                invalidate_cache()
+        except Exception:
+            pass
 
+    save_settings(new_settings)
+    return new_settings.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Granular database endpoints. Each operation reads the current on-disk
+# database list and applies a single, well-defined edit — never replaces
+# the list wholesale. This lets a stale-renderer (one whose Zustand state
+# is still the seed defaults because GET /settings hadn't yet resolved)
+# safely toggle / reorder / add / remove a row without losing the user's
+# real ordering or other rows.
+# ---------------------------------------------------------------------------
+
+
+class DatabaseToggleRequest(BaseModel):
+    enabled: bool
+
+
+class DatabaseReorderRequest(BaseModel):
+    id: str
+    # ``after_id`` is the id of the row that should sit immediately
+    # before this one in the new order. ``None`` means place at the head
+    # of the list. Using an id (not an index) keeps the operation
+    # well-defined when the renderer's view of the list differs from
+    # the backend's — e.g. after a stale render where rows were added
+    # to the canonical list since the last GET.
+    after_id: str | None = None
+
+
+@router.put("/settings/databases/{db_id}")
+async def update_database(db_id: str, req: DatabaseToggleRequest):
+    previous = get_current_settings()
+    dbs = list(previous.databases)
+    for i, db in enumerate(dbs):
+        if db.id == db_id:
+            dbs[i] = db.model_copy(update={"enabled": req.enabled})
+            new_settings = previous.model_copy(update={"databases": dbs})
+            save_settings(new_settings)
+            return new_settings.model_dump()
+    return previous.model_dump()
+
+
+@router.post("/settings/databases/reorder")
+async def reorder_database(req: DatabaseReorderRequest):
+    previous = get_current_settings()
+    dbs = list(previous.databases)
+    moved_idx = next((i for i, db in enumerate(dbs) if db.id == req.id), -1)
+    if moved_idx < 0:
+        return previous.model_dump()
+    moved = dbs.pop(moved_idx)
+    if req.after_id is None:
+        dbs.insert(0, moved)
+    else:
+        after_idx = next((i for i, db in enumerate(dbs) if db.id == req.after_id), -1)
+        if after_idx < 0:
+            # Anchor row no longer exists — append to keep the move
+            # observable rather than silently no-op'ing.
+            dbs.append(moved)
+        else:
+            dbs.insert(after_idx + 1, moved)
+    new_settings = previous.model_copy(update={"databases": dbs})
+    save_settings(new_settings)
+    return new_settings.model_dump()
+
+
+@router.post("/settings/databases")
+async def add_database(db: DatabaseConfig):
+    previous = get_current_settings()
+    if any(d.id == db.id for d in previous.databases):
+        return previous.model_dump()
+    new_dbs = [*previous.databases, db]
+    new_settings = previous.model_copy(update={"databases": new_dbs})
+    save_settings(new_settings)
+    return new_settings.model_dump()
+
+
+@router.delete("/settings/databases/{db_id}")
+async def remove_database(db_id: str):
+    previous = get_current_settings()
+    new_dbs = [d for d in previous.databases if d.id != db_id]
+    if len(new_dbs) == len(previous.databases):
+        return previous.model_dump()
+    new_settings = previous.model_copy(update={"databases": new_dbs})
     save_settings(new_settings)
     return new_settings.model_dump()
 

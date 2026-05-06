@@ -38,7 +38,6 @@ interface SettingsState {
   settingsLoaded: boolean
   saveStatus: 'idle' | 'saving' | 'saved' | 'error'
   loadSettings: () => Promise<void>
-  saveSettings: (s: AppSettings) => Promise<void>
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   toggleDatabase: (dbId: string) => void
   addDatabase: (db: DatabaseConfig) => void
@@ -61,8 +60,15 @@ const SECRETS_AUTOSAVE_DEBOUNCE_MS = 1500
 
 let _saveTimer: ReturnType<typeof setTimeout> | null = null
 let _savedTimer: ReturnType<typeof setTimeout> | null = null
+// Fields that have changed since the last successful save. The debounced
+// save reads the current value of each pending field from the store and
+// PATCHes only those — never a full settings dump. This is the safety
+// invariant: the backend only ever overwrites fields the renderer
+// deliberately touched.
+const _pendingFields = new Set<keyof AppSettings>()
 function _debouncedSave(
   get: () => SettingsState,
+  field: keyof AppSettings,
   delayMs: number = SETTINGS_AUTOSAVE_DEBOUNCE_MS,
 ) {
   // Skip autosave entirely until the initial load has resolved. Without
@@ -72,27 +78,63 @@ function _debouncedSave(
   // mostly-default settings object (if the save fires first).
   if (!get().settingsLoaded) return
 
+  _pendingFields.add(field)
+
   if (_saveTimer) clearTimeout(_saveTimer)
   if (_savedTimer) clearTimeout(_savedTimer)
   useSettingsStore.setState({ saveStatus: 'saving' })
   _saveTimer = setTimeout(async () => {
+    if (_pendingFields.size === 0) return
+    const fields = Array.from(_pendingFields)
+    _pendingFields.clear()
+    const settings = get().settings
+    const patch: Partial<AppSettings> = {}
+    for (const f of fields) {
+      ;(patch as Record<string, unknown>)[f] = settings[f]
+    }
     try {
-      const s = await api.updateSettings(get().settings)
+      const s = await api.updateSettings(patch)
       useSettingsStore.setState({ settings: s, saveStatus: 'saved' })
       _savedTimer = setTimeout(() => useSettingsStore.setState({ saveStatus: 'idle' }), SETTINGS_SAVED_FLASH_MS)
     } catch (e) {
       console.error('Failed to auto-save settings:', e)
+      // Re-queue the fields so the next edit (or retry) tries again.
+      for (const f of fields) _pendingFields.add(f)
       useSettingsStore.setState({ saveStatus: 'error' })
       _savedTimer = setTimeout(() => useSettingsStore.setState({ saveStatus: 'idle' }), SETTINGS_ERROR_FLASH_MS)
     }
   }, delayMs)
 }
 
+// Runs a granular database operation: surfaces save status flashes and
+// syncs the renderer state to the backend's authoritative response. The
+// backend applies each operation to its own current list, so a stale
+// renderer can't replace the on-disk order with the seed.
+async function _runDatabaseOp(call: () => Promise<AppSettings>) {
+  if (_savedTimer) clearTimeout(_savedTimer)
+  useSettingsStore.setState({ saveStatus: 'saving' })
+  try {
+    const s = await call()
+    useSettingsStore.setState({ settings: s, saveStatus: 'saved' })
+    _savedTimer = setTimeout(
+      () => useSettingsStore.setState({ saveStatus: 'idle' }),
+      SETTINGS_SAVED_FLASH_MS,
+    )
+  } catch (e) {
+    console.error('Failed database settings op:', e)
+    useSettingsStore.setState({ saveStatus: 'error' })
+    _savedTimer = setTimeout(
+      () => useSettingsStore.setState({ saveStatus: 'idle' }),
+      SETTINGS_ERROR_FLASH_MS,
+    )
+  }
+}
+
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   saveStatus: 'idle' as const,
   settingsLoaded: false,
   settings: {
-    annotated_pdf_dir: '',
+    exported_pdf_dir: '',
     databases: defaultDatabases,
     api_keys: {},
     polite_pool_email: '',
@@ -117,18 +159,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         i18n.changeLanguage(s.language)
       }
     } catch {
-      // Mark loaded anyway so autosave can fire — otherwise a one-time
-      // backend hiccup leaves the form silently un-savable.
-      set({ settingsLoaded: true })
-    }
-  },
-
-  saveSettings: async (newSettings: AppSettings) => {
-    try {
-      const s = await api.updateSettings(newSettings)
-      set({ settings: s })
-    } catch (e) {
-      console.error('Failed to save settings:', e)
+      // Don't flip settingsLoaded on failure. While the renderer doesn't
+      // know the on-disk state we MUST NOT autosave — a save with the
+      // seed defaults would overwrite the file. App.tsx re-invokes this
+      // whenever the WebSocket (re)connects, so a backend cold-start or
+      // mid-session hiccup eventually resolves into a successful load.
     }
   },
 
@@ -137,42 +172,51 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     if (key === 'language' && typeof value === 'string') {
       i18n.changeLanguage(value)
     }
-    _debouncedSave(get)
+    _debouncedSave(get, key)
   },
 
   toggleDatabase: (dbId: string) => {
+    if (!get().settingsLoaded) return
+    const current = get().settings.databases.find(d => d.id === dbId)
+    if (!current) return
+    const newEnabled = !current.enabled
     set(state => ({
       settings: {
         ...state.settings,
         databases: state.settings.databases.map(db =>
-          db.id === dbId ? { ...db, enabled: !db.enabled } : db
+          db.id === dbId ? { ...db, enabled: newEnabled } : db
         ),
       },
     }))
-    _debouncedSave(get)
+    _runDatabaseOp(() => api.setDatabaseEnabled(dbId, newEnabled))
   },
 
   addDatabase: (db: DatabaseConfig) => {
+    if (!get().settingsLoaded) return
     set(state => ({
       settings: {
         ...state.settings,
         databases: [...state.settings.databases, db],
       },
     }))
-    _debouncedSave(get)
+    _runDatabaseOp(() => api.addDatabase(db))
   },
 
   removeDatabase: (dbId: string) => {
+    if (!get().settingsLoaded) return
     set(state => ({
       settings: {
         ...state.settings,
         databases: state.settings.databases.filter(db => db.id !== dbId),
       },
     }))
-    _debouncedSave(get)
+    _runDatabaseOp(() => api.removeDatabase(dbId))
   },
 
   reorderDatabases: (fromIdx: number, toIdx: number) => {
+    if (!get().settingsLoaded) return
+    let movedId: string | null = null
+    let afterId: string | null = null
     set(state => {
       const dbs = [...state.settings.databases]
       if (
@@ -186,9 +230,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       }
       const [moved] = dbs.splice(fromIdx, 1)
       dbs.splice(toIdx, 0, moved)
+      movedId = moved.id
+      afterId = toIdx > 0 ? dbs[toIdx - 1].id : null
       return { settings: { ...state.settings, databases: dbs } }
     })
-    _debouncedSave(get)
+    if (!movedId) return
+    const id = movedId
+    const after = afterId
+    _runDatabaseOp(() => api.reorderDatabase(id, after))
   },
 
   updateApiKey: (key: string, value: string) => {
@@ -201,7 +250,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     // Longer debounce on secrets so a typing burst doesn't persist a
     // dozen partial-key states to disk (and, for OpenAIRE, doesn't keep
     // re-invalidating the access-token cache between keystrokes).
-    _debouncedSave(get, SECRETS_AUTOSAVE_DEBOUNCE_MS)
+    _debouncedSave(get, 'api_keys', SECRETS_AUTOSAVE_DEBOUNCE_MS)
   },
 
   connectOpenaire: async (refreshToken: string) => {

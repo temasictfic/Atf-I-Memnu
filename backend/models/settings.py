@@ -10,7 +10,10 @@ class DatabaseConfig(BaseModel):
 
 
 class AppSettings(BaseModel):
-    annotated_pdf_dir: str = ""
+    # Folder that Parsing-page exports and Verification-page reports are
+    # written to. Blank means "prompt me each time" via the renderer's
+    # native file-save dialog.
+    exported_pdf_dir: str = ""
     databases: list[DatabaseConfig] = []
     api_keys: dict[str, str] = {}
     # Contact email advertised to Crossref / arXiv / OpenAlex polite pools.
