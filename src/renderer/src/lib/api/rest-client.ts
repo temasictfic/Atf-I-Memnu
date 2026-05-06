@@ -72,7 +72,7 @@ export const api = {
     request<{ job_id: string }>('POST', `/api/verify/pdf/${pdfId}`),
 
   verifySource: (pdfId: string, sourceId: string, text?: string) =>
-    request<{ success: boolean }>('POST', `/api/verify/source/${pdfId}/${sourceId}`, { text }),
+    request<{ job_id: string }>('POST', `/api/verify/source/${pdfId}/${sourceId}`, { text }),
 
   cancelVerification: () =>
     request<{ success: boolean }>('POST', '/api/verify/cancel'),
@@ -107,8 +107,31 @@ export const api = {
   getSettings: () =>
     request<import('./types').AppSettings>('GET', '/api/settings'),
 
-  updateSettings: (settings: import('./types').AppSettings) =>
-    request<import('./types').AppSettings>('PUT', '/api/settings', settings),
+  // Partial PUT: send only the scalar fields that changed. Backend
+  // applies the patch on top of its current state and returns the full
+  // result. The `databases` field is not accepted here — callers must
+  // use the granular endpoints below so a stale-renderer save can never
+  // replace the on-disk list with the seed.
+  updateSettings: (patch: Partial<import('./types').AppSettings>) =>
+    request<import('./types').AppSettings>('PUT', '/api/settings', patch),
+
+  // Granular database endpoints. Each is a single-row operation that the
+  // backend applies to its current list — the renderer never sends the
+  // whole list, so it can't accidentally replace it.
+  setDatabaseEnabled: (dbId: string, enabled: boolean) =>
+    request<import('./types').AppSettings>('PUT', `/api/settings/databases/${dbId}`, { enabled }),
+
+  reorderDatabase: (id: string, afterId: string | null) =>
+    request<import('./types').AppSettings>('POST', '/api/settings/databases/reorder', {
+      id,
+      after_id: afterId,
+    }),
+
+  addDatabase: (db: import('./types').DatabaseConfig) =>
+    request<import('./types').AppSettings>('POST', '/api/settings/databases', db),
+
+  removeDatabase: (dbId: string) =>
+    request<import('./types').AppSettings>('DELETE', `/api/settings/databases/${dbId}`),
 
   // OpenAIRE auth — validates by exchanging the refresh token against
   // OpenAIRE; on success the backend persists it and returns the updated

@@ -131,7 +131,7 @@ export interface DatabaseConfig {
 }
 
 export interface AppSettings {
-  annotated_pdf_dir?: string
+  exported_pdf_dir?: string
   databases: DatabaseConfig[]
   api_keys?: Record<string, string>
   polite_pool_email?: string
