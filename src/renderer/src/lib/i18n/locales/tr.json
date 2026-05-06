@@ -60,7 +60,7 @@
       "politeEmailDesc": "İletişim e-postanız. Crossref, arXiv, TRDizin ve OpenAlex'e gönderilir",
       "politeEmailPlaceholder": "İsteğe bağlı — you@example.com",
       "semanticScholarLabel": "Semantic Scholar API Anahtarı",
-      "semanticScholarDesc": "Şiddetle tavsiye edilir. API anahtarsız erişim çok sınırlıdır",
+      "semanticScholarDesc": "API anahtarsız erişim çok sınırlıdır",
       "semanticScholarPlaceholder": "Neredeyse Zorunlu",
       "requestFreeKey": "Ücretsiz anahtar iste",
       "requestPubmedKey": "NCBI API anahtarı iste",

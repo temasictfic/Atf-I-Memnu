@@ -60,7 +60,7 @@
       "politeEmailDesc": "Your contact email. Sent to Crossref, arXiv, TRDizin and OpenAlex",
       "politeEmailPlaceholder": "Optional - you@example.com",
       "semanticScholarLabel": "Semantic Scholar API Key",
-      "semanticScholarDesc": "Strongly recommended. API access without a key is very limited",
+      "semanticScholarDesc": "API access without a key is very limited",
       "semanticScholarPlaceholder": "Almost Required",
       "requestFreeKey": "Request a free key",
       "requestPubmedKey": "Request an NCBI API key",

@@ -244,10 +244,14 @@
   white-space: nowrap;
   /* Common floor across the three request-link buttons (Semantic Scholar,
      PubMed, BASE) so they render at the same width regardless of label
-     length. Sized to fit the longest TR/EN label ("NCBI API anahtarı iste"
-     / "Request an NCBI API key") plus the trailing arrow icon. */
+     length. Sized to fit the longest EN label ("Request an NCBI API key"
+     / "Request HTTP API access") plus the trailing arrow icon — otherwise
+     in English the short "Request a free key" stays at the floor while
+     the longer two grow past it, leaving the Semantic Scholar pill
+     visibly narrower. (TR labels are all similar enough that 160px was
+     fine there.) */
   box-sizing: border-box;
-  min-width: 160px;
+  min-width: 195px;
 }
 .request-key-link:hover { background: #d97706; color: #fff; }
 .request-key-link svg { width: 10px; height: 10px; }
@@ -491,6 +495,12 @@
   display: inline-flex;
   align-items: stretch;
 }
+/* When the inner input declares the shared API-keys width, the wrapper has to
+   carry it — otherwise inline-flex shrinks to the input's default size while
+   `.secret-input-wrap > input { width: 100% }` clobbers the 220px from
+   `.setting-input-wide`, leaving these inputs visibly narrower than the bare
+   polite-email input above them. */
+.secret-input-wrap:has(> .setting-input-wide) { width: 220px; }
 .secret-input-wrap > input {
   width: 100%;
   padding-right: 34px;
