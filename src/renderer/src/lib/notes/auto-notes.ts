@@ -22,6 +22,7 @@ import {
   addNote,
   removeAutoNotesForPdfByDecisionTag,
   useNotesStore,
+  DEFAULT_CALLOUT_FONT_SIZE,
   type AutoDecisionTag,
 } from '../stores/notes-store'
 import { effectiveDecisionTag } from '../verification/tagState'
@@ -186,7 +187,8 @@ export async function generateAutoNotesForPdf({
     const titlePageH = pageHeightFor(titlePageNum)
     const titlePageW = pageWidthFor(titlePageNum)
     if (titlePageH > 0 && titlePageW > 0) {
-      const titleFontSize = calloutFontSize + 1
+      // Fixed: the title must not track the user's body-callout font size.
+      const titleFontSize = DEFAULT_CALLOUT_FONT_SIZE + 1
       const titleLineHeight = titleFontSize * 1.2 * SCALE
       const titleHeightPx = titleLineHeight + CALLOUT_INNER_PAD_PX * 2
       const titleTextWidthPx = measureTextWidthScalePx(

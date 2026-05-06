@@ -957,7 +957,7 @@ export default function ParsingPage() {
       const defaultName = `${pdfName.replace(/\.[^.]+$/, "")}-annotated.pdf`;
       const configuredDir = useSettingsStore
         .getState()
-        .settings.annotated_pdf_dir?.trim();
+        .settings.exported_pdf_dir?.trim();
 
       let target: string | null;
       if (configuredDir) {
@@ -1240,12 +1240,16 @@ export default function ParsingPage() {
     setDrawingState(d);
   }
 
-  function onPageClick() {
+  function onPageClick(e?: React.MouseEvent) {
     if (suppressPageClickRef.current) {
       suppressPageClickRef.current = false;
       return;
     }
     setSelectedSourceId(null);
+    const target = e?.target as HTMLElement | null;
+    if (!target || !target.closest('[data-note-id]')) {
+      setSelectedNoteId(null);
+    }
   }
 
   function drawPreviewStyle(): React.CSSProperties {
