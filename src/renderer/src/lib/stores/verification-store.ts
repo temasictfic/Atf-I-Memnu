@@ -1392,9 +1392,7 @@ export function initVerificationListeners(): () => void {
             problem_tags: (data.problem_tags as string[]) ?? [],
             decision_tag: (data.decision_tag as DecisionTag | undefined),
             decision_tag_override:
-              (data.decision_tag_override as DecisionTag | null | undefined)
-              ?? existing[sourceId]?.decision_tag_override
-              ?? null,
+              (data.decision_tag_override as DecisionTag | null | undefined) ?? null,
             tag_overrides: (data.tag_overrides as Record<string, boolean> | undefined)
               ?? existing[sourceId]?.tag_overrides
               ?? {},
