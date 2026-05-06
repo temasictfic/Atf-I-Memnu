@@ -163,8 +163,13 @@ async def verify_pdf_sources(
     pdf_id: str,
     sources: list[SourceRectangle],
     results_store: dict[str, dict[str, VerificationResult]],
+    job_id: str = "",
 ):
-    """Verify all sources for a single PDF."""
+    """Verify all sources for a single PDF.
+
+    ``job_id`` flows through to every WS broadcast so the renderer can drop
+    stale events from a superseded run (cancel-then-reverify race).
+    """
     if pdf_id not in results_store:
         results_store[pdf_id] = {}
 
@@ -174,7 +179,7 @@ async def verify_pdf_sources(
 
     async def verify_with_limit(source: SourceRectangle, index: int):
         async with source_semaphore:
-            await _verify_source(pdf_id, source, results_store, index)
+            await _verify_source(pdf_id, source, results_store, index, job_id)
 
     # Create tasks and register for cancellation
     asyncio_tasks = [asyncio.create_task(verify_with_limit(s, i)) for i, s in enumerate(sources)]
@@ -203,6 +208,7 @@ async def verify_pdf_sources(
             "high": high,
             "medium": medium,
             "low": low,
+            "job_id": job_id,
         })
 
         # Persist results to disk cache
@@ -217,6 +223,7 @@ async def verify_single_source(
     source_id: str,
     text: str,
     results_store: dict[str, dict[str, VerificationResult]],
+    job_id: str = "",
 ):
     """Verify a single source (used for individual verification)."""
     if pdf_id not in results_store:
@@ -233,7 +240,7 @@ async def verify_single_source(
     )
 
     try:
-        await _verify_source(pdf_id, temp_source, results_store, 0)
+        await _verify_source(pdf_id, temp_source, results_store, 0, job_id)
     except asyncio.CancelledError:
         pass
     finally:
@@ -264,6 +271,7 @@ async def _verify_source(
     source: SourceRectangle,
     results_store: dict[str, dict[str, VerificationResult]],
     source_index: int = 0,
+    job_id: str = "",
 ):
     """Verify a single source against all databases."""
     source_id = source.id
@@ -280,6 +288,7 @@ async def _verify_source(
         "pdf_id": pdf_id,
         "source_id": source_id,
         "source_text": source_text[:200],
+        "job_id": job_id,
     })
 
     all_matches: list[MatchResult] = []
@@ -337,6 +346,7 @@ async def _verify_source(
             api_semaphore,
             search_timeout,
             source_index,
+            job_id=job_id,
         )
         all_matches.extend(tier1_results["matches"])
         databases_searched.extend(tier1_results["searched"])
@@ -392,6 +402,7 @@ async def _verify_source(
                 _RETRY_SEARCH_TIMEOUT_SECONDS,
                 source_index,
                 restricted_db_ids=retry_set,
+                job_id=job_id,
             )
             all_matches.extend(retry_results["matches"])
             # Don't re-extend `databases_searched` — the DB names are
@@ -427,7 +438,7 @@ async def _verify_source(
         # Always finalize — guarantees verify_source_done is sent
         await _finalize_result(
             results_store, pdf_id, source_id, parsed, all_matches,
-            databases_searched, url_liveness,
+            databases_searched, url_liveness, job_id=job_id,
         )
 
 
@@ -441,6 +452,7 @@ async def _run_tier1_apis(
     search_timeout: int,
     source_index: int = 0,
     restricted_db_ids: set[str] | None = None,
+    job_id: str = "",
 ) -> dict[str, Any]:
     """Run Tier 1 API verifiers in parallel.
 
@@ -528,6 +540,7 @@ async def _run_tier1_apis(
                 try:
                     await manager.broadcast("verify_db_checking", {
                         "pdf_id": pdf_id, "source_id": source_id, "database": name,
+                        "job_id": job_id,
                     })
 
                     if _supports_api_key_argument(search_fn):
@@ -550,6 +563,7 @@ async def _run_tier1_apis(
                         "match": result.model_dump() if result else None,
                         "db_status": score_to_band(score) if result is not None else "no_match",
                         "search_url": (result.search_url if result else None) or fallback_url,
+                        "job_id": job_id,
                     })
 
                     if result and result.score > 0:
@@ -567,6 +581,7 @@ async def _run_tier1_apis(
                         "db_status": "timeout",
                         "error_message": f"Timeout after {search_timeout}s",
                         "search_url": fallback_url,
+                        "job_id": job_id,
                     })
                 except RateLimitedError as e:
                     searched.append(name)
@@ -588,6 +603,7 @@ async def _run_tier1_apis(
                         "db_status": "rate_limited",
                         "retry_after": e.retry_after,
                         "search_url": fallback_url,
+                        "job_id": job_id,
                     })
                 except UnauthorizedError as e:
                     searched.append(name)
@@ -604,6 +620,7 @@ async def _run_tier1_apis(
                         "db_status": "unauthorized",
                         "error_message": (e.detail or str(e))[:200],
                         "search_url": fallback_url,
+                        "job_id": job_id,
                     })
                 except Exception as e:
                     searched.append(name)
@@ -617,6 +634,7 @@ async def _run_tier1_apis(
                         "db_status": "error",
                         "error_message": str(e)[:200],
                         "search_url": fallback_url,
+                        "job_id": job_id,
                     })
         except asyncio.CancelledError:
             # Short-circuit cancel: a sibling verifier landed a strong
@@ -636,6 +654,7 @@ async def _run_tier1_apis(
                         "found": False,
                         "db_status": "skipped",
                         "search_url": fallback_url,
+                        "job_id": job_id,
                     }))
                 except Exception:
                     pass
@@ -692,6 +711,7 @@ async def verify_pdf_sources_filtered(
     results_store: dict[str, dict[str, VerificationResult]],
     custom_texts: dict[str, str],
     excluded_ids: set[str],
+    job_id: str = "",
 ):
     """Verify sources with custom texts and exclusions."""
     filtered = [s for s in sources if s.id not in excluded_ids]
@@ -704,7 +724,7 @@ async def verify_pdf_sources_filtered(
         else:
             modified.append(s)
 
-    await verify_pdf_sources(pdf_id, modified, results_store)
+    await verify_pdf_sources(pdf_id, modified, results_store, job_id=job_id)
 
 
 async def _finalize_result(
@@ -715,6 +735,7 @@ async def _finalize_result(
     all_matches: list[MatchResult],
     databases_searched: list[str],
     url_liveness: dict[str, bool] | None = None,
+    job_id: str = "",
 ):
     """Finalize the verification result for a source.
 
@@ -771,4 +792,5 @@ async def _finalize_result(
         "databases_searched": list(databases_searched),
         "scholar_url": scholar_url,
         "google_url": google_url,
+        "job_id": job_id,
     })

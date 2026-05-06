@@ -93,7 +93,7 @@ async def _verify_batch(job_id: str, pdf_ids: list[str], texts: dict[str, str], 
                 continue
             try:
                 await verify_pdf_sources_filtered(
-                    pid, sources, verify_results, texts, excluded_ids
+                    pid, sources, verify_results, texts, excluded_ids, job_id=job_id,
                 )
             except Exception as e:
                 await manager.send_log("error", f"Verification failed for {pid}: {e}")
@@ -136,7 +136,7 @@ async def _verify_all_pdfs(job_id: str, pdf_ids: list[str]):
             if not sources:
                 continue
             try:
-                await verify_pdf_sources(pid, sources, verify_results)
+                await verify_pdf_sources(pid, sources, verify_results, job_id=job_id)
             except Exception as e:
                 await manager.send_log("error", f"Verification failed for {pid}: {e}")
 
@@ -177,7 +177,7 @@ async def _reverify_pdf_job(job_id: str, pdf_id: str, sources: list[SourceRectan
     from services.verification_orchestrator import verify_pdf_sources
 
     try:
-        await verify_pdf_sources(pdf_id, sources, verify_results)
+        await verify_pdf_sources(pdf_id, sources, verify_results, job_id=job_id)
         if pdf_id in verify_results and verify_results[pdf_id]:
             try:
                 save_verify_cache(pdf_id, verify_results[pdf_id])
@@ -203,11 +203,16 @@ async def reverify_source(pdf_id: str, source_id: str, request: VerifySourceRequ
 
     from services.verification_orchestrator import verify_single_source, _register_task
 
+    # Mint a job_id for this single-source run so WS broadcasts can be tagged
+    # and the renderer can drop late events from a superseded run.
+    job_id = str(uuid.uuid4())[:8]
+    verify_jobs[job_id] = {"status": "running", "pdfs": [pdf_id]}
+
     # Use updated text if provided
     text = request.text if request.text is not None else source.text
-    task = asyncio.create_task(verify_single_source(pdf_id, source_id, text, verify_results))
+    task = asyncio.create_task(verify_single_source(pdf_id, source_id, text, verify_results, job_id))
     _register_task(source_id, task)
-    return {"success": True}
+    return {"job_id": job_id}
 
 
 @router.post("/verify/cancel")

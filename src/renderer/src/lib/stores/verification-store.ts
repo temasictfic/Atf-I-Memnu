@@ -24,6 +24,13 @@ interface VerificationState {
   // overwritten by tasks that were mid-flight on the backend. Cleared per
   // source when verification is restarted for that source.
   cancelledSourceIds: Set<string>
+  // Tracks the currently-active backend job_id for each source / PDF. Set
+  // synchronously by start* actions; checked by WS handlers to drop late
+  // events from a superseded run. This makes cancelSource → reverify safe
+  // even when the cancelled run's late `verify_source_done` arrives after
+  // the cancel-flag has been cleared by the new run.
+  activeJobIdBySource: Record<string, string>
+  activeJobIdByPdf: Record<string, string>
   // Snapshot of each source's result taken at the moment a re-run starts.
   // Used by cancel actions to instantly restore the pre-rerun state (status
   // colour, best_match, decision tag, etc.) for sources that didn't actually
@@ -237,6 +244,8 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   summaries: {},
   sourceProgress: {},
   cancelledSourceIds: new Set<string>(),
+  activeJobIdBySource: {},
+  activeJobIdByPdf: {},
   priorResultsByPdf: {},
   selectedSourceId: null,
   verifyTexts: {},
@@ -410,6 +419,8 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         resultsByPdf: s.resultsByPdf,
         cancelledSourceIds: s.cancelledSourceIds,
         priorResultsByPdf: s.priorResultsByPdf,
+        activeJobIdBySource: s.activeJobIdBySource,
+        activeJobIdByPdf: s.activeJobIdByPdf,
       }
     })()
     try {
@@ -437,6 +448,21 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       // Initialize verify log batch
       initVerifyBatch(totalEnabled, pdfIds.length)
 
+      // Sentinel job_id installed synchronously *before* the API call so any
+      // late events from a superseded run can't sneak through the WS-handler
+      // filter during the API round-trip — the sentinel won't match any real
+      // backend job_id (which is an 8-char UUID), so events with the OLD
+      // job_id are dropped. Replaced with the real job_id once the API
+      // returns. See the WS handlers' job-id check.
+      const pendingJobId = `pending-${Math.random().toString(36).slice(2)}`
+
+      // Track which (pdfId, sourceId) we install the sentinel for so we can
+      // safely replace just those entries after the API resolves, without
+      // clobbering activeJobIdBySource entries set by an unrelated concurrent
+      // start* action.
+      const trackedSources: string[] = []
+      const trackedPdfs: string[] = pdfIds.slice()
+
       // Clear progress and summaries BEFORE the API call so we don't
       // race with WebSocket events that arrive during the await.
       // Also eagerly create sourceProgress + in_progress results for all
@@ -449,11 +475,14 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         // Clear cancelled flags for sources we are about to re-run so late
         // events from the *previous* run no longer suppress this new run.
         const nextCancelled = new Set(state.cancelledSourceIds)
+        const newJobIdBySource = { ...state.activeJobIdBySource }
+        const newJobIdByPdf = { ...state.activeJobIdByPdf }
         for (const id of pdfIds) {
           summaries[id] = {
             pdf_id: id, high: 0, medium: 0, low: 0,
             in_progress: 0, total: 0, completed: false,
           }
+          newJobIdByPdf[id] = pendingJobId
           // Create progress + in_progress result for each enabled source.
           // Preserve existing results for excluded (disabled) sources.
           const order = state.sourceOrder[id] ?? []
@@ -468,6 +497,8 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
               continue
             }
             nextCancelled.delete(sourceId)
+            newJobIdBySource[sourceId] = pendingJobId
+            trackedSources.push(sourceId)
             newProgress[sourceId] = { currentDb: null, checkedDbs: [] }
             // Preserve prior fields (best_match, problem_tags, etc.) so the
             // UI keeps showing the last-known-good decision tag while the
@@ -486,6 +517,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
                   ...prev,
                   source_id: sourceId,
                   status: 'in_progress' as VerifyStatus,
+                  all_results: [],
                   databases_searched: [],
                 }
               : {
@@ -505,10 +537,28 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           resultsByPdf: newResults,
           cancelledSourceIds: nextCancelled,
           priorResultsByPdf: newPriorResults,
+          activeJobIdBySource: newJobIdBySource,
+          activeJobIdByPdf: newJobIdByPdf,
         }
       })
 
       const response = await api.verifyBatch(pdfIds, texts, excludedIds)
+
+      // Replace the sentinel with the real job_id so subsequent WS events
+      // for this run pass the renderer-side filter. Only touch entries we
+      // installed ourselves — never overwrite activeJobIdBy{Source,Pdf}
+      // values written by an unrelated concurrent start* action.
+      set(state => {
+        const bySource = { ...state.activeJobIdBySource }
+        const byPdf = { ...state.activeJobIdByPdf }
+        for (const id of trackedSources) {
+          if (bySource[id] === pendingJobId) bySource[id] = response.job_id
+        }
+        for (const id of trackedPdfs) {
+          if (byPdf[id] === pendingJobId) byPdf[id] = response.job_id
+        }
+        return { activeJobIdBySource: bySource, activeJobIdByPdf: byPdf }
+      })
 
       startPolling(pdfIds, response.job_id)
     } catch (e) {
@@ -525,6 +575,9 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         sourceProgress: s.sourceProgress,
         resultsByPdf: s.resultsByPdf,
         priorResultsByPdf: s.priorResultsByPdf,
+        cancelledSourceIds: s.cancelledSourceIds,
+        activeJobIdBySource: s.activeJobIdBySource,
+        activeJobIdByPdf: s.activeJobIdByPdf,
       }
     })()
     try {
@@ -556,12 +609,23 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       // Initialize verify log batch for this targeted run.
       initVerifyBatch(includeIds.length, 1)
 
+      // Sentinel job_id installed before the API call — see startVerification
+      // for the rationale. Replaced with the real job_id after the response.
+      const pendingJobId = `pending-${Math.random().toString(36).slice(2)}`
+
       set(state => {
         const pdfResults = { ...(state.resultsByPdf[pdfId] ?? {}) }
         const sourceProgress = { ...state.sourceProgress }
         const pdfPriorSnapshot = { ...(state.priorResultsByPdf[pdfId] ?? {}) }
+        // Clear the cancelled-flag for sources we're about to re-run so late
+        // events from the *previous* run no longer suppress this new run's
+        // WS updates. Mirrors startVerification / reverifySource / reverifyPdf.
+        const nextCancelled = new Set(state.cancelledSourceIds)
+        const newJobIdBySource = { ...state.activeJobIdBySource }
 
         for (const sourceId of includeIds) {
+          nextCancelled.delete(sourceId)
+          newJobIdBySource[sourceId] = pendingJobId
           // Preserve prior fields so a re-run on an already-verified source
           // keeps showing the last-known-good decision tag during in_progress
           // and on Stop, instead of flashing as 'fabricated'.
@@ -576,6 +640,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
                 ...prev,
                 source_id: sourceId,
                 status: 'in_progress' as VerifyStatus,
+                all_results: [],
                 databases_searched: [],
               }
             : {
@@ -619,10 +684,25 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             ...state.priorResultsByPdf,
             [pdfId]: pdfPriorSnapshot,
           },
+          cancelledSourceIds: nextCancelled,
+          activeJobIdBySource: newJobIdBySource,
+          activeJobIdByPdf: { ...state.activeJobIdByPdf, [pdfId]: pendingJobId },
         }
       })
 
       const response = await api.verifyBatch([pdfId], texts, excludedIds)
+
+      // Replace sentinel with real job_id, only for entries we wrote.
+      set(state => {
+        const bySource = { ...state.activeJobIdBySource }
+        const byPdf = { ...state.activeJobIdByPdf }
+        for (const id of includeIds) {
+          if (bySource[id] === pendingJobId) bySource[id] = response.job_id
+        }
+        if (byPdf[pdfId] === pendingJobId) byPdf[pdfId] = response.job_id
+        return { activeJobIdBySource: bySource, activeJobIdByPdf: byPdf }
+      })
+
       startPolling([pdfId], response.job_id)
     } catch (e) {
       console.error('Failed to start non-high PDF verification:', e)
@@ -638,11 +718,18 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         sourceProgress: s.sourceProgress,
         cancelledSourceIds: s.cancelledSourceIds,
         priorResultsByPdf: s.priorResultsByPdf,
+        activeJobIdBySource: s.activeJobIdBySource,
       }
     })()
     try {
       // Init a mini batch for single verify logging
       initVerifyBatch(1, 1)
+
+      // Sentinel job_id installed before the API call so a late
+      // verify_source_done from a just-cancelled prior run (which carries
+      // the old job_id) gets dropped by the WS-handler filter — closing
+      // the cancel-then-reverify race.
+      const pendingJobId = `pending-${Math.random().toString(36).slice(2)}`
 
       set(state => {
         const nextCancelled = new Set(state.cancelledSourceIds)
@@ -662,6 +749,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
                     ...prev,
                     source_id: sourceId,
                     status: 'in_progress' as VerifyStatus,
+                    all_results: [],
                     databases_searched: [],
                   }
                 : {
@@ -683,9 +771,19 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             ...state.priorResultsByPdf,
             [pdfId]: pdfPriorSnapshot,
           },
+          activeJobIdBySource: { ...state.activeJobIdBySource, [sourceId]: pendingJobId },
         }
       })
-      await api.verifySource(pdfId, sourceId, sanitizeSourceText(text ?? ''))
+      const response = await api.verifySource(pdfId, sourceId, sanitizeSourceText(text ?? ''))
+
+      // Replace sentinel with real job_id, but only if our sentinel is still
+      // there — a concurrent action may have already moved on.
+      set(state => {
+        if (state.activeJobIdBySource[sourceId] !== pendingJobId) return state
+        return {
+          activeJobIdBySource: { ...state.activeJobIdBySource, [sourceId]: response.job_id },
+        }
+      })
     } catch (e) {
       console.error('Failed to verify source:', e)
       set(rollback)
@@ -694,14 +792,32 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
 
   reverifyPdf: async (pdfId) => {
     try {
+      const pendingJobId = `pending-${Math.random().toString(36).slice(2)}`
+      const trackedSources: string[] = []
       set(state => {
         const nextCancelled = new Set(state.cancelledSourceIds)
+        const newJobIdBySource = { ...state.activeJobIdBySource }
         for (const sourceId of state.sourceOrder[pdfId] ?? []) {
           nextCancelled.delete(sourceId)
+          newJobIdBySource[sourceId] = pendingJobId
+          trackedSources.push(sourceId)
         }
-        return { cancelledSourceIds: nextCancelled }
+        return {
+          cancelledSourceIds: nextCancelled,
+          activeJobIdBySource: newJobIdBySource,
+          activeJobIdByPdf: { ...state.activeJobIdByPdf, [pdfId]: pendingJobId },
+        }
       })
-      await api.verifyPdf(pdfId)
+      const response = await api.verifyPdf(pdfId)
+      set(state => {
+        const bySource = { ...state.activeJobIdBySource }
+        const byPdf = { ...state.activeJobIdByPdf }
+        for (const id of trackedSources) {
+          if (bySource[id] === pendingJobId) bySource[id] = response.job_id
+        }
+        if (byPdf[pdfId] === pendingJobId) byPdf[pdfId] = response.job_id
+        return { activeJobIdBySource: bySource, activeJobIdByPdf: byPdf }
+      })
     } catch (e) {
       console.error('Failed to verify PDF:', e)
     }
@@ -1002,19 +1118,32 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   },
 
   loadResults: async (pdfId) => {
+    // If a verification is in flight for this PDF, skip the cache load — the
+    // live store (websocket events + optimistic in_progress entries from
+    // startVerification) is the source of truth, and the backend cache can
+    // only lag it. Without this skip, switching PDFs and switching back
+    // mid-run would clobber live in_progress entries with a stale snapshot.
+    if (get().summaries[pdfId]?.completed === false) return
     try {
       const response = await api.verifyResults(pdfId)
-      const results = response.results
+      // `in_progress` is a live-only state — by the time we're hydrating from
+      // cache, no verification is actually running for these sources. Any
+      // `in_progress` here is residue from a previous session that didn't
+      // finish (force-quit / crash). Drop them so they fall back to the
+      // "never searched" gray state, leaving the PDF as cleanly "partially
+      // ran" rather than fake-pinned to running.
+      const results: Record<string, VerificationResult> = {}
+      for (const [sourceId, r] of Object.entries(response.results)) {
+        if (r.status !== 'in_progress') results[sourceId] = r
+      }
       const count = Object.keys(results).length
       if (count > 0) {
         console.log('%c[Loaded Verify Cache] %s (%d sources)', 'color: #60a5fa; font-weight: bold', pdfId, count)
-        // Compute summary from cached results
-        let high = 0, medium = 0, low = 0, inProgress = 0
+        let high = 0, medium = 0, low = 0
         for (const r of Object.values(results)) {
           if (r.status === 'high') high++
           else if (r.status === 'medium') medium++
           else if (r.status === 'low') low++
-          else if (r.status === 'in_progress') inProgress++
         }
         set(state => ({
           resultsByPdf: { ...state.resultsByPdf, [pdfId]: results },
@@ -1023,9 +1152,9 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             [pdfId]: {
               pdf_id: pdfId,
               high, medium, low,
-              in_progress: inProgress,
+              in_progress: 0,
               total: count,
-              completed: inProgress === 0,
+              completed: true,
             },
           },
         }))
@@ -1040,11 +1169,32 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   },
 }))
 
+// Drop WS events whose `job_id` doesn't match the active run for this
+// source/PDF — closes the cancel-then-reverify race where a late
+// `verify_source_done` from the cancelled run would otherwise clobber the
+// new run's optimistic state. Events without a `job_id` (manual overrides,
+// score_scholar follow-ups, etc.) are always accepted.
+function isStaleSourceEvent(data: Record<string, unknown>, sourceId: string): boolean {
+  const jobId = typeof data.job_id === 'string' ? data.job_id : ''
+  if (!jobId) return false
+  const active = useVerificationStore.getState().activeJobIdBySource[sourceId]
+  return Boolean(active && active !== jobId)
+}
+
+function isStalePdfEvent(data: Record<string, unknown>, pdfId: string): boolean {
+  const jobId = typeof data.job_id === 'string' ? data.job_id : ''
+  if (!jobId) return false
+  const active = useVerificationStore.getState().activeJobIdByPdf[pdfId]
+  return Boolean(active && active !== jobId)
+}
+
 export function initVerificationListeners(): () => void {
   const unsubs = [
     wsClient.on('verify_started', (data) => {
       const sourceId = data.source_id as string
       const pdfId = data.pdf_id as string
+
+      if (isStaleSourceEvent(data, sourceId)) return
 
       // Drop late events for sources the user has already cancelled — the
       // backend task may still broadcast verify_started before the cancel
@@ -1083,6 +1233,7 @@ export function initVerificationListeners(): () => void {
                     ...prev,
                     source_id: sourceId,
                     status: 'in_progress' as VerifyStatus,
+                    all_results: [],
                     databases_searched: [],
                   }
                 : {
@@ -1107,6 +1258,8 @@ export function initVerificationListeners(): () => void {
       const sourceId = data.source_id as string
       const db = data.database as string
 
+      if (isStaleSourceEvent(data, sourceId)) return
+
       // Skip late events for cancelled sources.
       if (useVerificationStore.getState().cancelledSourceIds.has(sourceId)) {
         return
@@ -1128,6 +1281,8 @@ export function initVerificationListeners(): () => void {
       const sourceId = data.source_id as string
       const dbName = data.database as string
       const dbStatus = (data.db_status as DbCheckStatus) || (data.found ? 'high' : 'low')
+
+      if (isStaleSourceEvent(data, sourceId)) return
 
       // Skip late events for cancelled sources.
       if (useVerificationStore.getState().cancelledSourceIds.has(sourceId)) {
@@ -1191,6 +1346,11 @@ export function initVerificationListeners(): () => void {
       const pdfId = data.pdf_id as string
       const sourceId = data.source_id as string
       const status = data.status as string
+
+      // Drop late events from a superseded run (cancel-then-reverify race).
+      // Events without a `job_id` (manual override / score_scholar) skip
+      // this filter and are always applied.
+      if (isStaleSourceEvent(data, sourceId)) return
 
       // Cancel handlers already restored the correct UI state (snapshot for
       // re-runs; entry deleted for first-time verifies). The backend's late
@@ -1300,6 +1460,9 @@ export function initVerificationListeners(): () => void {
 
     wsClient.on('verify_pdf_done', (data) => {
       const pdfId = data.pdf_id as string
+
+      if (isStalePdfEvent(data, pdfId)) return
+
       const high = (data.high as number | undefined) ?? 0
       const medium = (data.medium as number | undefined) ?? 0
       const low = (data.low as number | undefined) ?? 0
