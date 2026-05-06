@@ -234,6 +234,31 @@
   opacity: 1;
   height: 3px;
 }
+.verify-divider-export {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  padding: 0;
+  border: 1px solid #d97706;
+  background: #fff;
+  color: #d97706;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.1s, background 0.1s;
+}
+.verify-divider-export:hover:not(:disabled) {
+  opacity: 1;
+  background: #fef3c7;
+}
+.verify-divider-export:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 .verify-item {
   display: flex;

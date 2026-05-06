@@ -74,6 +74,37 @@ function buildDbSearchUrl(db: string, text: string): string {
 const statusOrder: Record<string, number> = { high: 0, medium: 1, low: 2, in_progress: 3, pending: 4 }
 type CardSortMode = 'status' | 'ref' | 'enabled' | 'decision'
 
+type SortableCard = {
+  source: { id: string; ref_number?: number | null }
+  result?: VerificationResult
+  enabled: boolean
+}
+
+function sortSourceCards<T extends SortableCard>(cards: T[], key: CardSortMode, asc: boolean): T[] {
+  const list = [...cards]
+  const dir = asc ? 1 : -1
+  list.sort((a, b) => {
+    if (key === 'status') {
+      const ao = statusOrder[a.result?.status ?? 'pending'] ?? 4
+      const bo = statusOrder[b.result?.status ?? 'pending'] ?? 4
+      return dir * (ao - bo)
+    }
+    if (key === 'ref') {
+      return dir * ((a.source.ref_number ?? 999) - (b.source.ref_number ?? 999))
+    }
+    if (key === 'decision') {
+      const decisionOrder: Record<string, number> = { fabricated: 0, citation: 1, valid: 2 }
+      const ao = decisionOrder[effectiveDecisionTag(a.result)] ?? 99
+      const bo = decisionOrder[effectiveDecisionTag(b.result)] ?? 99
+      return -dir * (ao - bo)
+    }
+    const ae = a.enabled ? 0 : 1
+    const be = b.enabled ? 0 : 1
+    return dir * (ae - be)
+  })
+  return list
+}
+
 export default function VerificationPage() {
   const { t } = useTranslation()
   const verifyCenterRef = useRef<HTMLElement | null>(null)
@@ -124,6 +155,10 @@ export default function VerificationPage() {
   // after selectPdf swaps the card list.
   const pendingJumpRef = useRef<{ pdfId: string; sourceId: string } | null>(null)
   const currentSummary = useMemo(() => (effectivePdfId ? summaries[effectivePdfId] : undefined), [summaries, effectivePdfId])
+  // `completed` flips to false synchronously inside startVerification (verification-store.ts ~L455)
+  // and back to true only on done/stop (~L881/L938), so this disables the export button instantly
+  // — `in_progress` counter doesn't bump until the first polling event arrives.
+  const isVerificationRunning = currentSummary?.completed === false
   const orderedSourceIds = useMemo(() => (effectivePdfId ? (sourceOrder[effectivePdfId] ?? []) : []), [sourceOrder, effectivePdfId])
 
   // Sort-dropdown open state + click-outside wiring
@@ -427,35 +462,12 @@ export default function VerificationPage() {
   // --- Center panel sorting (persisted in store) ---
   const { toggleCardSort } = useVerificationStore.getState()
 
-  const sortedSourceCards = useMemo(() => {
-    const list = [...sourceCards]
-    const dir = cardSortAsc ? 1 : -1
-    list.sort((a, b) => {
-      if (cardSortKey === 'status') {
-        const ao = statusOrder[a.result?.status ?? 'pending'] ?? 4
-        const bo = statusOrder[b.result?.status ?? 'pending'] ?? 4
-        return dir * (ao - bo)
-      }
-      if (cardSortKey === 'ref') {
-        return dir * ((a.source.ref_number ?? 999) - (b.source.ref_number ?? 999))
-      }
-      if (cardSortKey === 'decision') {
-        // Order values chosen so that ascending (dir=+1) puts Fabricated first —
-        // but default direction is desc (asc=false, dir=-1), which flips to
-        // Valid-first. Invert by using the complement so the DEFAULT click
-        // lands on Fabricated → Citation → Valid.
-        const decisionOrder: Record<string, number> = { fabricated: 0, citation: 1, valid: 2 }
-        const ao = decisionOrder[effectiveDecisionTag(a.result)] ?? 99
-        const bo = decisionOrder[effectiveDecisionTag(b.result)] ?? 99
-        return -dir * (ao - bo)
-      }
-      // enabled: enabled first when ascending
-      const ae = a.enabled ? 0 : 1
-      const be = b.enabled ? 0 : 1
-      return dir * (ae - be)
-    })
-    return list
-  }, [sourceCards, cardSortKey, cardSortAsc])
+  // Default first-click direction (desc) on `decision` puts Valid first;
+  // see sortSourceCards for the inversion that makes that happen.
+  const sortedSourceCards = useMemo(
+    () => sortSourceCards(sourceCards, cardSortKey as CardSortMode, cardSortAsc),
+    [sourceCards, cardSortKey, cardSortAsc],
+  )
 
   // Always reload sources when a PDF is selected or when the user navigates
   // back to the verification page (sources may have changed on parsing page).
@@ -703,8 +715,19 @@ export default function VerificationPage() {
     }
   }
 
-  async function handleVerifyNonHighPdf(pdfId: string) {
-    if (isPdfVerifying(pdfId)) return
+  async function handleVerifyOrCancelNonHighPdf(pdfId: string) {
+    if (isPdfVerifying(pdfId)) {
+      if (verifyAllActiveRef.current && verifyAllCurrentRef.current === pdfId) {
+        verifyAllActiveRef.current = false
+        verifyAllQueueRef.current = []
+        verifyAllCurrentRef.current = null
+        setVerifyAllActive(false)
+      }
+      autoGsPdfIdsRef.current.delete(pdfId)
+      pendingVerifyPdfIdsRef.current.delete(pdfId)
+      await useVerificationStore.getState().cancelPdf(pdfId)
+      return
+    }
     useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
     await loadSourcesFn(pdfId)
     const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
@@ -749,6 +772,141 @@ export default function VerificationPage() {
     await useVerificationStore.getState().overrideStatus(effectivePdfId, selectedSourceId, status)
   }
 
+  // Build a verification-report PDF (bytes) for one PDF id. Returns null when
+  // there are no results to render. Used by both the single-PDF export and
+  // the batch (above-cutoff) export that share the same per-PDF formatting.
+  async function buildVerificationReportForPdf(
+    pdfId: string,
+  ): Promise<{ pdfName: string; bytes: Uint8Array } | null> {
+    const pdfResults = useVerificationStore.getState().resultsByPdf[pdfId] ?? {}
+    if (Object.keys(pdfResults).length === 0) return null
+
+    const pdfName = pdfs.find(p => p.id === pdfId)?.name ?? pdfId
+    const sourcesForPdf = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+    const enabledMap = useVerificationStore.getState().enabledSources
+    const progressMap = useVerificationStore.getState().sourceProgress
+    const allVerifyTexts = useVerificationStore.getState().verifyTexts
+
+    const cards = sourcesForPdf.map(source => ({
+      source,
+      result: pdfResults[source.id] as VerificationResult | undefined,
+      progress: progressMap[source.id],
+      enabled: enabledMap[source.id] ?? true,
+    }))
+    // Respect the middle-pane sort order (sorted but unfiltered), and exclude
+    // disabled sources so the report reflects what the user actually
+    // verified/kept. Also drop sources with no result entry — those are
+    // "never searched" (gray status bar) and carry no info.
+    const sortedSourcesForExport = sortSourceCards(cards, cardSortKey as CardSortMode, cardSortAsc)
+      .filter(c => c.enabled)
+      .filter(c => pdfResults[c.source.id] !== undefined)
+      .map(c => c.source)
+
+    const reportSources = sortedSourcesForExport.map(s => {
+      const r = pdfResults[s.id]
+      const bm = r?.best_match
+      const refText = allVerifyTexts[s.id] ?? s.text ?? ''
+      // Prefer backend-provided URLs (built from NER-extracted title).
+      // Fall back to local computation only when backend URLs aren't available.
+      let scholarUrl = r?.scholar_url
+      let googleUrl = r?.google_url
+      if (!scholarUrl || !googleUrl) {
+        const cacheKey = `${s.id}::${refText}`
+        const extractedTitle = parsedTitles[cacheKey]?.trim() ?? ''
+        const searchText = extractedTitle
+          ? sanitizeSourceTextForSearch(extractedTitle)
+          : sanitizeSourceTextForSearch(refText)
+        if (!scholarUrl && searchText) scholarUrl = buildDbSearchUrl('Google Scholar', searchText)
+        if (!googleUrl && searchText) googleUrl = googleSearchUrl(searchText)
+      }
+      return {
+        refNumber: s.ref_number ?? 0,
+        text: refText,
+        status: r?.status ?? 'pending',
+        problemTags: r?.problem_tags ?? [],
+        decisionTag: (r?.decision_tag ?? 'valid') as 'valid' | 'citation' | 'fabricated',
+        decisionTagOverride: (r?.decision_tag_override ?? null) as 'valid' | 'citation' | 'fabricated' | null,
+        tagOverrides: r?.tag_overrides,
+        scholarUrl,
+        googleUrl,
+        bestMatch: bm ? {
+          title: bm.title,
+          authors: bm.authors,
+          year: bm.year,
+          journal: bm.journal,
+          doi: bm.doi,
+          url: bm.url,
+          database: bm.database,
+          score: bm.score,
+          titleSimilarity: bm.match_details?.title_similarity ?? 0,
+          authorMatch: bm.match_details?.author_match ?? 0,
+          yearMatch: bm.match_details?.year_match ?? 0,
+          volume: bm.volume,
+          issue: bm.issue,
+          pages: bm.pages,
+          publisher: bm.publisher,
+          editor: bm.editor,
+          documentType: bm.document_type,
+          language: bm.language,
+          issn: bm.issn,
+          isbn: bm.isbn,
+        } : undefined,
+      }
+    })
+
+    const baseSummary = summaries[pdfId] ?? { high: 0, medium: 0, low: 0, total: sortedSourcesForExport.length }
+    const effectiveDecision = (r: typeof reportSources[number]) => r.decisionTagOverride ?? r.decisionTag
+    const validCount = reportSources.filter(r => effectiveDecision(r) === 'valid').length
+    const citationCount = reportSources.filter(r => effectiveDecision(r) === 'citation').length
+    const fabricatedCount = reportSources.filter(r => effectiveDecision(r) === 'fabricated').length
+
+    const includeBibliographic = useSettingsStore.getState().settings.report_include_bibliographic ?? true
+    const { generateVerificationReport } = await import('../../pdf/verification-report-writer')
+    const pdfBytes = await generateVerificationReport({
+      pdfName,
+      summary: { ...baseSummary, total: sortedSourcesForExport.length, valid: validCount, citation: citationCount, fabricated: fabricatedCount },
+      sources: reportSources,
+      includeBibliographic,
+      labels: {
+        header: t('verification.exportPdfHeader'),
+        high: t('verification.status.high'),
+        medium: t('verification.status.medium'),
+        low: t('verification.status.low'),
+        problems: t('verification.exportPdfProblems'),
+        noMatch: t('verification.exportPdfNoMatch'),
+        sourcesLabel: t('verification.exportPdfSources'),
+        titleTag: t('verification.titleShort'),
+        validTag: t('verification.validTag'),
+        citationTag: t('verification.citationTag'),
+        fabricatedTag: t('verification.fabricatedTag'),
+        tagLabel: (tag: string) => problemTagLabel(tag),
+        bibliographic: t('verification.bibliographic'),
+        volume: t('verification.volume'),
+        issue: t('verification.issue'),
+        pages: t('verification.pages'),
+        publisher: t('verification.publisher'),
+        editor: t('verification.editor'),
+        documentType: t('verification.documentType'),
+        language: t('verification.language'),
+        issn: t('verification.issn'),
+        isbn: t('verification.isbn'),
+        highestMatch: t('verification.exportPdfHighestMatch'),
+        problemDesc: {
+          authors: t('verification.problemDesc.authors'),
+          title: t('verification.problemDesc.title'),
+          year: t('verification.problemDesc.year'),
+          journal: t('verification.problemDesc.journal'),
+          doi: t('verification.problemDesc.doi'),
+        },
+        total: t('verification.exportPdfTotal'),
+        matchGroup: t('verification.exportPdfMatchGroup'),
+        decisionGroup: t('verification.exportPdfDecisionGroup'),
+      },
+    })
+
+    return { pdfName, bytes: pdfBytes }
+  }
+
   async function handleExportVerificationReport() {
     if (!effectivePdfId) return
     const pdfResults = resultsByPdf[effectivePdfId]
@@ -760,7 +918,7 @@ export default function VerificationPage() {
     try {
       const pdfName = pdfs.find(p => p.id === effectivePdfId)?.name ?? effectivePdfId
       const defaultName = `${pdfName.replace(/\.[^.]+$/, '')}-verification.pdf`
-      const configuredDir = useSettingsStore.getState().settings.annotated_pdf_dir?.trim()
+      const configuredDir = useSettingsStore.getState().settings.exported_pdf_dir?.trim()
 
       let target: string | null
       if (configuredDir) {
@@ -774,123 +932,63 @@ export default function VerificationPage() {
       }
       if (!target) return
 
-      // Respect the middle-pane sort order (sorted but unfiltered), and
-      // exclude disabled sources so the report reflects what the user
-      // actually verified/kept.
-      const sortedSourcesForExport = sortedSourceCards
-        .filter(c => c.enabled)
-        .map(c => c.source)
-      const allVerifyTexts = useVerificationStore.getState().verifyTexts
+      const built = await buildVerificationReportForPdf(effectivePdfId)
+      if (!built) {
+        window.alert(t('verification.exportPdfNoResults'))
+        return
+      }
 
-      const reportSources = sortedSourcesForExport.map(s => {
-        const r = pdfResults[s.id]
-        const bm = r?.best_match
-        const refText = allVerifyTexts[s.id] ?? s.text ?? ''
-        // Prefer backend-provided URLs (built from NER-extracted title).
-        // Fall back to local computation only when backend URLs aren't available.
-        let scholarUrl = r?.scholar_url
-        let googleUrl = r?.google_url
-        if (!scholarUrl || !googleUrl) {
-          const cacheKey = `${s.id}::${refText}`
-          const extractedTitle = parsedTitles[cacheKey]?.trim() ?? ''
-          const searchText = extractedTitle
-            ? sanitizeSourceTextForSearch(extractedTitle)
-            : sanitizeSourceTextForSearch(refText)
-          if (!scholarUrl && searchText) scholarUrl = buildDbSearchUrl('Google Scholar', searchText)
-          if (!googleUrl && searchText) googleUrl = googleSearchUrl(searchText)
-        }
-        return {
-          refNumber: s.ref_number ?? 0,
-          text: refText,
-          status: r?.status ?? 'pending',
-          problemTags: r?.problem_tags ?? [],
-          decisionTag: (r?.decision_tag ?? 'valid') as 'valid' | 'citation' | 'fabricated',
-          decisionTagOverride: (r?.decision_tag_override ?? null) as 'valid' | 'citation' | 'fabricated' | null,
-          tagOverrides: r?.tag_overrides,
-          scholarUrl,
-          googleUrl,
-          bestMatch: bm ? {
-            title: bm.title,
-            authors: bm.authors,
-            year: bm.year,
-            journal: bm.journal,
-            doi: bm.doi,
-            url: bm.url,
-            database: bm.database,
-            score: bm.score,
-            titleSimilarity: bm.match_details?.title_similarity ?? 0,
-            authorMatch: bm.match_details?.author_match ?? 0,
-            yearMatch: bm.match_details?.year_match ?? 0,
-            volume: bm.volume,
-            issue: bm.issue,
-            pages: bm.pages,
-            publisher: bm.publisher,
-            editor: bm.editor,
-            documentType: bm.document_type,
-            language: bm.language,
-            issn: bm.issn,
-            isbn: bm.isbn,
-          } : undefined,
-        }
-      })
-
-      const baseSummary = summaries[effectivePdfId] ?? { high: 0, medium: 0, low: 0, total: sortedSourcesForExport.length }
-      const effectiveDecision = (r: typeof reportSources[number]) => r.decisionTagOverride ?? r.decisionTag
-      const validCount = reportSources.filter(r => effectiveDecision(r) === 'valid').length
-      const citationCount = reportSources.filter(r => effectiveDecision(r) === 'citation').length
-      const fabricatedCount = reportSources.filter(r => effectiveDecision(r) === 'fabricated').length
-
-      const includeBibliographic = useSettingsStore.getState().settings.report_include_bibliographic ?? true
-      const { generateVerificationReport } = await import('../../pdf/verification-report-writer')
-      const pdfBytes = await generateVerificationReport({
-        pdfName,
-        summary: { ...baseSummary, valid: validCount, citation: citationCount, fabricated: fabricatedCount },
-        sources: reportSources,
-        includeBibliographic,
-        labels: {
-          header: t('verification.exportPdfHeader'),
-          high: t('verification.status.high'),
-          medium: t('verification.status.medium'),
-          low: t('verification.status.low'),
-          problems: t('verification.exportPdfProblems'),
-          noMatch: t('verification.exportPdfNoMatch'),
-          sourcesLabel: t('verification.exportPdfSources'),
-          titleTag: t('verification.titleShort'),
-          validTag: t('verification.validTag'),
-          citationTag: t('verification.citationTag'),
-          fabricatedTag: t('verification.fabricatedTag'),
-          tagLabel: (tag: string) => problemTagLabel(tag),
-          bibliographic: t('verification.bibliographic'),
-          volume: t('verification.volume'),
-          issue: t('verification.issue'),
-          pages: t('verification.pages'),
-          publisher: t('verification.publisher'),
-          editor: t('verification.editor'),
-          documentType: t('verification.documentType'),
-          language: t('verification.language'),
-          issn: t('verification.issn'),
-          isbn: t('verification.isbn'),
-          highestMatch: t('verification.exportPdfHighestMatch'),
-          problemDesc: {
-            authors: t('verification.problemDesc.authors'),
-            title: t('verification.problemDesc.title'),
-            year: t('verification.problemDesc.year'),
-            journal: t('verification.problemDesc.journal'),
-            doi: t('verification.problemDesc.doi'),
-          },
-          total: t('verification.exportPdfTotal'),
-          matchGroup: t('verification.exportPdfMatchGroup'),
-          decisionGroup: t('verification.exportPdfDecisionGroup'),
-        },
-      })
-
-      await window.electronAPI.writePdfFile(target, pdfBytes)
+      await window.electronAPI.writePdfFile(target, built.bytes)
       setVerifyToast(t('verification.exportPdf'))
       if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
       verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), VERIFY_TOAST_DURATION_MS)
     } catch (err) {
       console.error('[VerificationPage] report PDF export failed:', err)
       window.alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setExportingReport(false)
+    }
+  }
+
+  async function handleExportBatchVerificationReports() {
+    const effectiveCutoff = Math.min(verifyCutoffIndex, sortedPdfs.length)
+    const aboveBar = sortedPdfs.slice(0, effectiveCutoff)
+    const candidates = aboveBar.filter(
+      p => Object.keys(resultsByPdf[p.id] ?? {}).length > 0,
+    )
+    if (candidates.length === 0) {
+      window.alert(t('verification.exportPdfBatchNothing'))
+      return
+    }
+
+    const configuredDir = useSettingsStore.getState().settings.exported_pdf_dir?.trim()
+    const dir = configuredDir || (await window.electronAPI.selectDirectory())
+    if (!dir) return
+
+    setExportingReport(true)
+    let exported = 0
+    let failed = 0
+    try {
+      for (const pdf of candidates) {
+        try {
+          const built = await buildVerificationReportForPdf(pdf.id)
+          if (!built) continue
+          const filename = `${built.pdfName.replace(/\.[^.]+$/, '')}-verification.pdf`
+          await window.electronAPI.writePdfFile(buildDefaultSavePath(dir, filename), built.bytes)
+          exported++
+        } catch (e) {
+          console.error('[VerificationPage] batch export failed for', pdf.name, e)
+          failed++
+        }
+      }
+      const total = aboveBar.length
+      const skipped = total - exported
+      setVerifyToast(t('verification.exportPdfBatchDone', { exported, total, skipped }))
+      if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
+      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), VERIFY_TOAST_DURATION_MS)
+      if (failed > 0 && exported === 0) {
+        window.alert(`Export failed for ${failed} PDF${failed === 1 ? '' : 's'}.`)
+      }
     } finally {
       setExportingReport(false)
     }
@@ -912,6 +1010,10 @@ export default function VerificationPage() {
   const browserOverlayRef = useRef<HTMLDivElement | null>(null)
   const [overlayResizing, setOverlayResizing] = useState(false)
   const overlayResizeStartRef = useRef<{ y: number; height: number } | null>(null)
+  // Last observed panel height — used to translate panel resizes into overlay
+  // resizes that preserve the gap above the overlay (so the overlay's top edge
+  // stays put as the window grows/shrinks).
+  const prevPanelHeightRef = useRef<number | null>(null)
   const browserWebviewRef = useRef<any>(null)
   const [browserCanGoBack, setBrowserCanGoBack] = useState(false)
   const [browserCanGoForward, setBrowserCanGoForward] = useState(false)
@@ -1535,9 +1637,27 @@ export default function VerificationPage() {
 
   useEffect(() => {
     if (!browserOverlayOpen) return
-    const onResize = () => setBrowserOverlayHeight((h) => clampOverlayHeight(h))
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    const panel = verifyCenterRef.current
+    if (!panel) return
+    prevPanelHeightRef.current = panel.clientHeight
+    // Track the panel's actual height (catches window resizes AND any layout
+    // change that resizes verify-center) and translate it into an overlay
+    // height that keeps the gap above the overlay constant — so growing the
+    // window grows the overlay instead of leaving it stuck at the old size.
+    const ro = new ResizeObserver(() => {
+      const newPanelHeight = panel.clientHeight
+      const oldPanelHeight = prevPanelHeightRef.current
+      prevPanelHeightRef.current = newPanelHeight
+      setBrowserOverlayHeight((h) => {
+        if (oldPanelHeight && oldPanelHeight !== newPanelHeight) {
+          const gap = oldPanelHeight - h
+          return clampOverlayHeight(newPanelHeight - gap)
+        }
+        return clampOverlayHeight(h)
+      })
+    })
+    ro.observe(panel)
+    return () => ro.disconnect()
   }, [browserOverlayOpen])
 
   useEffect(() => {
@@ -1961,6 +2081,22 @@ export default function VerificationPage() {
                 role="separator"
                 aria-orientation="horizontal"
               >
+                <button
+                  type="button"
+                  className={styles['verify-divider-export']}
+                  draggable={false}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); handleExportBatchVerificationReports() }}
+                  disabled={exportingReport || isAnyVerifying}
+                  title={t('verification.exportPdfBatch')}
+                  aria-label={t('verification.exportPdfBatch')}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                </button>
                 <span className={styles['verify-divider-line']} />
                 <span className={styles['verify-divider-label']}>
                   {effectiveCutoff >= sortedPdfs.length
@@ -2087,10 +2223,10 @@ export default function VerificationPage() {
                 </button>
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-accent']}`}
-                  onClick={() => effectivePdfId && handleVerifyNonHighPdf(effectivePdfId)}
-                  disabled={!effectivePdfId || isAnyVerifying}
-                  title={t('verification.verifyNonHigh')}
-                ><span aria-hidden="true">&#x25B6;</span>{t('verification.nfShort')}</button>
+                  onClick={() => effectivePdfId && handleVerifyOrCancelNonHighPdf(effectivePdfId)}
+                  disabled={!effectivePdfId || (isAnyVerifying && !(effectivePdfId && isPdfVerifying(effectivePdfId)))}
+                  title={effectivePdfId && isPdfVerifying(effectivePdfId) ? t('verification.stopVerification') : t('verification.verifyNonHigh')}
+                ><span aria-hidden="true">{effectivePdfId && isPdfVerifying(effectivePdfId) ? '■' : '▶'}</span>{t('verification.nfShort')}</button>
               </div>
               <div className={styles['toolbar-center']}>
                 <input
@@ -2142,8 +2278,8 @@ export default function VerificationPage() {
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-export']}`}
                   onClick={handleExportVerificationReport}
-                  disabled={!effectivePdfId || !currentSummary || exportingReport}
-                  title={t('verification.exportPdf')}
+                  disabled={!effectivePdfId || !currentSummary || exportingReport || isVerificationRunning}
+                  title={isVerificationRunning ? t('verification.exportPdfRunning') : t('verification.exportPdf')}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
@@ -2363,10 +2499,10 @@ export default function VerificationPage() {
                           )}
                           <span className={styles['progress-text']}>
                             {card.progress.currentDb
-                              ? `Searching ${card.progress.currentDb}...`
+                              ? t('verification.status.searchingDb', { db: card.progress.currentDb })
                               : card.result?.status === 'in_progress'
-                                ? 'Waiting...'
-                                : `${card.progress.checkedDbs.length} searched`}
+                                ? t('verification.status.waiting')
+                                : t('verification.status.searchedCount', { count: card.progress.checkedDbs.length })}
                           </span>
                           <div className={styles['progress-dots']}>
                             {enabledDatabases.map(db => {
