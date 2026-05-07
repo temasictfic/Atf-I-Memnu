@@ -390,6 +390,30 @@ export default function SettingsPage() {
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
+              <span className={styles['setting-label']}>{t('settings.apiKeys.openalexLabel')}</span>
+              <span className={styles['setting-desc']}>{t('settings.apiKeys.openalexDesc')}</span>
+            </div>
+            <a
+              className={styles['request-key-link']}
+              href="https://openalex.org/settings/api"
+              onClick={handleOpenExternalLink('https://openalex.org/settings/api')}
+            >
+              {t('settings.apiKeys.requestOpenalexKey')}
+              <svg viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M2 2h5v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </a>
+            <SecretInput
+              className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
+              value={settings.api_keys?.openalex ?? ''}
+              placeholder={t('settings.apiKeys.optional')}
+              onChange={v => updateApiKey('openalex', v)}
+            />
+          </div>
+
+          <div className={styles['setting-row']}>
+            <div className={styles['setting-info']}>
               <span className={styles['setting-label']}>{t('settings.apiKeys.baseLabel')}</span>
               <span className={styles['setting-desc']}>{t('settings.apiKeys.baseDesc')}</span>
             </div>

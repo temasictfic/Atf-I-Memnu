@@ -25,14 +25,17 @@ _HOST = "api.openalex.org"
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
     """Search OpenAlex by title only.
 
-    Title-only queries produce better, more targeted results.  The extracted
+    Title-only queries produce better, more targeted results. The extracted
     fields (authors, year, journal) are used for *scoring*, not querying.
     A ±1-year publication-date filter is added when the source year is known.
 
-    Polite-pool access: we attach a ``mailto`` only when the user has
-    configured a real contact email (via ``polite_pool_email`` setting).
-    Sending a fake mailto kept us in the anonymous pool *and* looked like
-    spam, which is exactly what happened to our shared office IP.
+    Two independent identification paths, both optional:
+    - ``mailto`` query param when the user has set ``polite_pool_email`` —
+      the legacy polite-pool tag, still accepted by the anonymous tier.
+    - ``api_key`` query param when the user has issued a key at
+      https://openalex.org/settings/api — the modern auth path that lifts
+      rate limits and is the documented mechanism going forward. Free to
+      register; we send it verbatim, never embedded in mailto.
     """
     query = source.title
     if not query:
@@ -42,9 +45,13 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
         "search": query,
         "per_page": "5",
     }
-    mailto = (get_polite_pool_email() or (api_key or "").strip()) or None
-    if mailto:
-        params["mailto"] = mailto
+    polite_email = get_polite_pool_email()
+    if polite_email:
+        params["mailto"] = polite_email
+    if api_key:
+        clean_key = api_key.strip()
+        if clean_key:
+            params["api_key"] = clean_key
 
     # Year-range filter: keeps only works published within ±1 year of the
     # citation year, which is usually enough to exclude other editions.
