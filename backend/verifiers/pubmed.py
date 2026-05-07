@@ -2,7 +2,11 @@
 
 PubMed covers 36M+ biomedical citations. While it overlaps with Europe PMC,
 PubMed has unique US-focused content and earlier indexing of some records.
-No API key required, but an api_key (NCBI) improves rate limits.
+No API key required, but an api_key (NCBI) improves rate limits from 3/s
+to 10/s. Per NCBI's E-utilities Usage Policy, every request must also
+identify the caller via ``tool=`` and ``email=`` parameters — failure to
+do so can result in the IP being blocked.
+https://www.ncbi.nlm.nih.gov/books/NBK25497/
 """
 
 import time
@@ -15,6 +19,7 @@ from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
+from services.search_settings import get_polite_pool_email
 from verifiers._http import (
     UnauthorizedError,
     check_parked_url,
@@ -23,6 +28,8 @@ from verifiers._http import (
     raise_for_unexpected_status,
     strip_pubmed_field_chars,
 )
+
+_NCBI_TOOL = "AtfiMemnu"
 
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
@@ -36,6 +43,19 @@ _UNAUTHORIZED_HINT = (
     "NCBI rejected the API key. Update it in Settings → API Keys "
     "(generate one at https://www.ncbi.nlm.nih.gov/account/settings/)."
 )
+
+
+def _pubmed_pace_seconds(api_key: str | None) -> float | None:
+    """Per-request pacing override matching NCBI's tier ceilings.
+
+    Anonymous: 3 req/s — return ``None`` to defer to the limiter's host
+    default (currently 0.4 s ≈ 2.5 req/s, conservative for the 3/s cap).
+    Keyed: 10 req/s — return 0.105 s pace (≈ 9.5 req/s) to leave a small
+    headroom for clock drift before tripping a 429.
+    """
+    if api_key:
+        return 0.105
+    return None
 
 
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
@@ -74,7 +94,16 @@ async def _search_query(
     if has_key and now < _unauthorized_until:
         raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT)
 
+    # Per NCBI policy, every request includes ``tool`` (app id) and
+    # ``email`` (contact). Without them, NCBI may block the IP after the
+    # first usage spike — they treat unidentified traffic as suspicious.
+    base_identification: dict[str, str] = {"tool": _NCBI_TOOL}
+    polite_email = get_polite_pool_email()
+    if polite_email:
+        base_identification["email"] = polite_email
+
     params: dict[str, str] = {
+        **base_identification,
         "db": "pubmed",
         "term": query,
         "retmode": "json",
@@ -85,7 +114,7 @@ async def _search_query(
 
     # Step 1: ESearch to get PMIDs
     check_parked_url(ESEARCH_URL)
-    await rate_limiter.acquire(_HOST)
+    await rate_limiter.acquire(_HOST, rate=_pubmed_pace_seconds(api_key))
     async with session.get(ESEARCH_URL, params=params) as resp:
         check_rate_limit(resp)
         if has_key and resp.status in (401, 403):
@@ -101,6 +130,7 @@ async def _search_query(
 
     # Step 2: ESummary to get metadata
     summary_params: dict[str, str] = {
+        **base_identification,
         "db": "pubmed",
         "id": ",".join(id_list),
         "retmode": "json",
@@ -109,7 +139,7 @@ async def _search_query(
         summary_params["api_key"] = api_key
 
     check_parked_url(ESUMMARY_URL)
-    await rate_limiter.acquire(_HOST)
+    await rate_limiter.acquire(_HOST, rate=_pubmed_pace_seconds(api_key))
     async with session.get(ESUMMARY_URL, params=summary_params) as resp:
         check_rate_limit(resp)
         if has_key and resp.status in (401, 403):
