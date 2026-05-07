@@ -248,8 +248,13 @@ def classify_decision(
     Rule:
       all four of {author, year, title, source} match     → "valid"
       title matches
-        OR (author matches AND any of {year, source, doi} matches) → "citation"
+        OR (author matches AND any of {source, doi} matches) → "citation"
       otherwise                                           → "fabricated"
+
+    Note: year alone is intentionally NOT enough to lift author+year into
+    "citation" — same-author/same-year pairs are too easy to satisfy by
+    coincidence (or by a hallucinated reference) when title and venue
+    both disagree.
     """
     if best_match is None:
         return "fabricated"
@@ -289,7 +294,7 @@ def classify_decision(
     if author_matches and year_matches and title_matches and source_matches:
         return "valid"
     elif title_matches or (
-        author_matches and (year_matches or source_matches or doi_matches)
+        author_matches and (source_matches or doi_matches)
     ):
         return "citation"
     else:

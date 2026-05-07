@@ -336,8 +336,13 @@ hepsi eşleşiyor {author, year, title, source}
                                                   →  "valid"      →  Geçerli
 
 title_matches
-   VEYA  (author_matches VE biri {year, source, doi})
+   VEYA  (author_matches VE biri {source, doi})
                                                   →  "citation"   →  Künye
+
+(year_matches tek başına author ile birleşse bile "citation"a yetmez —
+ aynı yazar/aynı yıl çakışması rastlantıyla ya da uydurma referansla
+ kolayca sağlanabildiği için, title ve venue'nun ikisi de uyuşmuyorsa
+ sonuç "fabricated" olur.)
 
 aksi halde                                        →  "fabricated" →  Uydurma
 ```
@@ -486,7 +491,7 @@ Kaynak: [scholar-scanner.ts:149–184](src/renderer/src/lib/services/scholar-sca
 | Karar | Koşul | Türkçe |
 |---|---|---|
 | `valid` | author + year + title + source hepsi match | **Geçerli** |
-| `citation` | title match VEYA (author + biri {year, source, doi}) | **Künye** |
+| `citation` | title match VEYA (author + biri {source, doi}) | **Künye** |
 | `fabricated` | aksi halde | **Uydurma** |
 
 ---
