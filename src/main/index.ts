@@ -22,14 +22,14 @@ const isDev = !app.isPackaged
 // for containing the literal "Electron/..." token. Uses the real bundled Chrome
 // version so the string stays current across Electron upgrades.
 function buildChromeUserAgent(): string {
-  const chromeVersion = process.versions.chrome || '146.0.0.0'
+  const chromeVersion = process.versions.chrome || '148.0.7778.96'
   return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
 }
 
 const SCHOLAR_PARTITION = 'persist:scholar-panel'
 
 function buildChromeBrandHeader(): string {
-  const major = (process.versions.chrome || '146').split('.')[0]
+  const major = (process.versions.chrome || '148').split('.')[0]
   return `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not?A_Brand";v="24"`
 }
 

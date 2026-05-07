@@ -17,7 +17,7 @@
   // the real build — emitting "X.0.0.0" there is a Cloudflare giveaway because
   // real Chrome always has meaningful sub-version digits.
   const fullMatch = navigator.userAgent.match(/Chrome\/([\d.]+)/)
-  const chromeFullVersion = fullMatch ? fullMatch[1] : '146.0.0.0'
+  const chromeFullVersion = fullMatch ? fullMatch[1] : '148.0.7778.96'
   const chromeVersion = chromeFullVersion.split('.')[0]
 
   const fakeBrands = [
@@ -47,7 +47,7 @@
           case 'architecture': result.architecture = 'x86'; break
           case 'bitness': result.bitness = '64'; break
           case 'model': result.model = ''; break
-          case 'platformVersion': result.platformVersion = '15.0.0'; break
+          case 'platformVersion': result.platformVersion = '19.0.0'; break
           case 'uaFullVersion': result.uaFullVersion = chromeFullVersion; break
           case 'fullVersionList': result.fullVersionList = fakeFullVersionList; break
           case 'wow64': result.wow64 = false; break
