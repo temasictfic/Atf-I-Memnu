@@ -215,10 +215,40 @@ async def reverify_source(pdf_id: str, source_id: str, request: VerifySourceRequ
     return {"job_id": job_id}
 
 
+def _persist_settled_for_pdf(pdf_id: str) -> None:
+    """Snapshot already-settled (high/medium/low) results to disk on cancel.
+
+    Why: cancel endpoints used to return immediately and leave the disk write
+    to the orchestrator's `finally` block. If the user closed the app between
+    Stop and that finally running, partial results were lost. Saving here
+    synchronously closes that race.
+
+    Merges in-memory settled rows over the existing disk state so we don't
+    clobber prior-run results for sources that are currently in_progress
+    (their disk entry stays). in_progress rows in memory are dropped — they'd
+    otherwise be finalised to low/fabricated by the trailing CancelledError
+    handlers, and writing those would inflate the Fabricated pill on reload.
+    """
+    in_mem = verify_results.get(pdf_id) or {}
+    if not in_mem:
+        return
+    merged = load_verify_cache(pdf_id) or {}
+    for sid, r in in_mem.items():
+        if r.status in ("high", "medium", "low"):
+            merged[sid] = r
+    if merged:
+        try:
+            save_verify_cache(pdf_id, merged)
+        except Exception:
+            pass
+
+
 @router.post("/verify/cancel")
 async def cancel_all_verification():
     from services.verification_orchestrator import cancel_all_active
     cancel_all_active()
+    for pid in list(verify_results.keys()):
+        _persist_settled_for_pdf(pid)
     await manager.send_log("info", "Verification cancelled by user")
     return {"success": True}
 
@@ -227,6 +257,7 @@ async def cancel_all_verification():
 async def cancel_pdf_verification(pdf_id: str):
     from services.verification_orchestrator import request_cancel
     request_cancel(pdf_id)
+    _persist_settled_for_pdf(pdf_id)
     await manager.send_log("info", f"Verification cancelled for {pdf_id}", pdf_id=pdf_id)
     return {"success": True}
 
@@ -235,6 +266,10 @@ async def cancel_pdf_verification(pdf_id: str):
 async def cancel_source_verification(source_id: str):
     from services.verification_orchestrator import request_cancel
     request_cancel(source_id)
+    # source_id alone doesn't reveal its pdf — flush every PDF that has
+    # in-memory state. Cheap; each settled-row dict is small.
+    for pid in list(verify_results.keys()):
+        _persist_settled_for_pdf(pid)
     return {"success": True}
 
 
