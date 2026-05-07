@@ -2,6 +2,11 @@
 
 Open Library covers 20M+ edition records with strong book/monograph coverage.
 No API key required.
+
+Open Library indexes books, not articles, so its search index does not
+contain DOIs. We don't try a DOI lookup — it would burn a request on a
+field the schema doesn't expose. Article-DOI sources should match against
+Crossref / OpenAlex / Europe PMC instead.
 """
 
 import aiohttp
@@ -10,7 +15,6 @@ from urllib.parse import quote
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
-from services.scoring_constants import DOI_MATCH_MIN_SCORE
 from verifiers._http import (
     check_parked_url,
     check_rate_limit,
@@ -23,23 +27,16 @@ _HOST = "openlibrary.org"
 
 
 async def search(source: ParsedSource) -> MatchResult | None:
-    """Search Open Library by ISBN, DOI, or title.
+    """Search Open Library by title.
 
     Errors propagate to the orchestrator so they're surfaced as
     ``db_status: "error"`` rather than silently ``not_found``.
     """
-    session = get_session()
-    # Priority 1: DOI lookup
-    if source.doi:
-        result = await _search_query(session, {"q": source.doi}, source)
-        if result and result.score >= DOI_MATCH_MIN_SCORE:
-            return result
-
-    # Priority 2: Title search
     query = source.title
     if not query:
         return None
 
+    session = get_session()
     return await _search_query(session, {"title": query}, source)
 
 

@@ -113,6 +113,15 @@ def _parse_atom_response(xml_text: str, source: ParsedSource) -> MatchResult | N
             else ""
         )
 
+        # arXiv signals errors (e.g. malformed id) as a 200-OK feed with a
+        # single entry whose title is "Error" and id under /api/errors.
+        # See arXiv user manual section "Errors". Skip those so they don't
+        # get scored as a low-quality match.
+        id_el = entry.find("atom:id", NS)
+        entry_id = (id_el.text or "") if id_el is not None else ""
+        if title == "Error" or "/api/errors" in entry_id:
+            continue
+
         authors = []
         for author in entry.findall("atom:author", NS):
             name_el = author.find("atom:name", NS)
@@ -134,8 +143,7 @@ def _parse_atom_response(xml_text: str, source: ParsedSource) -> MatchResult | N
                 link = link_el.get("href", "")
                 break
         if not link:
-            id_el = entry.find("atom:id", NS)
-            link = (id_el.text or "") if id_el is not None else ""
+            link = entry_id
 
         # Strip version suffix so URL comparison in _url_match_score works
         # regardless of whether the source citation includes a version or not.

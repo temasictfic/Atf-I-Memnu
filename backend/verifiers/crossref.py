@@ -178,12 +178,17 @@ def _item_to_match(item: dict[str, Any], source: ParsedSource) -> MatchResult | 
         if name:
             authors.append(name)
 
+    # Year-extraction fallback chain: print → online → published → issued.
+    # Many records — particularly books, datasets, and preprints — only
+    # populate ``issued`` (the canonical Crossref date) and not the
+    # print/online split, so we'd lose the year and miss the year-bonus
+    # in scoring. ``published`` is the Crossref-computed best-of date.
     year = None
-    date_parts = item.get("published-print", {}).get("date-parts", [[]])
-    if not date_parts or not date_parts[0]:
-        date_parts = item.get("published-online", {}).get("date-parts", [[]])
-    if date_parts and date_parts[0]:
-        year = date_parts[0][0]
+    for key in ("published-print", "published-online", "published", "issued"):
+        date_parts = (item.get(key) or {}).get("date-parts") or [[]]
+        if date_parts and date_parts[0]:
+            year = date_parts[0][0]
+            break
 
     doi = item.get("DOI", "")
 
