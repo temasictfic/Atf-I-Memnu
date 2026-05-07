@@ -1,21 +1,27 @@
 """BASE (Bielefeld Academic Search Engine) verifier.
 
-BASE indexes ~400M records from open-access repositories worldwide and is
+Implements the BASE HTTP Interface v1.29 (April 2026):
+https://www.base-search.net/about/download/base_interface.pdf
+
+BASE indexes ~470M documents from 12,100+ open-access repositories and is
 particularly strong on non-English / repository-only sources that Crossref,
 PubMed, and the other Tier-1 verifiers miss.
 
-Access requires IP allowlist registration via
-https://www.base-search.net/about/en/contact.php — applicants must select
-**"Access BASE's HTTP API"** (NOT OAI-PMH; this verifier uses the search
-interface). Without an allowlisted IP, BASE returns either HTTP 401/403 OR
-HTTP 200 with a JSON ``{"error": "Access denied for IP address ..."}``
-body — both are surfaced as ``UnauthorizedError`` so the orchestrator can
-broadcast a distinct ``db_status: "unauthorized"`` event instead of the
-misleading ``no_match``.
+Auth: ``apikey`` is **mandatory** per the spec. BASE issues keys on
+request via https://www.base-search.net/about/en/contact.php (select
+"Access BASE's HTTP API"). BASE support has confirmed the key is the
+sole credential — IP allowlisting is not required. The misleading
+``"Access denied for IP address ..."`` body BASE returns on key-less
+requests is documented in the spec's error list (page 13) and means
+"no usable key", not "your IP is blocked".
 
-The optional ``api_key`` (read from ``api_keys["base"]`` in settings) is
-forwarded as a ``user`` parameter — BASE uses it as a contact identifier
-for allowlisted callers.
+Spec-imposed limits this verifier respects:
+- ``query``: max 1000 characters
+- ``hits``: max 120 (we use 5)
+- 1 request per second (handled by ``rate_limiter``)
+
+The year filter goes inside the ``query`` (e.g. ``dcyear:[2020 TO 2024]``)
+because the spec lists no separate ``filter=`` parameter for PerformSearch.
 """
 
 import time
@@ -33,7 +39,6 @@ from verifiers._http import (
     UpstreamError,
     check_parked_url,
     check_rate_limit,
-    fetch_with_year_fallback,
     get_session,
     raise_for_unexpected_status,
     strip_phrase_chars,
@@ -41,6 +46,7 @@ from verifiers._http import (
 
 BASE_API = "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi"
 _HOST = "api.base-search.net"
+_MAX_QUERY_CHARS = 1000  # spec limit on the ``query`` parameter
 
 # Once BASE rejects this process for IP/auth, suppress further outbound
 # requests for an hour so we don't hammer their API on every source.
@@ -67,9 +73,17 @@ def _coerce_list(value: Any) -> list[str]:
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
     """Search BASE by title (and first-author surname when available).
 
-    Mirrors the OpenAlex / Semantic Scholar pattern: title-quoted Solr query,
-    ±1-year filter, single retry without the year filter on empty result.
+    Builds a SOLR-style query against ``dctitle`` (and optionally ``dccreator``
+    and a ``dcyear:[..]`` range), bounded to ``_MAX_QUERY_CHARS``. Tries the
+    year-restricted variant first; if that returns no hits, retries once
+    without the year restriction.
     """
+    if not api_key:
+        # ``apikey`` is mandatory per the spec — without it BASE returns the
+        # "Access denied" body. Skip the round-trip; orchestrator paints
+        # ``no_match`` like any other empty result.
+        return None
+
     title = strip_phrase_chars(source.title or "")
     if not title:
         return None
@@ -82,30 +96,40 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
         first = strip_phrase_chars((source.authors[0] or "").split(",")[0])
         if first and len(first) > 1:
             query_parts.append(f'dccreator:"{first}"')
-    query = " AND ".join(query_parts)
+    base_query = " AND ".join(query_parts)
+    if len(base_query) > _MAX_QUERY_CHARS:
+        # Title alone exceeds the spec's 1000-char ceiling. Drop the request
+        # rather than send a query BASE will reject with 400.
+        return None
 
-    params: dict[str, str] = {
+    query_with_year = base_query
+    if source.year:
+        candidate = f"{base_query} AND dcyear:[{source.year - 1} TO {source.year + 1}]"
+        if len(candidate) <= _MAX_QUERY_CHARS:
+            query_with_year = candidate
+
+    base_params: dict[str, str] = {
         "func": "PerformSearch",
         "format": "json",
         "hits": "5",
-        "query": query,
+        "apikey": api_key,
     }
-    if source.year:
-        params["filter"] = f"dcyear:[{source.year - 1} TO {source.year + 1}]"
-    if api_key:
-        params["user"] = api_key
 
     session = get_session()
-    return await fetch_with_year_fallback(
-        lambda p: _fetch_best_match(session, p, source),
-        params,
-        {"filter"},
+    result = await _fetch_best_match(
+        session, {**base_params, "query": query_with_year}, source
     )
+    if result is None and query_with_year != base_query:
+        result = await _fetch_best_match(
+            session, {**base_params, "query": base_query}, source
+        )
+    return result
 
 
 _UNAUTHORIZED_HINT = (
-    "IP not allowlisted. Register at https://www.base-search.net/about/en/contact.php "
-    "and select \"Access BASE's HTTP API\"."
+    "BASE rejected the request. Verify your API key in Settings -> API Keys. "
+    "If you don't have one, request access at "
+    "https://www.base-search.net/about/en/contact.php (\"Access BASE's HTTP API\")."
 )
 
 
@@ -136,12 +160,18 @@ async def _fetch_best_match(
             raise UpstreamError(_HOST, 200, f"invalid JSON: {e}") from e
 
         # BASE returns 200 with a top-level ``error`` key (and no ``response``)
-        # for IP/auth denials — see backend/scripts/debug_base.py output.
+        # for any spec-listed error — see the table on page 13 of the
+        # interface guide. "Access denied" maps to UnauthorizedError; the
+        # rest (malformed query, missing func, repository not found, system
+        # maintenance, ...) get UpstreamError so the user sees the real
+        # cause instead of a misleading no_match.
         if isinstance(data, dict) and "response" not in data and data.get("error"):
             err = str(data.get("error", "")).strip()
-            if "access denied" in err.lower() or "ip address" in err.lower():
+            err_lower = err.lower()
+            if "access denied" in err_lower or "ip address" in err_lower:
                 _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
                 raise UnauthorizedError(_HOST, detail=err or _UNAUTHORIZED_HINT, status=200)
+            raise UpstreamError(_HOST, 200, err or "BASE returned an error body")
 
         docs = (data.get("response") or {}).get("docs") or []
         best: MatchResult | None = None
