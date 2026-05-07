@@ -89,6 +89,44 @@ def _wos_tier() -> str:
     return tier if tier in _DAILY_CAPS else _DEFAULT_TIER
 
 
+def _wos_pace_seconds() -> float | None:
+    """Per-request pacing override matching the user's WoS tier ceiling.
+
+    Free Trial is 1 req/s — the limiter's default for an unconfigured host
+    is already conservative enough, so return ``None`` to let it govern.
+    Institutional Member is 5 req/s — return 0.21 s pace (≈ 4.76 req/s)
+    to leave a small headroom for clock drift before tripping a 429.
+    """
+    if _wos_tier() == "starter_institutional":
+        return 0.21
+    return None
+
+
+async def _read_wos_error_detail(resp: aiohttp.ClientResponse) -> str:
+    """Pull the most specific human-readable message out of a WoS error body.
+
+    Per the v2 OpenAPI spec:
+      - 400 / 404 / 405 → ``{"error": {"status", "title", "details"}}``
+      - 401            → ``{"error": "invalid_request", "error_description": "..."}``
+
+    Returns ``""`` if the body is unparseable or the shape is unexpected,
+    so callers can fall back to a generic message.
+    """
+    try:
+        data = await resp.json(content_type=None)
+    except (aiohttp.ContentTypeError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    err = data.get("error")
+    if isinstance(err, dict):
+        return str(err.get("details") or err.get("title") or "").strip()
+    desc = data.get("error_description")
+    if isinstance(desc, str):
+        return desc.strip()
+    return ""
+
+
 async def search(source: ParsedSource, api_key: str | None = None) -> MatchResult | None:
     """Search WoS Core Collection by DOI then by title.
 
@@ -120,26 +158,25 @@ async def search(source: ParsedSource, api_key: str | None = None) -> MatchResul
         return None
     base_q = f'TI="{safe_title}"'
 
-    # Year-restricted pass first; fall back to a year-less query when the
-    # filter eliminated everything (mirrors fetch_with_year_fallback, but
-    # implemented inline because the year filter is embedded inside ``q``
-    # rather than being a separate dropable param).
+    base_params: dict[str, str] = {"q": base_q, "db": "WOS", "limit": "5"}
+
+    # Year filtering uses the documented ``publishTimeSpan`` parameter, not
+    # ``PY=YYYY-YYYY`` inside ``q``. The v2 OpenAPI spec only documents
+    # exact-year ``PY=`` matches in queries; ranges go through the dedicated
+    # parameter (format ``yyyy-mm-dd yyyy-mm-dd``, the ``+`` separator in
+    # the docs is just the URL-encoded form of the space).
     if source.year:
         params_with_year = {
-            "q": f"{base_q} AND PY={source.year - 1}-{source.year + 1}",
-            "db": "WOS",
-            "limit": "5",
+            **base_params,
+            "publishTimeSpan": (
+                f"{source.year - 1}-01-01 {source.year + 1}-12-31"
+            ),
         }
         result = await _query(session, params_with_year, source, headers)
         if result is not None:
             return result
 
-    return await _query(
-        session,
-        {"q": base_q, "db": "WOS", "limit": "5"},
-        source,
-        headers,
-    )
+    return await _query(session, base_params, source, headers)
 
 
 async def _query(
@@ -165,12 +202,23 @@ async def _query(
         reset = daily_quota.seconds_until_reset()
         rate_limiter.park(_HOST, min(reset, 3600.0))
         raise RateLimitedError(_HOST, retry_after=reset, status=429)
-    await rate_limiter.acquire(_HOST)
+    await rate_limiter.acquire(_HOST, rate=_wos_pace_seconds())
     async with session.get(WOS_API, params=params, headers=headers) as resp:
         check_rate_limit(resp)
         if resp.status in (401, 403):
             _unauthorized_until = now + _UNAUTHORIZED_COOLDOWN_SEC
-            raise UnauthorizedError(_HOST, detail=_UNAUTHORIZED_HINT, status=resp.status)
+            wos_detail = await _read_wos_error_detail(resp)
+            raise UnauthorizedError(
+                _HOST,
+                detail=wos_detail or _UNAUTHORIZED_HINT,
+                status=resp.status,
+            )
+        if resp.status == 400:
+            # Spec sends ``{error: {status, title, details}}`` — the ``details``
+            # field is the actually useful one ("invalid query syntax near
+            # token X"). Surface it instead of the generic "bad request".
+            wos_detail = await _read_wos_error_detail(resp)
+            raise UpstreamError(_HOST, 400, wos_detail or "bad request")
         raise_for_unexpected_status(_HOST, resp)
         if resp.status != 200:
             return None
