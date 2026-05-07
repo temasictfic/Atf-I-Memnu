@@ -4,10 +4,8 @@
 // a URL usable at runtime.
 
 import * as pdfjsLib from 'pdfjs-dist'
-// Wrap the pdfjs worker in a shim that polyfills Math.sumPrecise — Electron 41's
-// bundled Chromium predates V8 13.0 and pdfjs 5.x assumes it exists.
 // @ts-expect-error Vite ?worker&url import returns a string
-import pdfWorkerUrl from './pdf-worker-shim?worker&url'
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?worker&url'
 
 let configured = false
 
