@@ -375,13 +375,6 @@ _CONTAINER_SERIES = {
     "arxiv",
 }
 
-# Aggregator / host names that replace the real journal title and should
-# never be compared as venues directly.
-_AGGREGATORS = {
-    "dergipark", "trdizin", "ulakbim", "doaj", "jstor", "ssrn",
-    "researchgate", "academia.edu",
-}
-
 
 def _strip_parens(text: str) -> str:
     return re.sub(r"\s*\([^)]*\)\s*", " ", text)
@@ -424,7 +417,7 @@ def _venue_similarity_score(source_venue: str, cand_journal: str) -> float:
 
     When either side is blank the score is 0.0 (no comparison made — caller
     can disambiguate via the source values themselves). When both sides are
-    present, aggregator/container/initialism overrides return 1.0;
+    present, container/initialism overrides return 1.0;
     otherwise the score is the max of token_sort and token_set fuzzy ratios
     on the canonicalised forms.
     """
@@ -437,10 +430,6 @@ def _venue_similarity_score(source_venue: str, cand_journal: str) -> float:
     cand = _canonicalise_venue(cand_raw)
     if not src or not cand:
         return 0.0
-
-    # Aggregator host on candidate side
-    if any(agg in cand for agg in _AGGREGATORS):
-        return 1.0
 
     # Container series on candidate side
     if any(series in cand for series in _CONTAINER_SERIES):
