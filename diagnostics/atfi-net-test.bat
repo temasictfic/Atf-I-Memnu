@@ -39,10 +39,16 @@ call :test "arXiv (HTTP)"    "http://export.arxiv.org/api/query?search_query=ti:
 call :test "Semantic Scholar" "https://api.semanticscholar.org/graph/v1/paper/search?query=test&limit=1"
 call :test "OpenAlex"        "https://api.openalex.org/works?search=test&per-page=1"
 call :test "Europe PMC"      "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=test&format=json&pageSize=1"
+call :test "PubMed (NCBI)"   "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=test&retmax=1&retmode=json"
+call :test "OpenAIRE"        "https://api.openaire.eu/graph/v2/researchProducts?search=test&pageSize=1"
+call :test "Open Library"    "https://openlibrary.org/search.json?q=test&limit=1"
+call :test "TR Dizin"        "https://search.trdizin.gov.tr/api/defaultSearch/publication/?q=test&limit=1"
+call :test "Web of Science"  "https://api.clarivate.com/apis/wos-starter/v2/documents?q=DO=10.1038/nature12373&limit=1"
+call :test "BASE"            "https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi?func=PerformSearch&query=test&hits=1"
 
 >>"%LOG%" echo.
 >>"%LOG%" echo --- DNS resolution ---
-for %%H in (api.crossref.org export.arxiv.org api.semanticscholar.org api.openalex.org www.ebi.ac.uk) do (
+for %%H in (api.crossref.org export.arxiv.org api.semanticscholar.org api.openalex.org www.ebi.ac.uk eutils.ncbi.nlm.nih.gov api.openaire.eu openlibrary.org search.trdizin.gov.tr api.clarivate.com api.base-search.net) do (
     >>"%LOG%" echo.
     >>"%LOG%" echo [nslookup %%H]
     nslookup %%H >> "%LOG%" 2>&1
@@ -72,7 +78,7 @@ rem -s silent body, -S show errors, -v verbose to capture TLS handshake,
 rem -o NUL discard body, -w summary line, --max-time 20s
 "%CURL%" -sS -v -o nul ^
     --max-time 20 ^
-    -A "AtfiMemnu/2.10 (diagnostic)" ^
+    -A "AtfiMemnu/2.13 (diagnostic)" ^
     -w "HTTP_STATUS=%%{http_code}  TIME=%%{time_total}s  IP=%%{remote_ip}  SSL_VERIFY=%%{ssl_verify_result}\n" ^
     "%URL%" >> "%LOG%" 2>&1
 
