@@ -172,7 +172,7 @@ Kaynak: [author_matcher.py:331–411](backend/services/author_matcher.py#L331-L4
 
 ### 3.3 Dergi / source (`_venues_match`)
 
-Dergiler kısaltma, parantezli alt başlık, vol/issue gürültüsü yüzünden basit string match yapamaz. **4 kademeli strateji:**
+Dergiler kısaltma, parantezli alt başlık, vol/issue gürültüsü yüzünden basit string match yapamaz. **3 kademeli strateji:**
 
 1. **Canonicalize** ([match_scorer.py:361–382](backend/services/match_scorer.py#L361-L382))
    - lowercase
@@ -182,15 +182,13 @@ Dergiler kısaltma, parantezli alt başlık, vol/issue gürültüsü yüzünden 
    - alt başlık at (`:` sonrası)
    - ISO-4 kısaltmaları genişlet token bazında: `j → journal`, `proc → proceedings`, `intl → international`, `lett → letters`, `eng → engineering`, `med → medical` …
 
-2. **Container series allow-list** — LNCS, CCIS, NeurIPS Proceedings, AISC, IFIP… Aday tarafı container series'se ve kaynak conference/workshop'a benziyorsa otomatik eşleşir (yayıncı işi seriye sarmış demektir).
-
-3. **Multi-strategy fuzzy:**
+2. **Multi-strategy fuzzy:**
    ```
    max(token_sort_ratio, token_set_ratio) ≥ 0.60
    ```
    `partial_ratio` bilerek **dahil değil** — "IEEE", "Sensors" gibi tek token şişirme yapıyordu.
 
-4. **Acronym kontrolü** — Bir taraf kısa/all-caps ise diğer tarafın kelime baş harfleriyle karşılaştırılır:
+3. **Acronym kontrolü** — Bir taraf kısa/all-caps ise diğer tarafın kelime baş harfleriyle karşılaştırılır:
    ```
    "CVPR" ↔ "Computer Vision and Pattern Recognition"
    ```

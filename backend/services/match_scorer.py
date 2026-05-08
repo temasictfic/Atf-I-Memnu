@@ -362,24 +362,6 @@ _VENUE_ABBREV = {
     "annu": "annual", "rep": "reports",
 }
 
-# Container venues that legitimately publish other conferences/workshops.
-# When the candidate journal is one of these, a conference-style source name
-# should not be flagged just because the strings differ.
-_CONTAINER_SERIES = {
-    "lecture notes in computer science",
-    "lecture notes in artificial intelligence",
-    "lecture notes in business information processing",
-    "communications in computer and information science",
-    "advances in intelligent systems and computing",
-    "advances in neural information processing systems",
-    "ceur workshop proceedings",
-    "smart innovation systems and technologies",
-    "ifip advances in information and communication technology",
-    "studies in computational intelligence",
-    "arxiv",
-}
-
-
 def _strip_parens(text: str) -> str:
     return re.sub(r"\s*\([^)]*\)\s*", " ", text)
 
@@ -421,7 +403,7 @@ def _venue_similarity_score(source_venue: str, cand_journal: str) -> float:
 
     When either side is blank the score is 0.0 (no comparison made — caller
     can disambiguate via the source values themselves). When both sides are
-    present, container/initialism overrides return 1.0;
+    present, an initialism override returns 1.0;
     otherwise the score is the max of token_sort and token_set fuzzy ratios
     on the canonicalised forms.
     """
@@ -434,10 +416,6 @@ def _venue_similarity_score(source_venue: str, cand_journal: str) -> float:
     cand = _canonicalise_venue(cand_raw)
     if not src or not cand:
         return 0.0
-
-    # Container series on candidate side
-    if any(series in cand for series in _CONTAINER_SERIES):
-        return 1.0
 
     # Initialism: short/all-caps acronym vs expanded title
     short, long = (src_raw, cand_raw) if len(src_raw) <= len(cand_raw) else (cand_raw, src_raw)
