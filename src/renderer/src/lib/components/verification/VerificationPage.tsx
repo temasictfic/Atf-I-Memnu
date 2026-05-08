@@ -1453,6 +1453,7 @@ export default function VerificationPage() {
   }, [])
 
   const openFindBar = useCallback(() => {
+    findBarOpenRef.current = true
     setFindBarOpen(true)
     requestAnimationFrame(() => {
       const input = findInputRef.current
@@ -1463,6 +1464,7 @@ export default function VerificationPage() {
   }, [])
 
   const closeFindBar = useCallback(() => {
+    findBarOpenRef.current = false
     setFindBarOpen(false)
     setFindQuery('')
     setFindActive(0)
@@ -1799,7 +1801,7 @@ export default function VerificationPage() {
 
       if (e.key === 'Escape') {
         e.preventDefault()
-        if (findBarOpen) closeFindBar()
+        if (findBarOpenRef.current) closeFindBar()
         else closeBrowserOverlay()
         return
       }
@@ -1850,7 +1852,7 @@ export default function VerificationPage() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('mousedown', onMouseDown)
     }
-  }, [browserOverlayOpen, zoomBrowserIn, zoomBrowserOut, resetBrowserZoom, findBarOpen, openFindBar, closeFindBar])
+  }, [browserOverlayOpen, zoomBrowserIn, zoomBrowserOut, resetBrowserZoom, openFindBar, closeFindBar])
 
   // Clear find state when overlay closes or navigates to a new URL.
   useEffect(() => {
@@ -2731,6 +2733,7 @@ export default function VerificationPage() {
                             navigateFind(!e.shiftKey)
                           } else if (e.key === 'Escape') {
                             e.preventDefault()
+                            e.stopPropagation()
                             closeFindBar()
                           }
                         }}
