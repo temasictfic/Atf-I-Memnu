@@ -1478,3 +1478,10 @@
   font-weight: 600;
   color: #92400e;
 }
+
+/* Drag handle — dimmed and inert while the webview overlay is open. */
+.drag-handle-disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
+}

@@ -72,7 +72,7 @@ function buildDbSearchUrl(db: string, text: string): string {
 }
 
 const statusOrder: Record<string, number> = { high: 0, medium: 1, low: 2, in_progress: 3, pending: 4 }
-type CardSortMode = 'status' | 'ref' | 'enabled' | 'decision'
+type CardSortMode = 'status' | 'ref' | 'enabled' | 'decision' | 'manual'
 
 type SortableCard = {
   source: { id: string; ref_number?: number | null }
@@ -81,6 +81,7 @@ type SortableCard = {
 }
 
 function sortSourceCards<T extends SortableCard>(cards: T[], key: CardSortMode, asc: boolean): T[] {
+  if (key === 'manual') return [...cards]
   const list = [...cards]
   const dir = asc ? 1 : -1
   list.sort((a, b) => {
@@ -564,12 +565,28 @@ export default function VerificationPage() {
     setDropTargetIdx(idx)
   }
 
-  function onDrop(e: React.DragEvent, toIdx: number) {
+  function onDrop(e: React.DragEvent, toId: string) {
     e.preventDefault()
-    if (!effectivePdfId || !dragSourceId) return
-    const fromIdx = orderedSourceIds.indexOf(dragSourceId)
-    if (fromIdx >= 0 && fromIdx !== toIdx) {
-      useVerificationStore.getState().reorderSources(effectivePdfId, fromIdx, toIdx)
+    if (!effectivePdfId || !dragSourceId) {
+      setDragSourceId(null)
+      setDropTargetIdx(null)
+      return
+    }
+    // Snapshot the order the user is currently SEEING (post-sort) so the
+    // manual-mode result preserves their visual context. Using the natural
+    // order here would jarringly reshuffle every other card on drop.
+    const visibleOrder = sortedSourceCards.map(c => c.source.id)
+    const fromIdx = visibleOrder.indexOf(dragSourceId)
+    const toIdx = visibleOrder.indexOf(toId)
+    if (fromIdx >= 0 && toIdx >= 0 && fromIdx !== toIdx) {
+      const nextOrder = [...visibleOrder]
+      const [moved] = nextOrder.splice(fromIdx, 1)
+      nextOrder.splice(toIdx, 0, moved)
+      useVerificationStore.setState(state => ({
+        sourceOrder: { ...state.sourceOrder, [effectivePdfId]: nextOrder },
+        cardSortKey: 'manual',
+        cardSortAsc: true,
+      }))
     }
     setDragSourceId(null)
     setDropTargetIdx(null)
@@ -1020,7 +1037,29 @@ export default function VerificationPage() {
   const [browserCurrentUrl, setBrowserCurrentUrl] = useState('')
   const [browserZoomFactor, setBrowserZoomFactor] = useState(1)
   const browserZoomFactorRef = useRef(1)
-  const preOverlaySortRef = useRef<{ key: CardSortMode; asc: boolean } | null>(null)
+
+  // While the overlay is open, hoist the selected card to the top of the
+  // displayed list — but only when it's actually needed. If scroll-to-top can
+  // already place the clicked card flush with the panel top, leave the order
+  // alone. Otherwise (the bottom region of any list, or any non-top card in a
+  // list short enough that no scroll is possible) promote so the overlay
+  // opens at its full preferred height instead of shrinking.
+  const promotedSourceId = browserOverlayOpen ? selectedSourceId : null
+
+  const VISIBLE_CARD_COUNT = 6
+
+  const displayedSourceCards = useMemo(() => {
+    if (!promotedSourceId) return filteredSourceCards
+    const idx = filteredSourceCards.findIndex(c => c.source.id === promotedSourceId)
+    if (idx <= 0) return filteredSourceCards
+
+    const total = filteredSourceCards.length
+    const maxScroll = Math.max(0, total - VISIBLE_CARD_COUNT)
+    if (idx <= maxScroll) return filteredSourceCards
+
+    const promoted = filteredSourceCards[idx]
+    return [promoted, ...filteredSourceCards.slice(0, idx), ...filteredSourceCards.slice(idx + 1)]
+  }, [filteredSourceCards, promotedSourceId])
 
   // Find-in-page (Ctrl+F) state for the overlay webview
   const [findBarOpen, setFindBarOpen] = useState(false)
@@ -1100,7 +1139,7 @@ export default function VerificationPage() {
   // Register close-overlay function for auto-close after CAPTCHA
   useEffect(() => {
     useScholarScanStore.getState().setCloseOverlayFn(() => {
-      setBrowserOverlayOpen(false)
+      closeOverlay()
     })
     return () => useScholarScanStore.getState().setCloseOverlayFn(null)
   }, [])
@@ -1286,11 +1325,6 @@ export default function VerificationPage() {
     return Math.min(maxHeight, preferred)
   }
 
-  const selectedCardIndex = useMemo(
-    () => (selectedSourceId ? sortedSourceCards.findIndex(c => c.source.id === selectedSourceId) : -1),
-    [selectedSourceId, sortedSourceCards],
-  )
-
   const scrollSelectedCardToTop = useCallback((behavior: ScrollBehavior = 'auto') => {
     if (!selectedSourceId) return
     const listEl = cardListRef.current
@@ -1362,57 +1396,15 @@ export default function VerificationPage() {
     })
   }
 
-  function shouldUseTemporaryRefSortForBottomCard(): boolean {
-    if (selectedCardIndex < 0) return false
-    const total = sortedSourceCards.length
-    if (total <= 0) return false
-    return selectedCardIndex >= Math.max(0, total - 5)
-  }
-
-  function applyTemporaryRefSortIfNeeded(): boolean {
-    if (!shouldUseTemporaryRefSortForBottomCard()) return false
-    if (preOverlaySortRef.current) return true
-
-    preOverlaySortRef.current = {
-      key: cardSortKey as CardSortMode,
-      asc: cardSortAsc,
-    }
-
-    useVerificationStore.setState({
-      cardSortKey: 'ref',
-      cardSortAsc: false,
-    })
-
-    return true
-  }
-
-  function restorePreOverlaySortIfNeeded() {
-    const snapshot = preOverlaySortRef.current
-    if (!snapshot) return
-    preOverlaySortRef.current = null
-    useVerificationStore.setState({
-      cardSortKey: snapshot.key,
-      cardSortAsc: snapshot.asc,
-    })
-  }
-
   function openOverlayWithUrl(url: string) {
-    const tempSorted = applyTemporaryRefSortIfNeeded()
-    const finishOpen = () => {
-      alignOverlayToSelectedCard()
-      setBrowserOverlayUrl(url)
-      setBrowserCurrentUrl(url)
-      setBrowserOverlayOpen(true)
-    }
+    setBrowserOverlayUrl(url)
+    setBrowserCurrentUrl(url)
+    setBrowserOverlayOpen(true)
+    window.requestAnimationFrame(() => alignOverlayToSelectedCard())
+  }
 
-    if (tempSorted) {
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(finishOpen)
-      })
-      return
-    }
-
-    finishOpen()
+  function closeOverlay() {
+    setBrowserOverlayOpen(false)
   }
 
   function openScholarOverlay() {
@@ -1432,7 +1424,7 @@ export default function VerificationPage() {
   }
 
   function closeBrowserOverlay() {
-    setBrowserOverlayOpen(false)
+    closeOverlay()
   }
 
   const runFindInPage = useCallback((text: string, opts?: { findNext?: boolean; forward?: boolean }) => {
@@ -1665,19 +1657,22 @@ export default function VerificationPage() {
     // Don't force-close during a Scholar CAPTCHA — the scan isn't tied to
     // the currently selected card, so selectedSourceId may legitimately be null.
     if (scholarStatus === 'captcha') return
-    if (!selectedSourceId) setBrowserOverlayOpen(false)
+    if (!selectedSourceId) closeOverlay()
   }, [browserOverlayOpen, selectedSourceId, scholarStatus])
 
+  // On overlay close, a card that was promoted from the bottom region drops
+  // back to its natural slot — which is below the fold for short-list /
+  // bottom-of-list cards. Scroll it back into view so the user doesn't lose it.
   useEffect(() => {
     if (browserOverlayOpen) return
-    // Bottom-of-list cards get a temporary ref-desc sort on overlay open so
-    // they can be scrolled to the top behind the webview. On close, restoring
-    // the original sort drops the card back near the bottom of an unscrolled
-    // list — queue a scroll-into-view so the user doesn't lose it.
-    if (preOverlaySortRef.current && selectedSourceId) {
-      pendingScrollCardIdRef.current = selectedSourceId
-    }
-    restorePreOverlaySortIfNeeded()
+    const id = selectedSourceId
+    if (!id) return
+    const idx = filteredSourceCards.findIndex(c => c.source.id === id)
+    if (idx <= 0) return
+    const maxScroll = Math.max(0, filteredSourceCards.length - VISIBLE_CARD_COUNT)
+    if (idx <= maxScroll) return
+    const raf = requestAnimationFrame(() => scrollCardIntoView(id, 'smooth'))
+    return () => cancelAnimationFrame(raf)
   }, [browserOverlayOpen])
 
   useEffect(() => {
@@ -2292,7 +2287,7 @@ export default function VerificationPage() {
 
             {/* Source cards */}
             <div className={styles['card-list']} ref={cardListRef} data-scrollable>
-              {filteredSourceCards.map((card, idx) => {
+              {displayedSourceCards.map((card, idx) => {
                 const isSelected = selectedSourceId === card.source.id
                 const cardClass = [
                   styles['source-card'],
@@ -2335,7 +2330,7 @@ export default function VerificationPage() {
                       }
                     }}
                     onDragOver={(e) => onDragOver(e, idx)}
-                    onDrop={(e) => onDrop(e, idx)}
+                    onDrop={(e) => onDrop(e, card.source.id)}
                   >
                     {/* Status bar */}
                     <div className={styles['status-bar']} style={{ background: statusColor(card.result) }} />
@@ -2468,9 +2463,15 @@ export default function VerificationPage() {
                       {/* Textarea row — drag handle on the left, vertically centered */}
                       <div className={styles['card-body-row']}>
                         <span
-                          className={styles['drag-handle']}
-                          draggable
-                          onDragStart={(e) => { e.stopPropagation(); onDragStart(e, card.source.id) }}
+                          className={[
+                            styles['drag-handle'],
+                            browserOverlayOpen ? styles['drag-handle-disabled'] : '',
+                          ].filter(Boolean).join(' ')}
+                          draggable={!browserOverlayOpen}
+                          onDragStart={(e) => {
+                            if (browserOverlayOpen) { e.preventDefault(); return }
+                            e.stopPropagation(); onDragStart(e, card.source.id)
+                          }}
                           onDragEnd={onDragEnd}
                           onPointerDown={(e) => e.stopPropagation()}
                           title={t('verification.dragToReorder')}

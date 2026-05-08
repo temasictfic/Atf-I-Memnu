@@ -307,7 +307,8 @@
       "ref": "Number",
       "enabled": "Enabled",
       "label": "Sort",
-      "decision": "Decision"
+      "decision": "Decision",
+      "manual": "Manual"
     },
     "verify": "Verify",
     "verifyAll": "Verify All",

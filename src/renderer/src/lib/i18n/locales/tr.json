@@ -307,7 +307,8 @@
       "ref": "Numara",
       "enabled": "Etkin",
       "label": "Sırala",
-      "decision": "Karar"
+      "decision": "Karar",
+      "manual": "Elle"
     },
     "verify": "Doğrula",
     "verifyAll": "Tümünü Doğrula",

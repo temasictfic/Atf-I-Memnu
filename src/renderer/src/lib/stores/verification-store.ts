@@ -11,7 +11,7 @@ import { sanitizeSourceText } from '../utils/source-text'
 import { effectiveTagOn, effectiveDecisionTag } from '../verification/tagState'
 import { usePdfStore } from './pdf-store'
 
-type CardSortKey = 'status' | 'ref' | 'enabled' | 'decision'
+type CardSortKey = 'status' | 'ref' | 'enabled' | 'decision' | 'manual'
 type PdfSortKey = 'name' | 'status' | 'high' | 'medium' | 'low' | 'valid' | 'citation' | 'fabricated' | 'free'
 
 interface VerificationState {
