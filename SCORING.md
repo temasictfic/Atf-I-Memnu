@@ -184,7 +184,7 @@ Dergiler kısaltma, parantezli alt başlık, vol/issue gürültüsü yüzünden 
 
 2. **Multi-strategy fuzzy:**
    ```
-   max(token_sort_ratio, token_set_ratio) ≥ 0.60
+   max(token_sort_ratio, token_set_ratio) ≥ 0.75
    ```
    `partial_ratio` bilerek **dahil değil** — "IEEE", "Sensors" gibi tek token şişirme yapıyordu.
 

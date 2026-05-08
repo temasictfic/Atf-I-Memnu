@@ -51,7 +51,8 @@ YEAR_EXACT_SCORE = 1.0
 YEAR_OFF_BY_ONE_SCORE = 0.5
 
 # Venue (journal/conference) match — minimum normalised fuzzy ratio for the
-# !journal chip to clear. Lower than title's threshold because canonicalised
-# venue strings are already aggressively normalised before comparison.
+# !journal chip to clear. Set to 0.75 to align with title's strictness band:
+# at 0.60 character-coincidence on shared technical word-stems (e.g.
+# "computing" vs "computer") could push unrelated venues over the line.
 
-VENUE_FUZZY_MATCH_THRESHOLD = 0.6
+VENUE_FUZZY_MATCH_THRESHOLD = 0.75
