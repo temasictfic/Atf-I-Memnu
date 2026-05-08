@@ -294,7 +294,7 @@
     "sort": {
       "byStatus": "Duruma göre sırala",
       "byName": "Ada göre sırala",
-      "byFree": "Elle sırala (sürükleyerek düzenle)",
+      "byFree": "Sürükle ve serbest sırala",
       "byHigh": "Yüksek sayısına göre sırala",
       "byMedium": "Orta sayısına göre sırala",
       "byLow": "Düşük sayısına göre sırala",
@@ -308,7 +308,7 @@
       "enabled": "Etkin",
       "label": "Sırala",
       "decision": "Karar",
-      "manual": "Elle"
+      "manual": "Serbest"
     },
     "verify": "Doğrula",
     "verifyAll": "Tümünü Doğrula",
