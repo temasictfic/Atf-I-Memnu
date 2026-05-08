@@ -6,7 +6,7 @@ from typing import Any
 from rapidfuzz import fuzz
 
 from models.source import ParsedSource
-from models.verification_result import MatchDetails, MatchResult
+from models.verification_result import DecisionTag, MatchDetails, MatchResult, VerifyStatus
 from services.author_matcher import author_score, authors_match
 from services.scoring_constants import (
     COMPOSITE_AUTHOR_WEIGHT,
@@ -37,7 +37,7 @@ __all__ = [
 ]
 
 
-def score_to_band(score: float) -> str:
+def score_to_band(score: float) -> VerifyStatus:
     """Classify a composite score into the canonical high/medium/low band."""
     if score >= STATUS_HIGH_THRESHOLD:
         return "high"
@@ -155,7 +155,7 @@ def determine_verification_status(
     source: ParsedSource,
     best_match: MatchResult | None,
     url_liveness: dict[str, bool] | None = None,
-) -> tuple[str, list[str]]:
+) -> tuple[VerifyStatus, list[str]]:
     """Score-banded status + per-signal problem tags.
 
     Status is derived purely from the composite score (no title-only gate):
@@ -197,18 +197,20 @@ def determine_verification_status(
     elif src_has_authors != bm_has_authors:
         tags.append("!authors")
 
-    src_has_year = source.year is not None
-    bm_has_year = best_match.year is not None
-    if src_has_year and bm_has_year:
-        if abs(source.year - best_match.year) > 1:
+    src_year = source.year
+    bm_year = best_match.year
+    if src_year is not None and bm_year is not None:
+        if abs(src_year - bm_year) > 1:
             tags.append("!year")
-    elif src_has_year != bm_has_year:
+    elif (src_year is None) != (bm_year is None):
         tags.append("!year")
 
-    src_has_venue = bool((source.journal or "").strip())
-    bm_has_venue = bool((best_match.journal or "").strip())
+    src_journal = source.journal or ""
+    bm_journal = best_match.journal or ""
+    src_has_venue = bool(src_journal.strip())
+    bm_has_venue = bool(bm_journal.strip())
     if src_has_venue and bm_has_venue:
-        if not _venues_match(source.journal, best_match.journal):
+        if not _venues_match(src_journal, bm_journal):
             tags.append("!journal")
     elif src_has_venue != bm_has_venue:
         tags.append("!journal")
@@ -232,7 +234,7 @@ def determine_verification_status(
 def classify_decision(
     source: ParsedSource,
     best_match: MatchResult | None,
-) -> str:
+) -> DecisionTag:
     """Classify a source as "valid" | "citation" | "fabricated".
 
     Per-signal "matches" predicates mirror the chip display rule for
@@ -270,17 +272,19 @@ def classify_decision(
     else:
         author_matches = not src_has_authors and not bm_has_authors
 
-    src_has_year = source.year is not None
-    bm_has_year = best_match.year is not None
-    if src_has_year and bm_has_year:
-        year_matches = abs(source.year - best_match.year) <= 1
+    src_year = source.year
+    bm_year = best_match.year
+    if src_year is not None and bm_year is not None:
+        year_matches = abs(src_year - bm_year) <= 1
     else:
-        year_matches = not src_has_year and not bm_has_year
+        year_matches = src_year is None and bm_year is None
 
-    src_has_venue = bool((source.journal or "").strip())
-    bm_has_venue = bool((best_match.journal or "").strip())
+    src_journal = source.journal or ""
+    bm_journal = best_match.journal or ""
+    src_has_venue = bool(src_journal.strip())
+    bm_has_venue = bool(bm_journal.strip())
     if src_has_venue and bm_has_venue:
-        source_matches = _venues_match(source.journal, best_match.journal)
+        source_matches = _venues_match(src_journal, bm_journal)
     else:
         source_matches = not src_has_venue and not bm_has_venue
 

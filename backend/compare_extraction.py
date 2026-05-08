@@ -24,6 +24,7 @@ import re
 import sys
 import unicodedata
 from dataclasses import dataclass, field
+from io import TextIOWrapper
 from pathlib import Path
 
 
@@ -39,7 +40,7 @@ _ensure_backend_on_path()
 # ellipses, and other glyphs that show up in PDF-extracted source text.
 # Force UTF-8 with `replace` so a stray glyph never aborts a long run.
 for _stream in (sys.stdout, sys.stderr):
-    if hasattr(_stream, "reconfigure"):
+    if isinstance(_stream, TextIOWrapper):
         try:
             _stream.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
@@ -138,8 +139,8 @@ class CompareResult:
     raw_text: str
     ner: ParsedSource
     regex: ParsedSource
-    title_sim: int
-    journal_sim: int | None
+    title_sim: float
+    journal_sim: float | None
     authors_jacc: float
     year_match: bool
     doi_match: bool

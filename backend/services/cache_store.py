@@ -22,7 +22,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from config import settings
-from models.source import SourceRectangle
+from models.source import SourceRectangle, SourceStatus
 from models.verification_result import MatchResult, VerificationResult
 from services.search_urls import build_google_urls, build_search_url
 
@@ -165,7 +165,7 @@ def delete_sources_cache(pdf_id: str) -> None:
                 print(f"[delete_sources_cache] failed to delete {cache_file}: {e}", flush=True)
 
 
-def flip_sources_status(pdf_id: str, new_status: str) -> bool:
+def flip_sources_status(pdf_id: str, new_status: SourceStatus) -> bool:
     """Bulk-set ``status`` on every cached source for a PDF and re-persist."""
     cached = load_sources_cache(pdf_id)
     if cached is None:
