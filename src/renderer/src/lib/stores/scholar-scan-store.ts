@@ -105,7 +105,7 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
         } else {
           searchText = sanitizeSourceTextForSearch(searchText)
         }
-        return { pdfId, sourceId: s.id, searchText }
+        return { pdfId, sourceId: s.id, searchText, fullSourceText: rawText }
       }),
     )
   }

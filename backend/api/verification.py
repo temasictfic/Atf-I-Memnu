@@ -443,6 +443,12 @@ class ScoreScholarRequest(BaseModel):
     source_id: str
     source_text: str
     candidates: list[ScholarCandidate]
+    # Full citation text used for parsing the source side. When the user edits
+    # a card's textbox, the swapped text lives in the renderer's verifyTexts
+    # store — it never makes it back into the on-disk sources cache. Without
+    # this field, score_scholar would re-parse the original PDF text from the
+    # sources cache and emit chip tags that disagree with the main verify run.
+    full_source_text: str | None = None
 
 
 @router.post("/verify/score-scholar")
@@ -455,12 +461,15 @@ async def score_scholar(request: ScoreScholarRequest):
 
     # request.source_text is the title-only search query used to hit Scholar.
     # SIRIS NER was trained on full citations and mislabels bare titles — it
-    # thinks the leading capitalized words are authors. Use the stored full
-    # PDF source text (same as Crossref/OpenAlex paths do) to keep both
-    # sides of the comparison symmetric.
-    sources = load_sources_for_pdf(request.pdf_id) or []
-    source_rect = next((s for s in sources if s.id == request.source_id), None)
-    full_source_text = source_rect.text if source_rect else request.source_text
+    # thinks the leading capitalized words are authors. Prefer the renderer-
+    # supplied full citation (which honours user edits in the textbox); fall
+    # back to the on-disk sources cache when an older renderer doesn't send it.
+    if request.full_source_text:
+        full_source_text = request.full_source_text
+    else:
+        sources = load_sources_for_pdf(request.pdf_id) or []
+        source_rect = next((s for s in sources if s.id == request.source_id), None)
+        full_source_text = source_rect.text if source_rect else request.source_text
 
     parsed = await extract_source_fields(full_source_text)
 

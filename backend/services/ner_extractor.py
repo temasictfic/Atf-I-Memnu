@@ -253,15 +253,35 @@ def _split_authors_by_comma(text: str) -> list[str]:
 
 
 def _parse_year(entities: list[dict], raw_text: str) -> int | None:
-    """Extract year from YEAR entities or fallback to regex."""
-    for ent in sorted(entities, key=lambda e: -e["score"]):
+    """Extract year from YEAR entities or fallback to regex.
+
+    SIRIS occasionally splits a 4-digit year across adjacent subword
+    entities (e.g. ``"2024"`` → ``"20"`` + ``"24"``); when the literal
+    entity text fails the 4-digit regex, peek at the surrounding raw_text
+    span to recover the full year. This also prevents page-range starts
+    (``"1963"`` in ``"1963–1980"``) from winning over a fragmented
+    publication year.
+    """
+    candidates: list[tuple[float, int, int]] = []  # (-score, start, year)
+    for ent in entities:
         m = YEAR_RE.search(ent["text"])
         if m:
             val = int(m.group(1))
             if 1900 <= val <= 2099:
-                return val
+                candidates.append((-ent["score"], ent["start"], val))
+                continue
+        start = max(0, ent["start"] - 2)
+        end = min(len(raw_text), ent["end"] + 2)
+        m = YEAR_RE.search(raw_text[start:end])
+        if m:
+            val = int(m.group(1))
+            if 1900 <= val <= 2099:
+                candidates.append((-ent["score"], ent["start"], val))
 
-    # Fallback: first year in raw text
+    if candidates:
+        candidates.sort()
+        return candidates[0][2]
+
     m = YEAR_RE.search(raw_text)
     if m:
         val = int(m.group(1))

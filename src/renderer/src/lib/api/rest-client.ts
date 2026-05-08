@@ -98,9 +98,19 @@ export const api = {
   setDecisionOverride: (pdfId: string, sourceId: string, decision: import('./types').DecisionTag | null) =>
     request<{ success: boolean }>('POST', `/api/verify/decision-override/${pdfId}/${sourceId}`, { decision }),
 
-  scoreScholar: (pdfId: string, sourceId: string, sourceText: string, candidates: import('./types').ScholarCandidate[]) =>
+  scoreScholar: (
+    pdfId: string,
+    sourceId: string,
+    sourceText: string,
+    candidates: import('./types').ScholarCandidate[],
+    fullSourceText?: string,
+  ) =>
     request<import('./types').ScoreScholarResponse>('POST', '/api/verify/score-scholar', {
-      pdf_id: pdfId, source_id: sourceId, source_text: sourceText, candidates,
+      pdf_id: pdfId,
+      source_id: sourceId,
+      source_text: sourceText,
+      candidates,
+      full_source_text: fullSourceText,
     }),
 
   // Settings

@@ -15,6 +15,7 @@ export interface ScholarQueueItem {
   pdfId: string
   sourceId: string
   searchText: string
+  fullSourceText: string
 }
 
 export type ScholarScanStatus = 'idle' | 'scanning' | 'captcha' | 'done' | 'cancelled'
@@ -424,6 +425,7 @@ export class ScholarScanner {
         item.sourceId,
         item.searchText,
         candidates,
+        item.fullSourceText,
       )
       updated = response.updated
       if (updated) this.foundCount++
@@ -523,7 +525,13 @@ export class ScholarScanner {
       // backend records "Google Scholar" in databases_searched and broadcasts
       // it to the UI. Without this, a scanned-but-empty source has no GS link.
       const scorePromise: Promise<{ updated: boolean } | null> = api
-        .scoreScholar(item.pdfId, item.sourceId, item.searchText, candidates)
+        .scoreScholar(
+          item.pdfId,
+          item.sourceId,
+          item.searchText,
+          candidates,
+          item.fullSourceText,
+        )
         .catch((err) => {
           this.callbacks?.onError(item.sourceId, `Scoring error: ${err}`)
           return null
