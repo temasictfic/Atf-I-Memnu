@@ -163,7 +163,7 @@ function effectiveDecision(src: ReportSource): 'valid' | 'citation' | 'fabricate
   const authorMatches = !authorsOn, yearMatches = !yearOn, titleMatches = !titleOn
   const journalMatches = !journalOn, doiMatches = !doiOn
   if (authorMatches && yearMatches && titleMatches && journalMatches) return 'valid'
-  if (titleMatches || (authorMatches && (yearMatches || journalMatches || doiMatches))) return 'citation'
+  if (titleMatches || (authorMatches && (journalMatches || doiMatches))) return 'citation'
   return 'fabricated'
 }
 
