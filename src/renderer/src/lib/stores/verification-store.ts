@@ -9,6 +9,10 @@ import { wsClient } from '../api/ws-client'
 import { POLL_INTERVAL_MS } from '../constants/timings'
 import { sanitizeSourceText } from '../utils/source-text'
 import { effectiveTagOn, effectiveDecisionTag } from '../verification/tagState'
+import { computeExclusion } from '../verification/exclusion'
+import { useSettingsStore } from './settings-store'
+import { useSourcesStore } from './sources-store'
+import i18n from '../i18n'
 import { usePdfStore } from './pdf-store'
 
 type CardSortKey = 'status' | 'ref' | 'enabled' | 'decision' | 'manual'
@@ -57,6 +61,7 @@ interface VerificationState {
   resetVerifyText: (sourceId: string) => void
   toggleSourceEnabled: (sourceId: string) => void
   setAllEnabled: (pdfId: string, enabled: boolean) => void
+  clearEnabledOverrides: (pdfId: string) => void
   reorderSources: (pdfId: string, fromIndex: number, toIndex: number) => void
   reorderPdfs: (fromIndex: number, toIndex: number, baseOrder: string[]) => void
   freezePdfOrder: (baseOrder: string[]) => void
@@ -275,18 +280,49 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
     })),
 
   toggleSourceEnabled: (sourceId) =>
-    set(state => ({
-      enabledSources: {
-        ...state.enabledSources,
-        [sourceId]: !(state.enabledSources[sourceId] ?? true),
-      },
-    })),
+    set(state => {
+      // Flip the *effective* Muaf state — not just the boolean. For an
+      // auto-Muaf card with no override yet, the first click sets `true`
+      // (force enable, hides Muaf); the next click sets `false` (user
+      // disable, but auto reason still wins for display per
+      // computeExclusion's priority).
+      const override = state.enabledSources[sourceId]
+      let next: boolean
+      if (override === true) {
+        next = false
+      } else if (override === false) {
+        next = true
+      } else {
+        const text = state.verifyTexts[sourceId] ?? state.sourceOriginalTexts[sourceId] ?? ''
+        const info = computeExclusion(
+          text,
+          undefined,
+          useSettingsStore.getState().exclusionEntries,
+          {
+            userDisabled: i18n.t('verification.excluded.userDisabled'),
+            nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+          },
+        )
+        next = info.excluded
+      }
+      return {
+        enabledSources: { ...state.enabledSources, [sourceId]: next },
+      }
+    }),
 
   setAllEnabled: (pdfId, enabled) =>
     set(state => {
       const order = state.sourceOrder[pdfId] ?? []
       const updated = { ...state.enabledSources }
       for (const id of order) updated[id] = enabled
+      return { enabledSources: updated }
+    }),
+
+  clearEnabledOverrides: (pdfId) =>
+    set(state => {
+      const order = state.sourceOrder[pdfId] ?? []
+      const updated = { ...state.enabledSources }
+      for (const id of order) delete updated[id]
       return { enabledSources: updated }
     }),
 
@@ -345,7 +381,12 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         // Always update original to latest parsing text
         originals[source.id] = cleanedSourceText
 
-        if (!(source.id in enabled)) enabled[source.id] = true
+        // Leave `enabled[source.id]` unset for new sources. The renderer
+        // treats missing entries as "follow auto-Muaf detection" — text
+        // matching the exclusion list, or non-DOI URL, makes the card
+        // Muaf without an explicit user choice. An entry of `true` means
+        // "user force-enabled, override Muaf"; `false` means "user
+        // disabled". See verification/exclusion.ts.
       }
 
       // Clean up stale entries for sources that no longer exist
@@ -429,19 +470,38 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       for (const [sourceId, text] of Object.entries(verifyTexts)) {
         texts[sourceId] = sanitizeSourceText(text)
       }
-      const excludedIds = Object.entries(enabledSources)
-        .filter(([, enabled]) => !enabled)
-        .map(([id]) => id)
+
+      // Build the excluded set via the same Muaf rules the renderer uses.
+      // Pass `enabledSources[id]` raw (boolean | undefined) — undefined
+      // means "no user choice", which lets auto-Muaf detection apply.
+      const exclusionEntries = useSettingsStore.getState().exclusionEntries
+      const muafReasons = {
+        userDisabled: i18n.t('verification.excluded.userDisabled'),
+        nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+      }
+      const sourcesByPdf = useSourcesStore.getState().sourcesByPdf
+      const excludedSet = new Set<string>()
+      for (const pdfId of pdfIds) {
+        const sources = sourcesByPdf[pdfId] ?? []
+        for (const source of sources) {
+          const text = verifyTexts[source.id] ?? source.text ?? ''
+          const info = computeExclusion(
+            text,
+            enabledSources[source.id],
+            exclusionEntries,
+            muafReasons,
+          )
+          if (info.excluded) excludedSet.add(source.id)
+        }
+      }
+      const excludedIds = Array.from(excludedSet)
 
       // Count total enabled sources for logging
-      const excludedSet = new Set(excludedIds)
       let totalEnabled = 0
       for (const pdfId of pdfIds) {
         const order = sourceOrder[pdfId] ?? []
         for (const sourceId of order) {
-          if (!excludedSet.has(sourceId) && enabledSources[sourceId] !== false) {
-            totalEnabled++
-          }
+          if (!excludedSet.has(sourceId)) totalEnabled++
         }
       }
 
@@ -595,10 +655,29 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
 
       if (sourceIds.length === 0) return
 
+      // Filter out Muaf sources alongside user-disabled and already-high
+      // ones. Without this, "verify non-High" would still queue auto-Muaf
+      // cards (word match / non-DOI URL) — the same gate the full-batch
+      // and single-source paths apply.
+      const exclusionEntries = useSettingsStore.getState().exclusionEntries
+      const muafReasons = {
+        userDisabled: i18n.t('verification.excluded.userDisabled'),
+        nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+      }
+      const sourcesByPdf = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+      const sourceTextById = new Map(sourcesByPdf.map(s => [s.id, s.text]))
+
       const includeIds = sourceIds.filter(sourceId => {
-        if (enabledSources[sourceId] === false) return false
         const result = resultsByPdf[pdfId]?.[sourceId]
-        return result?.status !== 'high'
+        if (result?.status === 'high') return false
+        const text = verifyTexts[sourceId] ?? sourceTextById.get(sourceId) ?? ''
+        const info = computeExclusion(
+          text,
+          enabledSources[sourceId],
+          exclusionEntries,
+          muafReasons,
+        )
+        return !info.excluded
       })
 
       if (includeIds.length === 0) return
@@ -711,6 +790,25 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
   },
 
   reverifySource: async (pdfId, sourceId, text) => {
+    // Short-circuit if the card is Muaf (manually disabled or matched by
+    // the exclusion list). Without this, a single-card Verify on a Muaf
+    // card would queue work the batch gate already blocks.
+    {
+      const state = get()
+      const sources = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+      const source = sources.find(s => s.id === sourceId)
+      const sourceText = text ?? state.verifyTexts[sourceId] ?? source?.text ?? ''
+      const info = computeExclusion(
+        sourceText,
+        state.enabledSources[sourceId],
+        useSettingsStore.getState().exclusionEntries,
+        {
+          userDisabled: i18n.t('verification.excluded.userDisabled'),
+          nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+        },
+      )
+      if (info.excluded) return
+    }
     const rollback = (() => {
       const s = get()
       return {

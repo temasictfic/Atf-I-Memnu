@@ -10,11 +10,20 @@ interface UpdateProgressPayload {
 }
 
 const electronAPI = {
-  selectDirectory: (): Promise<string | null> => {
-    return ipcRenderer.invoke('dialog:selectDirectory')
+  selectDirectory: (defaultPath?: string): Promise<string | null> => {
+    return ipcRenderer.invoke('dialog:selectDirectory', defaultPath)
   },
   selectPdfs: (): Promise<string[]> => {
     return ipcRenderer.invoke('dialog:selectPdfs')
+  },
+  selectTextFile: (defaultPath?: string): Promise<string | null> => {
+    return ipcRenderer.invoke('dialog:selectTextFile', defaultPath)
+  },
+  readTextFile: (filePath: string): Promise<string | null> => {
+    return ipcRenderer.invoke('fs:readTextFile', filePath)
+  },
+  openPath: (filePath: string): Promise<{ ok: boolean; error: string | null }> => {
+    return ipcRenderer.invoke('shell:openPath', filePath)
   },
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   openExternal: (url: string): Promise<void> => {

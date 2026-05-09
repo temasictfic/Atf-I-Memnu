@@ -303,11 +303,12 @@ function ensureBackendStarted(): void {
 }
 
 // IPC Handlers
-ipcMain.handle('dialog:selectDirectory', async () => {
+ipcMain.handle('dialog:selectDirectory', async (_event, defaultPath?: string) => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
-    title: 'Select PDF Directory'
+    title: 'Select PDF Directory',
+    defaultPath: typeof defaultPath === 'string' && defaultPath.length > 0 ? defaultPath : undefined,
   })
   return result.canceled ? null : result.filePaths[0]
 })
@@ -322,6 +323,40 @@ ipcMain.handle('dialog:selectPdfs', async () => {
     ],
   })
   return result.canceled ? [] : result.filePaths
+})
+
+ipcMain.handle('dialog:selectTextFile', async (_event, defaultPath?: string) => {
+  if (!mainWindow) return null
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    title: 'Select Text File',
+    filters: [
+      { name: 'Text', extensions: ['txt'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+    defaultPath: typeof defaultPath === 'string' && defaultPath.length > 0 ? defaultPath : undefined,
+  })
+  return result.canceled ? null : result.filePaths[0]
+})
+
+ipcMain.handle('fs:readTextFile', async (_event, filePath: string): Promise<string | null> => {
+  if (typeof filePath !== 'string' || filePath.length === 0) return null
+  try {
+    return await readFile(filePath, 'utf-8')
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
+  if (typeof filePath !== 'string' || filePath.length === 0) {
+    return { ok: false, error: 'Empty path' }
+  }
+  const errorMessage = await shell.openPath(filePath)
+  return {
+    ok: errorMessage.length === 0,
+    error: errorMessage.length === 0 ? null : errorMessage,
+  }
 })
 
 ipcMain.handle('shell:openExternal', async (_event, url: string) => {

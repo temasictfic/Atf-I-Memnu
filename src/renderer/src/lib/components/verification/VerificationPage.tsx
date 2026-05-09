@@ -10,6 +10,7 @@ import { scholarScanner, PROBE_PAGE_STATE_SCRIPT, buildSearchUrl } from '../../s
 import type { VerificationResult, MatchResult, DbCheckEntry, TagKey } from '../../api/types'
 import { api } from '../../api/rest-client'
 import { TAG_ORDER, effectiveTagOn, effectiveDecisionTag } from '../../verification/tagState'
+import { computeExclusion } from '../../verification/exclusion'
 import { sanitizeSourceText, sanitizeSourceTextForSearch } from '../../utils/source-text'
 import { buildDefaultSavePath } from '../../utils/path'
 import {
@@ -86,6 +87,9 @@ function sortSourceCards<T extends SortableCard>(cards: T[], key: CardSortMode, 
   const dir = asc ? 1 : -1
   list.sort((a, b) => {
     if (key === 'status') {
+      // Muaf cards always sink to the bottom regardless of asc/desc, since
+      // their status is meaningless (no verification ran on them).
+      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1
       const ao = statusOrder[a.result?.status ?? 'pending'] ?? 4
       const bo = statusOrder[b.result?.status ?? 'pending'] ?? 4
       return dir * (ao - bo)
@@ -94,6 +98,8 @@ function sortSourceCards<T extends SortableCard>(cards: T[], key: CardSortMode, 
       return dir * ((a.source.ref_number ?? 999) - (b.source.ref_number ?? 999))
     }
     if (key === 'decision') {
+      // Same Muaf-sinks-to-bottom rule as the status sort.
+      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1
       const decisionOrder: Record<string, number> = { fabricated: 0, citation: 1, valid: 2 }
       const ao = decisionOrder[effectiveDecisionTag(a.result)] ?? 99
       const bo = decisionOrder[effectiveDecisionTag(b.result)] ?? 99
@@ -137,6 +143,14 @@ export default function VerificationPage() {
   const enabledDatabases = useMemo(
     () => configuredDatabases.filter(db => db.enabled).map(db => db.name),
     [configuredDatabases],
+  )
+  const exclusionEntries = useSettingsStore(s => s.exclusionEntries)
+  const muafReasons = useMemo(
+    () => ({
+      userDisabled: t('verification.excluded.userDisabled'),
+      nonDoiUrl: t('verification.excluded.nonDoiUrl'),
+    }),
+    [t],
   )
 
   const pdfs = useMemo(() => allPdfs.filter(p => p.status === 'approved'), [allPdfs])
@@ -213,7 +227,6 @@ export default function VerificationPage() {
   const verifyAllActiveRef = useRef(false)
   const verifyAllModeRef = useRef<'all' | 'nonHigh'>('all')
   const [verifyAllActive, setVerifyAllActive] = useState(false)
-  const [lastVerifyAllMode, setLastVerifyAllMode] = useState<'all' | 'nonHigh'>('all')
   const [exportingReport, setExportingReport] = useState(false)
 
   // Fire completion-time side effects (toast + auto Scholar scan) when a
@@ -287,16 +300,39 @@ export default function VerificationPage() {
       const src = useSourcesStore.getState().sourcesByPdf[next] ?? []
       if (src.length === 0) continue
 
+      // Snapshot Muaf state for this PDF's sources. We need it for both
+      // modes — without it, a PDF whose sources are all Muaf would stage
+      // pendingVerifyPdfIdsRef + verifyAllCurrentRef and then return
+      // without producing any WS events. The completion effect waits on
+      // summary.completed, which never arrives, so the queue would hang
+      // and the global button would stay stuck on Stop.
+      const exclusionEntries = useSettingsStore.getState().exclusionEntries
+      const muafReasons = {
+        userDisabled: t('verification.excluded.userDisabled'),
+        nonDoiUrl: t('verification.excluded.nonDoiUrl'),
+      }
+      const verifyTextsSnapshot = useVerificationStore.getState().verifyTexts
+      const enabledSourcesSnapshot = useVerificationStore.getState().enabledSources
+      const isMuaf = (sourceId: string, fallbackText: string) => {
+        const text = verifyTextsSnapshot[sourceId] ?? fallbackText
+        return computeExclusion(
+          text,
+          enabledSourcesSnapshot[sourceId],
+          exclusionEntries,
+          muafReasons,
+        ).excluded
+      }
+
       if (verifyAllModeRef.current === 'nonHigh') {
         const store = useVerificationStore.getState()
         // Ensure cached results are in memory before filtering — a PDF the user
         // hasn't opened this session may have empty resultsByPdf, racing the
         // passive auto-load effect.
         await store.loadResults(next)
-        const { resultsByPdf, enabledSources } = useVerificationStore.getState()
+        const { resultsByPdf } = useVerificationStore.getState()
         const pdfResults = resultsByPdf[next] ?? {}
         const hasNonHigh = src.some(s => {
-          if (enabledSources[s.id] === false) return false
+          if (isMuaf(s.id, s.text)) return false
           return pdfResults[s.id]?.status !== 'high'
         })
         if (!hasNonHigh) continue
@@ -310,6 +346,15 @@ export default function VerificationPage() {
         return
       }
 
+      const hasVerifiable = src.some(s => !isMuaf(s.id, s.text))
+      if (!hasVerifiable) continue
+
+      // Mirror the 'nonHigh' branch: populate sourceOrder + verifyTexts so
+      // startVerification's optimistic in_progress setup runs (without
+      // this, sourceOrder is empty for fresh PDFs and progress dots never
+      // appear until WS events arrive).
+      useVerificationStore.getState().initSourceVerifyState(next, src)
+
       verifyAllCurrentRef.current = next
       selectPdf(next)
       pendingVerifyPdfIdsRef.current.add(next)
@@ -317,7 +362,7 @@ export default function VerificationPage() {
       await useVerificationStore.getState().startVerification([next])
       return
     }
-  }, [selectPdf])
+  }, [selectPdf, t])
   processNextInQueueRef.current = processNextInQueue
 
   const orderedSources = useMemo(() => {
@@ -325,24 +370,39 @@ export default function VerificationPage() {
     return orderedSourceIds.map(id => sourceMap.get(id)).filter(Boolean) as typeof sources
   }, [sources, orderedSourceIds])
 
-  const enabledCount = useMemo(
-    () => orderedSources.filter(s => enabledSources[s.id] ?? true).length,
-    [orderedSources, enabledSources],
-  )
-  const areAllSourcesEnabled = useMemo(
-    () => orderedSources.length > 0 && enabledCount === orderedSources.length,
-    [orderedSources.length, enabledCount],
+  const sourceCards = useMemo(
+    () => orderedSources.map(source => {
+      const override = enabledSources[source.id]
+      const text = verifyTexts[source.id] ?? source.text ?? ''
+      const exclusion = computeExclusion(text, override, exclusionEntries, muafReasons)
+      return {
+        source,
+        result: results[source.id] as VerificationResult | undefined,
+        progress: sourceProgress[source.id],
+        // `enabled` here means "effectively enabled" — false for any Muaf
+        // card, regardless of whether the cause is auto (word/URL) or a
+        // user disable. The X/Y count and the sort-by-enabled key both
+        // read this field.
+        enabled: !exclusion.excluded,
+        exclusion,
+      }
+    }),
+    [orderedSources, results, sourceProgress, enabledSources, verifyTexts, exclusionEntries, muafReasons],
   )
 
-  const sourceCards = useMemo(
-    () => orderedSources.map(source => ({
-      source,
-      result: results[source.id] as VerificationResult | undefined,
-      progress: sourceProgress[source.id],
-      enabled: enabledSources[source.id] ?? true,
-    })),
-    [orderedSources, results, sourceProgress, enabledSources],
+  const enabledCount = useMemo(
+    () => sourceCards.filter(c => c.enabled).length,
+    [sourceCards],
   )
+  // Count of sources that auto-rules alone would keep enabled — what you
+  // get when every per-source override is cleared. Drives the third state
+  // of the bulk-toggle button: "Enable only non-Muaf".
+  const nonMuafCount = useMemo(() => {
+    return orderedSources.filter(source => {
+      const text = verifyTexts[source.id] ?? source.text ?? ''
+      return !computeExclusion(text, undefined, exclusionEntries, muafReasons).excluded
+    }).length
+  }, [orderedSources, verifyTexts, exclusionEntries, muafReasons])
 
   // --- Left panel sorting (persisted in store) ---
   const { togglePdfSort } = useVerificationStore.getState()
@@ -710,6 +770,36 @@ export default function VerificationPage() {
     }
   }
 
+  // Tells whether `pdfId` has at least one verifiable (non-Muaf) source —
+  // optionally also requiring its current status to be non-`high` for the
+  // "verify non-high" path. Used by the per-PDF and global handlers to
+  // skip work that would otherwise leave a stale pendingVerifyPdfIdsRef
+  // entry (the completion effect waits on `summary.completed === true`,
+  // which never arrives if no source ever flips to in_progress).
+  const hasVerifiableSource = useCallback(
+    (pdfId: string, mode: 'all' | 'nonHigh') => {
+      const sources = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+      if (sources.length === 0) return false
+      const exclusionEntries = useSettingsStore.getState().exclusionEntries
+      const reasons = {
+        userDisabled: t('verification.excluded.userDisabled'),
+        nonDoiUrl: t('verification.excluded.nonDoiUrl'),
+      }
+      const verifyTextsSnap = useVerificationStore.getState().verifyTexts
+      const enabledSnap = useVerificationStore.getState().enabledSources
+      const resultsSnap = useVerificationStore.getState().resultsByPdf[pdfId] ?? {}
+      return sources.some(s => {
+        const text = verifyTextsSnap[s.id] ?? s.text ?? ''
+        if (computeExclusion(text, enabledSnap[s.id], exclusionEntries, reasons).excluded) {
+          return false
+        }
+        if (mode === 'nonHigh' && resultsSnap[s.id]?.status === 'high') return false
+        return true
+      })
+    },
+    [t],
+  )
+
   async function handleVerifyOrCancelPdf(pdfId: string) {
     if (isPdfVerifying(pdfId)) {
       // If the user stops the PDF that Verify All is currently working on,
@@ -725,6 +815,7 @@ export default function VerificationPage() {
       pendingVerifyPdfIdsRef.current.delete(pdfId)
       await useVerificationStore.getState().cancelPdf(pdfId)
     } else {
+      if (!hasVerifiableSource(pdfId, 'all')) return
       useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
       autoGsPdfIdsRef.current.add(pdfId)
       pendingVerifyPdfIdsRef.current.add(pdfId)
@@ -747,6 +838,7 @@ export default function VerificationPage() {
     }
     useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
     await loadSourcesFn(pdfId)
+    if (!hasVerifiableSource(pdfId, 'nonHigh')) return
     const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
     useVerificationStore.getState().initSourceVerifyState(pdfId, src)
     pendingVerifyPdfIdsRef.current.add(pdfId)
@@ -760,6 +852,15 @@ export default function VerificationPage() {
       pendingSingleSourceGsRef.current.delete(selectedSourceId)
       await useVerificationStore.getState().cancelSource(selectedSourceId)
     } else {
+      // Muaf cards never verify, so they must not stage a Scholar scan
+      // either. Without this guard the pendingSingleSourceGsRef entry
+      // stays around — `reverifySource` returns early without producing
+      // a result update, so the effect below never sees a settled status
+      // for this source. The next batch verify (any other resultsByPdf
+      // change) then fires the deferred Scholar scan against the Muaf
+      // source — wrong card, wrong moment.
+      const card = sourceCards.find(c => c.source.id === selectedSourceId)
+      if (card?.exclusion.excluded) return
       useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
       const text = useVerificationStore.getState().verifyTexts[selectedSourceId]
       pendingSingleSourceGsRef.current.set(selectedSourceId, effectivePdfId)
@@ -803,19 +904,31 @@ export default function VerificationPage() {
     const enabledMap = useVerificationStore.getState().enabledSources
     const progressMap = useVerificationStore.getState().sourceProgress
     const allVerifyTexts = useVerificationStore.getState().verifyTexts
+    const exclusionList = useSettingsStore.getState().exclusionEntries
+    const reportMuafReasons = {
+      userDisabled: i18n.t('verification.excluded.userDisabled'),
+      nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+    }
 
-    const cards = sourcesForPdf.map(source => ({
-      source,
-      result: pdfResults[source.id] as VerificationResult | undefined,
-      progress: progressMap[source.id],
-      enabled: enabledMap[source.id] ?? true,
-    }))
+    const cards = sourcesForPdf.map(source => {
+      const override = enabledMap[source.id]
+      const text = allVerifyTexts[source.id] ?? source.text ?? ''
+      const exclusion = computeExclusion(text, override, exclusionList, reportMuafReasons)
+      return {
+        source,
+        result: pdfResults[source.id] as VerificationResult | undefined,
+        progress: progressMap[source.id],
+        enabled: !exclusion.excluded,
+        exclusion,
+      }
+    })
     // Respect the middle-pane sort order (sorted but unfiltered), and exclude
-    // disabled sources so the report reflects what the user actually
-    // verified/kept. Also drop sources with no result entry — those are
-    // "never searched" (gray status bar) and carry no info.
+    // Muaf sources (manual disable, word-list match, or non-DOI URL) so the
+    // report reflects what the user actually verified/kept. Also drop sources
+    // with no result entry — those are "never searched" (gray status bar) and
+    // carry no info.
     const sortedSourcesForExport = sortSourceCards(cards, cardSortKey as CardSortMode, cardSortAsc)
-      .filter(c => c.enabled)
+      .filter(c => !c.exclusion.excluded)
       .filter(c => pdfResults[c.source.id] !== undefined)
       .map(c => c.source)
 
@@ -1016,7 +1129,7 @@ export default function VerificationPage() {
     catch { window.open(url, '_blank') }
   }
 
-  const { selectSource, setVerifyText, resetVerifyText, toggleSourceEnabled, setAllEnabled } = useVerificationStore.getState()
+  const { selectSource, setVerifyText, resetVerifyText, toggleSourceEnabled, setAllEnabled, clearEnabledOverrides } = useVerificationStore.getState()
 
   // Get progress for selected source (used in right panel for DB links)
   const selectedProgress = selectedSourceId ? sourceProgress[selectedSourceId] : undefined
@@ -1985,7 +2098,7 @@ export default function VerificationPage() {
           <div className={styles['start-split']} ref={verifyAllMenuRef}>
             <button
               className={`${styles['start-btn']} ${styles['start-btn-main']}`}
-              onClick={() => handleStartOrCancel(lastVerifyAllMode)}
+              onClick={() => handleStartOrCancel('all')}
               disabled={pdfs.length === 0 || (!isAnyVerifying && !verifyAllActive && Math.min(verifyCutoffIndex, sortedPdfs.length) === 0)}
             >
               {(isAnyVerifying || verifyAllActive) ? <><span>&#x25A0;</span> {t('verification.stop')}</> : <><span>&#x25B6;</span> {t('verification.verifyAll')}</>}
@@ -2006,22 +2119,18 @@ export default function VerificationPage() {
             )}
             {verifyAllMenuOpen && (
               <ul className={styles['start-menu']} role="menu">
-                {(['all', 'nonHigh'] as const).map(mode => (
-                  <li key={mode} role="none">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className={lastVerifyAllMode === mode ? styles['sort-active'] : ''}
-                      onClick={() => {
-                        setLastVerifyAllMode(mode)
-                        setVerifyAllMenuOpen(false)
-                        void handleStartOrCancel(mode)
-                      }}
-                    >
-                      {t(`verification.verifyAllModes.${mode}`)}
-                    </button>
-                  </li>
-                ))}
+                <li role="none">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setVerifyAllMenuOpen(false)
+                      void handleStartOrCancel('nonHigh')
+                    }}
+                  >
+                    {t('verification.verifyAllModes.nonHigh')}
+                  </button>
+                </li>
               </ul>
             )}
           </div>
@@ -2212,9 +2321,35 @@ export default function VerificationPage() {
               <div className={styles['toolbar-left']}>
                 <button
                   className={`${styles['toolbar-btn']} ${styles['toolbar-btn-enable-all']}`}
-                  onClick={() => effectivePdfId && setAllEnabled(effectivePdfId, !areAllSourcesEnabled)}
-                  title={areAllSourcesEnabled ? t('verification.disableAll') : t('verification.enableAll')}
-                  aria-label={areAllSourcesEnabled ? t('verification.disableAll') : t('verification.enableAll')}
+                  onClick={() => {
+                    if (!effectivePdfId) return
+                    // 3-state cycle driven by the current effective enabled
+                    // count. The "Only non-Muaf" branch clears every per-source
+                    // override so computeExclusion's auto rules apply (sources
+                    // matching the exclusion file or holding a non-DOI URL stay
+                    // Muaf, the rest are enabled).
+                    if (enabledCount === orderedSources.length) {
+                      setAllEnabled(effectivePdfId, false)
+                    } else if (enabledCount === 0) {
+                      clearEnabledOverrides(effectivePdfId)
+                    } else {
+                      setAllEnabled(effectivePdfId, true)
+                    }
+                  }}
+                  title={
+                    enabledCount === orderedSources.length
+                      ? t('verification.disableAll')
+                      : enabledCount === 0
+                        ? t('verification.enableNonMuaf', { count: nonMuafCount })
+                        : t('verification.enableAll')
+                  }
+                  aria-label={
+                    enabledCount === orderedSources.length
+                      ? t('verification.disableAll')
+                      : enabledCount === 0
+                        ? t('verification.enableNonMuaf', { count: nonMuafCount })
+                        : t('verification.enableAll')
+                  }
                 >
                   {enabledCount} / {orderedSources.length}
                 </button>
@@ -2291,10 +2426,11 @@ export default function VerificationPage() {
             <div className={styles['card-list']} ref={cardListRef} data-scrollable>
               {displayedSourceCards.map((card, idx) => {
                 const isSelected = selectedSourceId === card.source.id
+                const isMuaf = card.exclusion.excluded
                 const cardClass = [
                   styles['source-card'],
                   isSelected ? styles['card-selected'] : '',
-                  !card.enabled ? styles['card-disabled'] : '',
+                  isMuaf ? styles['card-disabled'] : '',
                   dropTargetIdx === idx && dragSourceId !== card.source.id ? styles['card-dragover'] : '',
                 ].filter(Boolean).join(' ')
 
@@ -2342,18 +2478,26 @@ export default function VerificationPage() {
                       <div className={styles['card-header']}>
                         <button
                           type="button"
-                          className={`${styles['ref-badge']} ${card.enabled ? '' : styles['ref-badge-disabled']}`}
-                          aria-pressed={card.enabled}
+                          className={`${styles['ref-badge']} ${isMuaf ? styles['ref-badge-disabled'] : ''}`}
+                          aria-pressed={!isMuaf}
                           title={card.enabled ? t('verification.disableRef') : t('verification.enableRef')}
                           onClick={(e) => { e.stopPropagation(); selectSource(card.source.id); toggleSourceEnabled(card.source.id) }}
                         >
                           [{card.source.ref_number ?? '?'}]
                         </button>
-                        {card.result?.status === 'in_progress' && (
+                        {isMuaf ? (
+                          <span
+                            className={styles['status-badge']}
+                            style={{ background: '#9ca3af', color: 'white' }}
+                            title={card.exclusion.reason}
+                          >
+                            {t('verification.muaf')}
+                          </span>
+                        ) : card.result?.status === 'in_progress' ? (
                           <span className={styles['status-badge']} style={{ background: STATUS_HEX.in_progress, color: 'white' }}>
                             {i18n.t('verification.status.in_progress')}
                           </span>
-                        )}
+                        ) : null}
                         <span className={styles['card-actions']}>
                           <button
                             className={styles['copy-btn']}
@@ -2490,7 +2634,7 @@ export default function VerificationPage() {
                           onFocus={(e) => { selectSource(card.source.id); autoResize(e.target as HTMLTextAreaElement) }}
                           onClick={(e) => { e.stopPropagation(); selectSource(card.source.id) }}
                           rows={2}
-                          disabled={!card.enabled}
+                          disabled={isMuaf}
                         />
                       </div>
 

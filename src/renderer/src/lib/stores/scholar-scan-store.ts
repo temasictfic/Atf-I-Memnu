@@ -3,8 +3,11 @@ import type { ScholarQueueItem, ScholarScanStatus } from '../services/scholar-sc
 import { scholarScanner } from '../services/scholar-scanner'
 import { useVerificationStore } from './verification-store'
 import { useSourcesStore } from './sources-store'
+import { useSettingsStore } from './settings-store'
 import { sanitizeSourceTextForSearch } from '../utils/source-text'
+import { computeExclusion } from '../verification/exclusion'
 import { api } from '../api/rest-client'
+import i18n from '../i18n'
 
 interface ScholarScanState {
   status: ScholarScanStatus
@@ -82,10 +85,22 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     const results = verStore.resultsByPdf[pdfId] ?? {}
     const sources = srcStore.sourcesByPdf[pdfId] ?? []
     const enabledSources = verStore.enabledSources
+    const exclusionEntries = useSettingsStore.getState().exclusionEntries
+    const muafReasons = {
+      userDisabled: i18n.t('verification.excluded.userDisabled'),
+      nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+    }
 
     const selected = sources.filter((s) => {
+      // Drop Muaf cards regardless of which entry-point asked for the
+      // scan. The single-source path used to short-circuit on the
+      // explicit `sourceIds` argument and bypass every Muaf check —
+      // which let a Muaf card slip through when a stale pendingRef
+      // queued it from an earlier individual-verify click.
+      const text = verStore.verifyTexts[s.id] ?? s.text ?? ''
+      const info = computeExclusion(text, enabledSources[s.id], exclusionEntries, muafReasons)
+      if (info.excluded) return false
       if (sourceIds) return sourceIds.includes(s.id)
-      if (enabledSources[s.id] === false) return false
       const r = results[s.id]
       return r && (r.status === 'low' || r.status === 'medium')
     })
@@ -140,7 +155,9 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
       })
       const queue = await buildQueue(pdfId)
       if (queue.length === 0) {
-        set({ status: 'idle' })
+        // Use 'done' (not 'idle') so the deferred verification-complete toast
+        // still fires when there are no non-high sources to scan.
+        set({ status: 'done' })
         return
       }
       set({ queue, totalInQueue: queue.length })
@@ -160,7 +177,7 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
       })
       const queue = await buildQueue(pdfId, [sourceId])
       if (queue.length === 0) {
-        set({ status: 'idle' })
+        set({ status: 'done' })
         return
       }
       set({ queue, totalInQueue: queue.length })

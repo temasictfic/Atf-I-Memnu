@@ -132,6 +132,7 @@ export interface DatabaseConfig {
 
 export interface AppSettings {
   exported_pdf_dir?: string
+  exclusion_words_file_path?: string
   databases: DatabaseConfig[]
   api_keys?: Record<string, string>
   polite_pool_email?: string

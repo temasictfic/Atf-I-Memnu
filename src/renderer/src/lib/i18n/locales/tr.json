@@ -122,8 +122,20 @@
       "reportBibliographicLabel": "En yüksek eşleşmede daha çok bilgi göster",
       "reportBibliographicDesc": "Doğrulama raporundaki en yüksek eşleşme kartında ek alanları (cilt, sayfa, yayınevi, ISSN vb.) yazdır"
     },
+    "exclusionList": {
+      "label": "Muaf listesi",
+      "desc": "Listedeki herhangi bir kelimeyi içeren kaynaklar Muaf olur",
+      "entriesLoaded": "{{count}} kayıt yüklendi",
+      "notFound": "Belirtilen yolda muaf dosyası bulunamadı.",
+      "readError": "Muaf dosyası okunamadı.",
+      "openFailed": "Muaf dosyası açılamadı.",
+      "placeholder": "Muaf .txt dosyasının yolu",
+      "reload": "Yeniden yükle",
+      "reloading": "Yükleniyor…",
+      "reloaded": "Yüklendi"
+    },
     "cache": {
-      "title": "Kayıtlar / Önbellek",
+      "title": "Muafiyet | Kayıtlar | Önbellek",
       "folderLabel": "Kayıt Klasörü",
       "folderDesc": "Ayrıştırma ve Doğrulama kayıtlarının saklandığı klasör",
       "openedAt": "Açıldı: {{path}}",
@@ -275,6 +287,11 @@
     "markAsLow": "Düşük olarak işaretle",
     "enableRef": "Bu kaynağı etkinleştirmek için tıkla",
     "disableRef": "Bu kaynağı devre dışı bırakmak için tıkla",
+    "muaf": "Muaf",
+    "excluded": {
+      "userDisabled": "Kullanıcı tarafından muaf tutuldu",
+      "nonDoiUrl": "DOI olmayan bağlantı"
+    },
     "verifyNonHigh": "Yüksek harici doğrula",
     "scholarScanNonHigh": "Bulunamayanlar için Google Scholar taraması",
     "scholarPreparing": "Hazırlanıyor…",
@@ -331,6 +348,7 @@
     "stopVerification": "Doğrulamayı durdur",
     "enableAll": "Tümünü etkinleştir",
     "disableAll": "Tümünü devre dışı bırak",
+    "enableNonMuaf": "Yalnızca muaf olmayan {{count}} kaynağı etkinleştir",
     "enabledCount": "{{count}}/{{total}} etkin",
     "searchPlaceholder": "Kaynaklarda ara...",
     "searchPlaceholderPdf": "{{name}} içinde ara",
@@ -372,14 +390,14 @@
     "fabricatedTagTooltip": "Literatürde güvenilir eşleşme yok",
     "problemTag": {
       "!authors": "yazarlar",
-      "!doi/arXiv": "doi/arXiv",
+      "!doi/arXiv": "doi",
       "!year": "yıl",
       "!journal": "dergi",
       "!title": "başlık"
     },
     "problemDesc": {
       "authors": "Yazarlar uyuşmuyor veya bir tarafta eksik",
-      "doi": "DOI/arXiv uyuşmuyor veya bir tarafta eksik",
+      "doi": "DOI uyuşmuyor veya bir tarafta eksik",
       "year": "Yıl uyuşmuyor (>1 yıl) veya bir tarafta eksik",
       "journal": "Yayın (dergi / konferans / kitap) uyuşmuyor veya bir tarafta eksik",
       "title": "Başlık benzerliği %85'in altında"

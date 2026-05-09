@@ -122,8 +122,20 @@
       "reportBibliographicLabel": "Include more info in highest match",
       "reportBibliographicDesc": "Print the additional fields (volume, pages, publisher, ISSN, etc.) under each highest match card in the verification report"
     },
+    "exclusionList": {
+      "label": "Exclusion list",
+      "desc": "Sources containing any listed word become Excluded",
+      "entriesLoaded": "{{count}} entries loaded",
+      "notFound": "Exclusion file not found at the configured path.",
+      "readError": "Failed to read the exclusion file.",
+      "openFailed": "Failed to open the exclusion file.",
+      "placeholder": "Path to exclusion .txt file",
+      "reload": "Reload",
+      "reloading": "Reloading…",
+      "reloaded": "Reloaded"
+    },
     "cache": {
-      "title": "Record / Cache",
+      "title": "Exclusion | Record | Cache",
       "folderLabel": "Record Folder",
       "folderDesc": "Folder where parsing and verification records are stored",
       "openedAt": "Opened: {{path}}",
@@ -275,6 +287,11 @@
     "markAsLow": "Mark as Low",
     "enableRef": "Click to enable this source",
     "disableRef": "Click to disable this source",
+    "muaf": "Excluded",
+    "excluded": {
+      "userDisabled": "User excluded it",
+      "nonDoiUrl": "Non-DOI URL"
+    },
     "verifyNonHigh": "Verify only non-High sources",
     "scholarScanNonHigh": "Google Scholar scan for non-High sources",
     "scholarPreparing": "Preparing…",
@@ -331,6 +348,7 @@
     "stopVerification": "Stop verification",
     "enableAll": "Enable All",
     "disableAll": "Disable All",
+    "enableNonMuaf": "Enable {{count}} non-Muaf sources",
     "enabledCount": "{{count}}/{{total}} enabled",
     "searchPlaceholder": "Search sources...",
     "searchPlaceholderPdf": "Search {{name}}",
@@ -372,14 +390,14 @@
     "fabricatedTagTooltip": "No credible match — likely fabricated",
     "problemTag": {
       "!authors": "authors",
-      "!doi/arXiv": "doi/arXiv",
+      "!doi/arXiv": "doi",
       "!year": "year",
       "!journal": "journal",
       "!title": "title"
     },
     "problemDesc": {
       "authors": "Authors disagree or missing on one side",
-      "doi": "DOI/arXiv disagrees or missing on one side",
+      "doi": "DOI disagrees or missing on one side",
       "year": "Year disagrees (>1 yr) or missing on one side",
       "journal": "Publication (journal / conference / book) disagrees or missing on one side",
       "title": "Title similarity is below 85%"

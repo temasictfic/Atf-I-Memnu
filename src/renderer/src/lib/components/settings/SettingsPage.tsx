@@ -93,6 +93,8 @@ export default function SettingsPage() {
   const { t } = useTranslation()
   const settings = useSettingsStore(s => s.settings)
   const saveStatus = useSettingsStore(s => s.saveStatus)
+  const exclusionEntries = useSettingsStore(s => s.exclusionEntries)
+  const exclusionLoadError = useSettingsStore(s => s.exclusionLoadError)
   const {
     toggleDatabase,
     updateSetting,
@@ -101,6 +103,7 @@ export default function SettingsPage() {
     updateApiKey,
     connectOpenaire,
     disconnectOpenaire,
+    reloadExclusionFile,
   } = useSettingsStore.getState()
   const [cacheOpenMessage, setCacheOpenMessage] = useState<string | null>(null)
   const [scholarSessionMessage, setScholarSessionMessage] = useState<string | null>(null)
@@ -110,6 +113,7 @@ export default function SettingsPage() {
   const [openaireBusy, setOpenaireBusy] = useState(false)
   const [dragDbId, setDragDbId] = useState<string | null>(null)
   const [dragOverDbId, setDragOverDbId] = useState<string | null>(null)
+  const [exclusionMessage, setExclusionMessage] = useState<string | null>(null)
 
   const openaireConnected = !!settings.api_keys?.openaire
   const openaireDaysLeft = daysUntilOpenaireExpiry(settings.openaire_token_saved_at)
@@ -138,6 +142,43 @@ export default function SettingsPage() {
     } catch {
       setOpenaireError(t('settings.openaire.pasteFailed'))
     }
+  }
+
+  const handleBrowseExclusionFile = async () => {
+    setExclusionMessage(null)
+    try {
+      const path = await window.electronAPI.selectTextFile(settings.exclusion_words_file_path ?? '')
+      if (path) updateSetting('exclusion_words_file_path', path)
+    } catch (error) {
+      console.error('Failed to pick exclusion file:', error)
+      setExclusionMessage(t('settings.exclusionList.openFailed'))
+    }
+  }
+
+  const handleOpenExclusionFile = async () => {
+    setExclusionMessage(null)
+    const path = settings.exclusion_words_file_path
+    if (!path) return
+    try {
+      const result = await window.electronAPI.openPath(path)
+      if (!result.ok) {
+        setExclusionMessage(t('settings.exclusionList.openFailed'))
+        if (result.error) console.error('shell.openPath error:', result.error)
+      }
+    } catch (error) {
+      console.error('Failed to open exclusion file:', error)
+      setExclusionMessage(t('settings.exclusionList.openFailed'))
+    }
+  }
+
+  const handleReloadExclusionFile = async () => {
+    setExclusionMessage(t('settings.exclusionList.reloading'))
+    await reloadExclusionFile()
+    const err = useSettingsStore.getState().exclusionLoadError
+    if (err === 'not_found') setExclusionMessage(t('settings.exclusionList.notFound'))
+    else if (err === 'read_error') setExclusionMessage(t('settings.exclusionList.readError'))
+    else setExclusionMessage(t('settings.exclusionList.reloaded'))
+    setTimeout(() => setExclusionMessage(null), 2000)
   }
 
   const handleOpenCacheFolder = async () => {
@@ -677,7 +718,7 @@ export default function SettingsPage() {
                 type="button"
                 className={styles['action-button']}
                 onClick={async () => {
-                  const dir = await window.electronAPI.selectDirectory()
+                  const dir = await window.electronAPI.selectDirectory(settings.exported_pdf_dir ?? '')
                   if (dir) updateSetting('exported_pdf_dir', dir)
                 }}
               >
@@ -699,12 +740,67 @@ export default function SettingsPage() {
               </span>
             </label>
           </div>
+
         </section>
 
         <section className={styles['settings-section']}>
           <div className={styles['section-header-row']}>
             <div>
               <h2 className={styles['section-title']}>{t('settings.cache.title')}</h2>
+            </div>
+          </div>
+
+          <div className={styles['setting-row']} style={{ borderBottom: 'none', paddingBottom: 0 }}>
+            <div className={styles['setting-info']}>
+              <span className={styles['setting-label']}>{t('settings.exclusionList.label')}</span>
+              <span className={styles['setting-desc']}>{t('settings.exclusionList.desc')}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="text"
+                className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
+                value={settings.exclusion_words_file_path ?? ''}
+                placeholder={t('settings.exclusionList.placeholder')}
+                onChange={e => updateSetting('exclusion_words_file_path', e.target.value)}
+              />
+              <button
+                type="button"
+                className={styles['action-button']}
+                onClick={handleBrowseExclusionFile}
+              >
+                {t('common.browse')}
+              </button>
+            </div>
+          </div>
+
+          <div className={styles['setting-row']} style={{ paddingTop: 4 }}>
+            <div className={styles['setting-info']}>
+              <span className={styles['setting-desc']}>
+                {exclusionLoadError === 'not_found'
+                  ? t('settings.exclusionList.notFound')
+                  : exclusionLoadError === 'read_error'
+                    ? t('settings.exclusionList.readError')
+                    : t('settings.exclusionList.entriesLoaded', { count: exclusionEntries.length })}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {exclusionMessage && <span className={styles['action-message']}>{exclusionMessage}</span>}
+              <button
+                type="button"
+                className={styles['action-button']}
+                onClick={handleReloadExclusionFile}
+                disabled={!settings.exclusion_words_file_path}
+              >
+                {t('settings.exclusionList.reload')}
+              </button>
+              <button
+                type="button"
+                className={styles['action-button']}
+                onClick={handleOpenExclusionFile}
+                disabled={!settings.exclusion_words_file_path}
+              >
+                {t('common.open')}
+              </button>
             </div>
           </div>
 

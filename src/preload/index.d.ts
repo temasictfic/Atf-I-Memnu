@@ -6,8 +6,11 @@ export interface SaveDialogOptions {
 }
 
 export interface ElectronAPI {
-  selectDirectory: () => Promise<string | null>
+  selectDirectory: (defaultPath?: string) => Promise<string | null>
   selectPdfs: () => Promise<string[]>
+  selectTextFile: (defaultPath?: string) => Promise<string | null>
+  readTextFile: (filePath: string) => Promise<string | null>
+  openPath: (filePath: string) => Promise<{ ok: boolean; error: string | null }>
   getPathForFile: (file: File) => string
   openExternal: (url: string) => Promise<void>
   clearScholarSession: () => Promise<{ ok: boolean }>

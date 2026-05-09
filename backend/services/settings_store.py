@@ -9,9 +9,28 @@ persistence + accessor calls here.
 """
 
 import json
+from pathlib import Path
 
 from config import settings as app_config
 from models.settings import AppSettings
+
+
+# Default exclusion list written on first launch when the user has no
+# exclusion file path set. Kept inline (rather than read from a bundled
+# resource) so the backend works identically in dev and packaged builds
+# without depending on PyInstaller's data-file resolution. The user can
+# freely edit the resulting file via the Settings page's "Open" button —
+# we only write this content when the destination doesn't yet exist.
+_DEFAULT_EXCLUSION_CONTENT = """# Varsayılan muaf listesi
+# Her satır: kelime | sebep
+# # ile başlayan satırlar yok sayılır. Eşleşme büyük/küçük harfe duyarsızdır.
+# @non-doi-url satırı silinirse DOI olmayan bağlantı kuralı devre dışı kalır.
+
+@non-doi-url | DOI olmayan bağlantı
+arXiv | arXiv ön baskı, hakemli değil
+Proceedings | Konferans bildirisi
+IEEE | IEEE yayını
+"""
 
 
 _current_settings: AppSettings | None = None
@@ -30,6 +49,7 @@ def _load_settings() -> AppSettings:
     settings_path = app_config.get_settings_path()
     if not settings_path.exists():
         _current_settings = AppSettings.default()
+        _current_settings = _bootstrap_exclusion_file(_current_settings)
         return _current_settings
 
     try:
@@ -57,7 +77,35 @@ def _load_settings() -> AppSettings:
     except Exception:
         _current_settings = AppSettings.default()
     _current_settings = _migrate_databases(_current_settings)
+    _current_settings = _bootstrap_exclusion_file(_current_settings)
     return _current_settings
+
+
+def _bootstrap_exclusion_file(s: AppSettings) -> AppSettings:
+    """Seed the exclusion-words file when no usable file exists.
+
+    Runs after settings load. Re-creates the default file (arXiv /
+    Proceedings / IEEE) whenever the configured path is empty *or* points
+    at a missing file — so deleting ``exclusion.txt`` and relaunching gets
+    the defaults back. A non-empty path that still resolves to an existing
+    file is left alone, preserving user edits and custom paths.
+    """
+    configured = Path(s.exclusion_words_file_path) if s.exclusion_words_file_path else None
+    if configured is not None and configured.is_file():
+        return s
+    target = configured if configured is not None else Path(app_config.output_dir) / "exclusion.txt"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_DEFAULT_EXCLUSION_CONTENT, encoding="utf-8")
+    except Exception:
+        # If we can't write the file (read-only volume, perms), leave the
+        # path empty and let the renderer handle the missing-file case.
+        return s
+    new_path = str(target)
+    if s.exclusion_words_file_path != new_path:
+        s.exclusion_words_file_path = new_path
+        save_settings(s)
+    return s
 
 
 def _migrate_databases(s: AppSettings) -> AppSettings:

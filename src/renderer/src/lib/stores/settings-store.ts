@@ -6,6 +6,7 @@ import {
   SETTINGS_SAVED_FLASH_MS,
 } from '../constants/timings'
 import i18n from '../i18n'
+import { parseExclusionList, type ExclusionEntry } from '../utils/exclusion-list'
 
 // Must mirror backend `AppSettings.default().databases` in
 // `backend/models/settings.py`. The backend is authoritative — these are
@@ -37,6 +38,11 @@ interface SettingsState {
   // autosave normally.
   settingsLoaded: boolean
   saveStatus: 'idle' | 'saving' | 'saved' | 'error'
+  // Parsed contents of the exclusion-words file (renderer-only — not
+  // persisted to backend). Re-loaded on startup, when the file path
+  // changes, and on explicit reload from the settings page.
+  exclusionEntries: ExclusionEntry[]
+  exclusionLoadError: string | null
   loadSettings: () => Promise<void>
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   toggleDatabase: (dbId: string) => void
@@ -46,6 +52,7 @@ interface SettingsState {
   updateApiKey: (key: string, value: string) => void
   connectOpenaire: (refreshToken: string) => Promise<{ ok: boolean; error?: string }>
   disconnectOpenaire: () => Promise<void>
+  reloadExclusionFile: () => Promise<void>
 }
 
 // Auto-save debounce. Two durations: a short one for cheap, idempotent
@@ -133,8 +140,11 @@ async function _runDatabaseOp(call: () => Promise<AppSettings>) {
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   saveStatus: 'idle' as const,
   settingsLoaded: false,
+  exclusionEntries: [],
+  exclusionLoadError: null,
   settings: {
     exported_pdf_dir: '',
+    exclusion_words_file_path: '',
     databases: defaultDatabases,
     api_keys: {},
     polite_pool_email: '',
@@ -158,6 +168,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       if (s.language && i18n.language !== s.language) {
         i18n.changeLanguage(s.language)
       }
+      // Pull the exclusion file off disk now that we know its path. Any
+      // failure is non-fatal — the renderer just treats the list as empty
+      // and surfaces the error in the settings page.
+      void get().reloadExclusionFile()
     } catch {
       // Don't flip settingsLoaded on failure. While the renderer doesn't
       // know the on-disk state we MUST NOT autosave — a save with the
@@ -173,6 +187,30 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       i18n.changeLanguage(value)
     }
     _debouncedSave(get, key)
+    // Re-read the exclusion file whenever its path changes so word/reason
+    // matches stay in sync without needing an explicit Reload click.
+    if (key === 'exclusion_words_file_path') {
+      void get().reloadExclusionFile()
+    }
+  },
+
+  reloadExclusionFile: async () => {
+    const path = get().settings.exclusion_words_file_path
+    if (!path) {
+      set({ exclusionEntries: [], exclusionLoadError: null })
+      return
+    }
+    try {
+      const text = await window.electronAPI.readTextFile(path)
+      if (text === null) {
+        set({ exclusionEntries: [], exclusionLoadError: 'not_found' })
+        return
+      }
+      set({ exclusionEntries: parseExclusionList(text), exclusionLoadError: null })
+    } catch (err) {
+      console.error('Failed to read exclusion file:', err)
+      set({ exclusionEntries: [], exclusionLoadError: 'read_error' })
+    }
   },
 
   toggleDatabase: (dbId: string) => {
