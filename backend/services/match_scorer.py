@@ -61,11 +61,11 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
         token_sort = fuzz.token_sort_ratio(src_lower, cand_lower) / 100.0
         sequential = fuzz.ratio(src_lower, cand_lower) / 100.0
         title_score = TITLE_TOKEN_SORT_WEIGHT * token_sort + TITLE_SEQUENTIAL_WEIGHT * sequential
-    details.title_similarity = title_score
+    details.title_similarity = round(title_score, 4)
 
     # 2. Author match
     author_match_score = _compare_authors(source.authors, candidate.get("authors", []))
-    details.author_match = author_match_score
+    details.author_match = round(author_match_score, 4)
 
     # 3. Year match
     year_score = 0.0
@@ -85,8 +85,8 @@ def score_match(source: ParsedSource, candidate: dict[str, Any]) -> MatchResult:
 
     # 5. Journal / venue similarity (informational — venue *threshold* lives
     # in _venues_match for problem-tag logic; here we surface the raw score).
-    details.journal_similarity = _venue_similarity_score(
-        source.journal or "", candidate.get("journal") or ""
+    details.journal_similarity = round(
+        _venue_similarity_score(source.journal or "", candidate.get("journal") or ""), 4
     )
 
     # Base composite — title+author weighted mix, falling back to title-only
