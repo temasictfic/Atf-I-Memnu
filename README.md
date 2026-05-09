@@ -64,7 +64,7 @@ Independently, each source receives a **decision tag** describing field-level co
 - `citation` — title matches, OR authors plus one of {year, venue, doi} match
 - `fabricated` — neither
 
-…plus up to five problem chips (`!authors`, `!year`, `!journal`, `!doi/arXiv`, `!title`) flagging individual mismatches. Status and decision are independent dimensions — a high-scoring card can still be `citation`, a low-scoring one can be `valid` if the available fields agree.
+…plus up to five problem chips (`!authors`, `!year`, `!journal`, `!doi`, `!title`) flagging individual mismatches. Status and decision are independent dimensions — a high-scoring card can still be `citation`, a low-scoring one can be `valid` if the available fields agree.
 
 Verification results are persisted per-PDF on disk so re-opening a PDF restores its prior decisions, status bands, chips, and per-source override state without rerunning anything.
 
