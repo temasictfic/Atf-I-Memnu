@@ -424,13 +424,14 @@ def _venue_similarity_score(source_venue: str, cand_journal: str) -> float:
         if short_clean.lower() == _initials(long).lower():
             return 1.0
 
-    # Multi-strategy fuzzy. Deliberately omit partial_ratio — single-token
-    # overlaps ("IEEE", "Sensors") inflate it and produce false negatives
-    # on the !journal tag.
-    return max(
-        fuzz.token_sort_ratio(src, cand),
-        fuzz.token_set_ratio(src, cand),
-    ) / 100.0
+    # token_sort_ratio only. token_set_ratio is deliberately omitted (along
+    # with partial_ratio) because both share the same inflation problem:
+    # when even 1-2 tokens overlap, the intersection string is a near-prefix
+    # of the combined string, pushing the ratio toward 1.0 even on otherwise
+    # unrelated venues — e.g. "African Journal of Biotechnology" vs "World
+    # Journal of Microbiology and Biotechnology" scores 0.86 with token_set
+    # but 0.68 with token_sort, which is the honest signal.
+    return fuzz.token_sort_ratio(src, cand) / 100.0
 
 
 def _venues_match(source_venue: str, cand_journal: str) -> bool:

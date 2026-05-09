@@ -182,11 +182,11 @@ Dergiler kısaltma, parantezli alt başlık, vol/issue gürültüsü yüzünden 
    - alt başlık at (`:` sonrası)
    - ISO-4 kısaltmaları genişlet token bazında: `j → journal`, `proc → proceedings`, `intl → international`, `lett → letters`, `eng → engineering`, `med → medical` …
 
-2. **Multi-strategy fuzzy:**
+2. **token_sort_ratio fuzzy:**
    ```
-   max(token_sort_ratio, token_set_ratio) ≥ 0.75
+   token_sort_ratio ≥ 0.75
    ```
-   `partial_ratio` bilerek **dahil değil** — "IEEE", "Sensors" gibi tek token şişirme yapıyordu.
+   `token_set_ratio` ve `partial_ratio` bilerek **dahil değil** — ikisi de 1-2 token örtüştüğünde kesişim stringi birleştirilmiş stringin alt kümesi olduğundan oranı şişiriyor.
 
 3. **Acronym kontrolü** — Bir taraf kısa/all-caps ise diğer tarafın kelime baş harfleriyle karşılaştırılır:
    ```
