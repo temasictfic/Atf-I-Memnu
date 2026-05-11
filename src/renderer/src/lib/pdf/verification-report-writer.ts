@@ -162,8 +162,11 @@ function effectiveDecision(src: ReportSource): 'valid' | 'citation' | 'fabricate
   const doiOn     = effectiveTagOnPdf(src, 'doi/arXiv')
   const authorMatches = !authorsOn, yearMatches = !yearOn, titleMatches = !titleOn
   const journalMatches = !journalOn, doiMatches = !doiOn
+  const journalSupportsCitation = journalMatches && Boolean(src.bestMatch.journal?.trim())
+  const doiSupportsCitation =
+    doiMatches && Boolean(src.bestMatch.doi?.trim())
   if (authorMatches && yearMatches && titleMatches && journalMatches) return 'valid'
-  if (titleMatches || (authorMatches && (journalMatches || doiMatches))) return 'citation'
+  if (titleMatches || (authorMatches && (journalSupportsCitation || doiSupportsCitation))) return 'citation'
   return 'fabricated'
 }
 

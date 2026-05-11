@@ -59,9 +59,14 @@ export function classifyDecisionFromTags(result: TagStateResultLike | undefined)
   const titleMatches   = !titleOn
   const journalMatches = !journalOn
   const doiMatches     = !doiOn
+  // For Citation/Fabricated, "journal/doi both missing" should be neutral:
+  // chip OFF in that case means "no disagreement", not "positive evidence".
+  const journalSupportsCitation = journalMatches && Boolean(result.best_match.journal?.trim())
+  const doiSupportsCitation =
+    doiMatches && Boolean(result.best_match.doi?.trim())
 
   if (authorMatches && yearMatches && titleMatches && journalMatches) return 'valid'
-  if (titleMatches || (authorMatches && (journalMatches || doiMatches))) return 'citation'
+  if (titleMatches || (authorMatches && (journalSupportsCitation || doiSupportsCitation))) return 'citation'
   return 'fabricated'
 }
 
