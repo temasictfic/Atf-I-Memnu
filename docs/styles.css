@@ -326,6 +326,11 @@ h1 {
   overflow: auto;
 }
 
+.notes a {
+  color: #9a590d;
+  text-underline-offset: 2px;
+}
+
 .status-error {
   color: #9b1c1c;
   background: rgba(254, 226, 226, 0.8);
