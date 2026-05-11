@@ -319,6 +319,11 @@ sadece bir tarafta var           →  matches DEĞİL
 iki taraf da var ve uyuşmuyor   →  matches DEĞİL
 ```
 
+> Not: `iki taraf da yok → matches` durumu
+dergi ve doi için yalnızca predikat/çip seviyesinde
+> "uyuşmazlık yok" anlamına gelir. **Künye/Uydurma** ayrımında tek başına
+> pozitif kanıt sayılmaz; bu durumda alan, karar için **matches** kabul edilmez.
+
 Title için aynı kural değil — sürekli skoru kullanır:
 
 ```
