@@ -29,7 +29,7 @@ _DEFAULT_EXCLUSION_CONTENT = """# Varsayılan muaf listesi
 @non-doi-url | DOI olmayan bağlantı
 arXiv | arXiv ön baskı, hakemli değil
 Proceedings | Konferans bildirisi
-IEEE | IEEE yayını
+OECD | Ekonomik İşbirliği ve Kalkınma Örgütü raporu
 """
 
 
