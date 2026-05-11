@@ -399,7 +399,7 @@
       "authors": "Authors disagree or missing on one side",
       "doi": "DOI disagrees or missing on one side",
       "year": "Year disagrees (>1 yr) or missing on one side",
-      "journal": "Publication (journal / conference / book) disagrees or missing on one side",
+      "journal": "Journal (publication / book) disagrees or missing on one side",
       "title": "Title similarity is below 85%"
     },
     "exportPdf": "Export Verification Results to PDF",

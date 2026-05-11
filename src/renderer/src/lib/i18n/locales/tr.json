@@ -399,7 +399,7 @@
       "authors": "Yazarlar uyuşmuyor veya bir tarafta eksik",
       "doi": "DOI uyuşmuyor veya bir tarafta eksik",
       "year": "Yıl uyuşmuyor (>1 yıl) veya bir tarafta eksik",
-      "journal": "Yayın (dergi / konferans / kitap) uyuşmuyor veya bir tarafta eksik",
+      "journal": "Dergi (yayın / kitap) uyuşmuyor veya bir tarafta eksik",
       "title": "Başlık benzerliği %85'in altında"
     },
     "exportPdf": "Doğrulama Sonuçlarını PDF'e Aktar",
