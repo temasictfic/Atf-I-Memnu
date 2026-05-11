@@ -53,6 +53,32 @@ function formatDate(value) {
   });
 }
 
+function escapeHtml(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderReleaseNotes(notesElement, rawNotes) {
+  const notesBody = rawNotes?.trim();
+  if (!notesBody) {
+    notesElement.textContent = "No release notes provided.";
+    return;
+  }
+
+  const notesWithEscaping = escapeHtml(notesBody);
+  const notesWithChangelogLink = notesWithEscaping.replace(
+    /\*\*Full Changelog\*\*:\s*(https:\/\/github\.com\/[^\s<]+)/gi,
+    (_match, link) =>
+      `<strong>Full Changelog</strong>: <a href="${link}" target="_blank" rel="noreferrer">${link}</a>`
+  );
+
+  notesElement.innerHTML = notesWithChangelogLink;
+}
+
 function isTechnicalAsset(name) {
   const safeName = name || "";
   return technicalAssetPatterns.some((pattern) => pattern.test(safeName));
@@ -153,6 +179,7 @@ async function loadLatestRelease() {
   const assetFilterInfo = document.getElementById("assetFilterInfo");
 
   repoTag.textContent = `Repository: ${repoInfo.owner}/${repoInfo.repo}`;
+  repoTag.href = `https://github.com/${repoInfo.owner}/${repoInfo.repo}`;
   allReleasesLink.href = `https://github.com/${repoInfo.owner}/${repoInfo.repo}/releases`;
 
   try {
@@ -178,7 +205,7 @@ async function loadLatestRelease() {
     releasePageLink.href = release.html_url;
 
     const notes = document.getElementById("releaseNotes");
-    notes.textContent = release.body?.trim() || "No release notes provided.";
+    renderReleaseNotes(notes, release.body);
 
     const assetList = document.getElementById("assetList");
     assetList.innerHTML = "";
