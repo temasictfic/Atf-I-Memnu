@@ -27,15 +27,7 @@ import {
 } from '../stores/notes-store'
 import { effectiveDecisionTag } from '../verification/tagState'
 import { SCALE } from '../pdf/types'
-// Load the exact same TTFs that annotation-writer embeds into the
-// exported PDF. The `?url` asset import gives us a URL we can feed into
-// the FontFace API so canvas.measureText renders with the very font the
-// exporter draws with — no Arial/Liberation metric drift to compensate
-// for.
-// @ts-expect-error Vite ?url import returns a string
-import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
-// @ts-expect-error Vite ?url import returns a string
-import boldFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Bold.ttf?url'
+import { getLiberationFontFaceSources } from '../pdf/fonts'
 
 // Whitespace padding between the source and the callout, in SCALE pixels.
 const CALLOUT_GAP_PX = 6
@@ -282,19 +274,19 @@ function getMeasureCtx(): CanvasRenderingContext2D | null {
 
 // Register the same Liberation Sans TTFs the exporter uses with the
 // browser's font system so canvas.measureText can see them. Runs once,
-// on module import. Returns a promise that resolves when both weights
-// are ready (or rejects if the TTF fetch fails — callers fall back to
-// generic sans-serif in that case).
+// on module import. The FontFace source is cached font bytes instead of a
+// URL, avoiding Chrome's slow-network web-font fallback warning in dev.
 async function loadMeasureFonts(): Promise<void> {
   if (typeof document === 'undefined' || typeof FontFace === 'undefined') return
+  const sources = await getLiberationFontFaceSources()
   const regular = new FontFace(
     MEASURE_FONT_FAMILY,
-    `url(${regularFontUrl as string})`,
+    sources.regular,
     { weight: '400', style: 'normal' },
   )
   const bold = new FontFace(
     MEASURE_FONT_FAMILY,
-    `url(${boldFontUrl as string})`,
+    sources.bold,
     { weight: '700', style: 'normal' },
   )
   const [regLoaded, boldLoaded] = await Promise.all([regular.load(), bold.load()])

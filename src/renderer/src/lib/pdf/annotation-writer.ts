@@ -33,28 +33,7 @@ import fontkit from '@pdf-lib/fontkit'
 import type { Note, NoteQuad } from '../stores/notes-store'
 import { DEFAULT_CALLOUT_FONT_SIZE, DEFAULT_CALLOUT_OPACITY } from '../stores/notes-store'
 import { SCALE } from './types'
-// Liberation Sans ships with pdfjs-dist (SIL OFL) and has full Unicode
-// coverage including Latin Extended (Turkish ş/ı/ğ/ü/ö/ç, etc.). Using
-// Vite's `?url` asset suffix gives us a URL we can fetch at export time.
-// @ts-expect-error Vite ?url import returns a string
-import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
-// @ts-expect-error Vite ?url import returns a string
-import boldFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Bold.ttf?url'
-
-let cachedRegular: Uint8Array | null = null
-let cachedBold: Uint8Array | null = null
-
-async function loadFontBytes(url: string): Promise<Uint8Array> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Failed to load font from ${url}: ${res.status}`)
-  return new Uint8Array(await res.arrayBuffer())
-}
-
-async function getUnicodeFontBytes(): Promise<{ regular: Uint8Array; bold: Uint8Array }> {
-  if (!cachedRegular) cachedRegular = await loadFontBytes(regularFontUrl as string)
-  if (!cachedBold) cachedBold = await loadFontBytes(boldFontUrl as string)
-  return { regular: cachedRegular, bold: cachedBold }
-}
+import { getLiberationFontBytes } from './fonts'
 
 function hexToRgb(hex: string): RGB {
   const clean = hex.replace('#', '').trim()
@@ -114,7 +93,7 @@ export async function writeNotesToPdf(
   // encode characters like Turkish ş/ı/ğ/ü/ö/ç. fontkit handles subsetting
   // so only the glyphs actually used end up in the output PDF.
   pdfDoc.registerFontkit(fontkit)
-  const { regular, bold } = await getUnicodeFontBytes()
+  const { regular, bold } = await getLiberationFontBytes()
   const helvetica = await pdfDoc.embedFont(regular, { subset: true })
   const helveticaBold = await pdfDoc.embedFont(bold, { subset: true })
 

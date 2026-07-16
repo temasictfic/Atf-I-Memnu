@@ -17,25 +17,7 @@ import { PDFDocument, PDFName, PDFString, PDFArray, PDFNumber, PDFDict, rgb, typ
 import fontkit from '@pdf-lib/fontkit'
 import { STATUS_RGB, DECISION_RGB } from '../constants/colors'
 import { dbScoreRgbTuple, verifyStatusRgbTuple } from '../utils/status-helpers'
-// @ts-expect-error Vite ?url import returns a string
-import regularFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf?url'
-// @ts-expect-error Vite ?url import returns a string
-import boldFontUrl from 'pdfjs-dist/standard_fonts/LiberationSans-Bold.ttf?url'
-
-let cachedRegular: Uint8Array | null = null
-let cachedBold: Uint8Array | null = null
-
-async function loadFontBytes(url: string): Promise<Uint8Array> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Failed to load font from ${url}: ${res.status}`)
-  return new Uint8Array(await res.arrayBuffer())
-}
-
-async function getFontBytes(): Promise<{ regular: Uint8Array; bold: Uint8Array }> {
-  if (!cachedRegular) cachedRegular = await loadFontBytes(regularFontUrl as string)
-  if (!cachedBold) cachedBold = await loadFontBytes(boldFontUrl as string)
-  return { regular: cachedRegular, bold: cachedBold }
-}
+import { getLiberationFontBytes } from './fonts'
 
 // A4
 const PAGE_W = 595.28
@@ -474,7 +456,7 @@ function measureBottom(src: ReportSource, labels: ReportData['labels'], rf: PDFF
 // --- Main export ---
 
 export async function generateVerificationReport(data: ReportData): Promise<Uint8Array> {
-  const { regular, bold } = await getFontBytes()
+  const { regular, bold } = await getLiberationFontBytes()
   const doc = await PDFDocument.create()
   doc.registerFontkit(fontkit)
   const rf = await doc.embedFont(regular, { subset: true })
