@@ -40,15 +40,18 @@ export async function parsePdf(
   const loadingTask = pdfjsLib.getDocument({ data: bytes })
   const doc: PDFDocumentProxy = await loadingTask.promise
 
-  const pages: PageContent[] = []
-  for (let pageNum = 0; pageNum < doc.numPages; pageNum++) {
-    pages.push(await parsePage(doc, pageNum))
+  try {
+    const pages: PageContent[] = []
+    for (let pageNum = 0; pageNum < doc.numPages; pageNum++) {
+      pages.push(await parsePage(doc, pageNum))
+    }
+
+    await doc.cleanup()
+
+    return { id, name, path, pages }
+  } finally {
+    await loadingTask.destroy()
   }
-
-  await doc.cleanup()
-  await doc.destroy()
-
-  return { id, name, path, pages }
 }
 
 async function parsePage(doc: PDFDocumentProxy, pageIndex: number): Promise<PageContent> {

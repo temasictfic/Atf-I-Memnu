@@ -6,10 +6,10 @@
 // bounded by the number of visible pages, which is small.
 //
 // Bounded at `MAX_CACHED_DOCS` so worker memory stays tame. Eviction
-// destroys the underlying doc so pdfjs's WASM buffers are released.
+// destroys the underlying loading task so pdfjs's WASM buffers are released.
 //
 // There is no cross-cutting owner other than this module. `ParsingPage`
-// should NOT call `doc.destroy()` on a doc it obtained from the cache —
+// should NOT destroy a doc it obtained from the cache —
 // eviction is managed here and wired to `pdf-store.removePdf` /
 // `clearPdfs` so removing a PDF from the app tears its cached doc down.
 
@@ -44,6 +44,12 @@ function touch(key: string, entry: PdfDocumentEntry): void {
   cache.set(key, entry)
 }
 
+function destroyEntry(entry: PdfDocumentEntry, context: string): void {
+  entry.doc.loadingTask.destroy().catch((err: unknown) => {
+    console.warn(`[pdf-cache] destroy on ${context} failed`, err)
+  })
+}
+
 function evictIfNeeded(): void {
   while (cache.size > MAX_CACHED_DOCS) {
     const oldestKey = cache.keys().next().value as string | undefined
@@ -51,9 +57,7 @@ function evictIfNeeded(): void {
     const oldest = cache.get(oldestKey)
     cache.delete(oldestKey)
     if (oldest) {
-      oldest.doc.destroy().catch((err) => {
-        console.warn('[pdf-cache] destroy on evict failed', err)
-      })
+      destroyEntry(oldest, 'evict')
     }
   }
 }
@@ -121,7 +125,7 @@ export async function getOrLoadDocument(localPath: string): Promise<PdfDocumentE
 }
 
 /**
- * Drop the cached entry for a file and destroy its underlying pdfjs doc.
+ * Drop the cached entry for a file and destroy its underlying pdfjs loading task.
  * Call when a PDF is removed from the app (user deletes, rename, etc.) —
  * otherwise the doc will sit in the cache until evicted by the LRU.
  */
@@ -129,9 +133,7 @@ export function evictDocument(localPath: string): void {
   const entry = cache.get(localPath)
   if (!entry) return
   cache.delete(localPath)
-  entry.doc.destroy().catch((err) => {
-    console.warn('[pdf-cache] destroy on manual evict failed', err)
-  })
+  destroyEntry(entry, 'manual evict')
 }
 
 /**
@@ -140,7 +142,7 @@ export function evictDocument(localPath: string): void {
  */
 export function clearDocumentCache(): void {
   for (const entry of cache.values()) {
-    entry.doc.destroy().catch(() => {
+    entry.doc.loadingTask.destroy().catch(() => {
       // best-effort cleanup
     })
   }
