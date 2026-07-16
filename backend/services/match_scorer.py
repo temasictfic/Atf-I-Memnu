@@ -238,7 +238,7 @@ def classify_decision(
     """Classify a source as "valid" | "citation" | "fabricated".
 
     Per-signal "matches" predicates mirror the chip display rule for
-    authors / year / source / doi/arXiv:
+    authors / source / doi/arXiv:
       - both sides have the field and they agree   → matches
       - both sides are missing the field           → matches (no disagreement)
       - exactly one side has the field             → does NOT match
@@ -248,15 +248,14 @@ def classify_decision(
       title_matches = title_similarity >= TITLE_MATCH_THRESHOLD
 
     Rule:
-      all four of {author, year, title, source} match     → "valid"
+      all three of {author, title, source} match           → "valid"
       title matches
         OR (author matches AND any of {source, doi} matches) → "citation"
       otherwise                                           → "fabricated"
 
-    Note: year alone is intentionally NOT enough to lift author+year into
-    "citation" — same-author/same-year pairs are too easy to satisfy by
-    coincidence (or by a hallucinated reference) when title and venue
-    both disagree.
+    Year is intentionally excluded from the decision tree. It remains a
+    scoring signal and can produce a !year problem chip, but a year mismatch
+    must not change a Valid / Citation / Fabricated decision.
     """
     if best_match is None:
         return "fabricated"
@@ -271,13 +270,6 @@ def classify_decision(
         author_matches = authors_match(source.authors, best_match.authors)
     else:
         author_matches = not src_has_authors and not bm_has_authors
-
-    src_year = source.year
-    bm_year = best_match.year
-    if src_year is not None and bm_year is not None:
-        year_matches = abs(src_year - bm_year) <= 1
-    else:
-        year_matches = src_year is None and bm_year is None
 
     src_journal = source.journal or ""
     bm_journal = best_match.journal or ""
@@ -295,7 +287,7 @@ def classify_decision(
     else:
         doi_matches = not src_has_ident and not bm_has_ident
 
-    if author_matches and year_matches and title_matches and source_matches:
+    if author_matches and title_matches and source_matches:
         return "valid"
     elif title_matches or (
         author_matches and (source_matches or doi_matches)

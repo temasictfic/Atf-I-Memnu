@@ -333,17 +333,15 @@ title_matches  =  title_similarity ≥ 0.85
 ### Karar ağacı
 
 ```
-hepsi eşleşiyor {author, year, title, source}
+hepsi eşleşiyor {author, title, source}
                                                   →  "valid"      →  Geçerli
 
 title_matches
    VEYA  (author_matches VE biri {source, doi})
                                                   →  "citation"   →  Künye
 
-(year_matches tek başına author ile birleşse bile "citation"a yetmez —
- aynı yazar/aynı yıl çakışması rastlantıyla ya da uydurma referansla
- kolayca sağlanabildiği için, title ve venue'nun ikisi de uyuşmuyorsa
- sonuç "fabricated" olur.)
+Yıl karar ağacına dahil değildir; skor ve `!year` chip'i için
+karşılaştırılmaya devam eder, ancak kararı değiştirmez.
 
 aksi halde                                        →  "fabricated" →  Uydurma
 ```
@@ -491,7 +489,7 @@ Kaynak: [scholar-scanner.ts:149–184](src/renderer/src/lib/services/scholar-sca
 
 | Karar | Koşul | Türkçe |
 |---|---|---|
-| `valid` | author + year + title + source hepsi match | **Geçerli** |
+| `valid` | author + title + source hepsi match | **Geçerli** |
 | `citation` | title match VEYA (author + biri {source, doi}) | **Künye** |
 | `fabricated` | aksi halde | **Uydurma** |
 

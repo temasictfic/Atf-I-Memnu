@@ -138,16 +138,17 @@ function effectiveDecision(src: ReportSource): 'valid' | 'citation' | 'fabricate
   // Mirror classifyDecisionFromTags in tagState.ts — compute pill live from
   // the current chip states so export matches what the user sees on screen.
   const authorsOn = effectiveTagOnPdf(src, 'authors')
-  const yearOn    = effectiveTagOnPdf(src, 'year')
   const titleOn   = effectiveTagOnPdf(src, 'title')
   const journalOn = effectiveTagOnPdf(src, 'journal')
   const doiOn     = effectiveTagOnPdf(src, 'doi/arXiv')
-  const authorMatches = !authorsOn, yearMatches = !yearOn, titleMatches = !titleOn
+  const authorMatches = !authorsOn, titleMatches = !titleOn
   const journalMatches = !journalOn, doiMatches = !doiOn
   const journalSupportsCitation = journalMatches && Boolean(src.bestMatch.journal?.trim())
   const doiSupportsCitation =
     doiMatches && Boolean(src.bestMatch.doi?.trim())
-  if (authorMatches && yearMatches && titleMatches && journalMatches) return 'valid'
+  // Keep the year issue visible in the report, without letting it change the
+  // decision tag or the decision summary counts.
+  if (authorMatches && titleMatches && journalMatches) return 'valid'
   if (titleMatches || (authorMatches && (journalSupportsCitation || doiSupportsCitation))) return 'citation'
   return 'fabricated'
 }

@@ -22,7 +22,7 @@ export function defaultTagOn(result: TagStateResultLike | undefined, tag: TagKey
   // Pure pass-through from the backend's problem_tags. The backend is
   // authoritative: it already fires a tag when the source has the field
   // but the candidate is missing it or disagrees, which is exactly the
-  // signal the user needs to see for Citation/Fabricated reasoning.
+  // per-field issue signal the user needs to see.
   switch (tag) {
     case 'authors':  return probs.includes('!authors') && !!bm
     case 'year':     return probs.includes('!year') && !!bm
@@ -48,14 +48,12 @@ export function anyTagOn(result: TagStateResultLike | undefined): boolean {
 export function classifyDecisionFromTags(result: TagStateResultLike | undefined): DecisionTag {
   if (!result || !result.best_match) return 'fabricated'
   const authorsOn = effectiveTagOn(result, 'authors')
-  const yearOn    = effectiveTagOn(result, 'year')
   const titleOn   = effectiveTagOn(result, 'title')
   const journalOn = effectiveTagOn(result, 'journal')
   const doiOn     = effectiveTagOn(result, 'doi/arXiv')
 
   // OFF = matches
   const authorMatches  = !authorsOn
-  const yearMatches    = !yearOn
   const titleMatches   = !titleOn
   const journalMatches = !journalOn
   const doiMatches     = !doiOn
@@ -65,7 +63,9 @@ export function classifyDecisionFromTags(result: TagStateResultLike | undefined)
   const doiSupportsCitation =
     doiMatches && Boolean(result.best_match.doi?.trim())
 
-  if (authorMatches && yearMatches && titleMatches && journalMatches) return 'valid'
+  // Year remains a visible, toggleable problem chip but does not affect the
+  // Valid / Citation / Fabricated decision.
+  if (authorMatches && titleMatches && journalMatches) return 'valid'
   if (titleMatches || (authorMatches && (journalSupportsCitation || doiSupportsCitation))) return 'citation'
   return 'fabricated'
 }
