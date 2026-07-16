@@ -415,6 +415,7 @@
     "exportPdfHighestMatch": "En Yüksek Eşleşme",
     "exportPdfTotal": "Toplam",
     "exportPdfMatchGroup": "Eşleşme",
-    "exportPdfDecisionGroup": "Karar"
+    "exportPdfDecisionGroup": "Karar",
+    "exportPdfReviewNotice": "ARDEB Kaynakça Kontrol Sistemi'ndeki kaynaklara dair verilen Geçerli kararları kontrol edilmemelidir.\nKünye ve Uydurma kararları ise nihai kararlar olmayıp, ilgili kararlara sahip kaynaklar kontrol edilmelidir."
   }
 }

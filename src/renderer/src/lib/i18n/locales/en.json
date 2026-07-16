@@ -415,6 +415,7 @@
     "exportPdfHighestMatch": "Highest Match",
     "exportPdfTotal": "Total",
     "exportPdfMatchGroup": "Match",
-    "exportPdfDecisionGroup": "Decision"
+    "exportPdfDecisionGroup": "Decision",
+    "exportPdfReviewNotice": "Valid decisions issued for references by the decision-support system in the ARDEB Citation Control System should not be reviewed. Citation and Fabricated decisions are not final; references with these decisions should be reviewed."
   }
 }

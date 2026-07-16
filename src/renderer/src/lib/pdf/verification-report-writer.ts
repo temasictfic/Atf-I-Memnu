@@ -60,6 +60,9 @@ const COLOR_BORDER: RGB       = rgb(0.82, 0.82, 0.82)
 const COLOR_CARD_BORDER: RGB  = rgb(0.906, 0.898, 0.890)
 const COLOR_CARD_BG: RGB      = rgb(0.980, 0.980, 0.978)
 const COLOR_DB_BG: RGB        = rgb(0.996, 0.953, 0.780)
+const COLOR_NOTICE_BG: RGB    = rgb(0.937, 0.969, 1.0)
+const COLOR_NOTICE_BORDER: RGB = rgb(0.557, 0.714, 0.886)
+const COLOR_NOTICE_ICON: RGB  = rgb(0.114, 0.357, 0.667)
 const COLOR_TITLE_TAG: RGB      = rgb(1.0, 0.325, 0.286)  // #FF5349 (scarlet) — title: % chip when score < 85%
 const COLOR_TITLE_TAG_GOOD: RGB = rgb(0.0, 0.588, 0.533)  // teal — title: % chip when score >= 85%
 // Decision-tag palette (Valid / Citation / Fabricated) — sourced from constants/colors.ts.
@@ -110,6 +113,7 @@ export interface ReportData {
     highestMatch: string
     problemDesc: { authors: string; title: string; year: string; journal: string; doi: string }
     total: string; matchGroup: string; decisionGroup: string
+    reviewNotice: string
   }
   // When false, the "Bibliographic details" block under each best-match card
   // is omitted from the PDF. Default true.
@@ -723,6 +727,83 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
 
     // Advance cursor past whichever table ends lower on the page.
     w.y = Math.min(countBottom, legendBottom)
+  }
+  w.skip(8)
+  // --- Review notice ---
+  {
+    const padX = 8
+    const padY = 7
+    const iconR = 6
+    const iconGap = 7
+    const noticeSize = 8.5
+    const noticeLineH = noticeSize * LH
+    const noticeTextX = MARGIN_L + padX + iconR * 2 + iconGap
+    const noticeTextW = PAGE_W - MARGIN_R - padX - noticeTextX
+    const decisionStyles = [
+      { term: labels.validTag, color: COLOR_VALID_TEXT },
+      { term: labels.citationTag, color: COLOR_CITATION_TEXT },
+      { term: labels.fabricatedTag, color: COLOR_FABRICATED_TEXT },
+    ]
+    const escapedTerms = decisionStyles.map(({ term }) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+    const decisionPattern = new RegExp(`(${escapedTerms})`, 'gi')
+    const styledChunks = san(labels.reviewNotice).split(decisionPattern).filter(Boolean).map(chunk => {
+      const style = decisionStyles.find(({ term }) => term.toLocaleLowerCase() === chunk.toLocaleLowerCase())
+      return { text: chunk, font: style ? bf : rf, color: style?.color ?? COLOR_DARK }
+    })
+    const noticeLines: Array<Array<{ text: string; font: PDFFont; color: RGB }>> = [[]]
+    let lineW = 0
+    let pendingSpace = ''
+    for (const chunk of styledChunks) {
+      for (const token of chunk.text.match(/\S+|\s+/g) ?? []) {
+        if (token.includes('\n')) {
+          if (lineW > 0) noticeLines.push([])
+          lineW = 0
+          pendingSpace = ''
+          continue
+        }
+        if (/^\s+$/.test(token)) { pendingSpace = ' '; continue }
+        const text = pendingSpace + token
+        const tokenW = chunk.font.widthOfTextAtSize(text, noticeSize)
+        if (lineW > 0 && lineW + tokenW > noticeTextW) {
+          noticeLines.push([])
+          lineW = 0
+          pendingSpace = ''
+        }
+        const lineText = (lineW === 0 ? token : text)
+        noticeLines[noticeLines.length - 1].push({ text: lineText, font: chunk.font, color: chunk.color })
+        lineW += chunk.font.widthOfTextAtSize(lineText, noticeSize)
+        pendingSpace = ''
+      }
+    }
+    const noticeH = Math.max(iconR * 2, noticeLines.length * noticeLineH) + padY * 2
+    w.ensure(noticeH)
+
+    const noticeTop = w.y
+    const noticeBottom = noticeTop - noticeH
+    w.rect(MARGIN_L, noticeBottom, CONTENT_W, noticeH, { fill: COLOR_NOTICE_BG, border: COLOR_NOTICE_BORDER, bw: 0.5 })
+
+    const iconX = MARGIN_L + padX + iconR
+    const iconY = noticeTop - noticeH / 2
+    w.pg.drawCircle({ x: iconX, y: iconY, size: iconR, borderColor: COLOR_NOTICE_ICON, borderWidth: 1 })
+    const infoW = bf.widthOfTextAtSize('i', 8)
+    w.pg.drawText('i', { x: iconX - infoW / 2, y: iconY - 3, size: 8, font: bf, color: COLOR_NOTICE_ICON })
+
+    const textTop = noticeTop - (noticeH - noticeLines.length * noticeLineH) / 2
+    for (let i = 0; i < noticeLines.length; i++) {
+      const lineWidth = noticeLines[i].reduce((total, run) => total + run.font.widthOfTextAtSize(run.text, noticeSize), 0)
+      let x = noticeTextX + (noticeTextW - lineWidth) / 2
+      for (const run of noticeLines[i]) {
+        w.pg.drawText(run.text, {
+          x,
+          y: textTop - noticeSize - i * noticeLineH,
+          size: noticeSize,
+          font: run.font,
+          color: run.color,
+        })
+        x += run.font.widthOfTextAtSize(run.text, noticeSize)
+      }
+    }
+    w.y = noticeBottom
   }
   w.skip(8)
   w.pg.drawLine({ start: { x: MARGIN_L, y: w.y }, end: { x: PAGE_W - MARGIN_R, y: w.y }, thickness: 0.5, color: COLOR_BORDER })

@@ -1031,6 +1031,7 @@ export default function VerificationPage() {
         total: t('verification.exportPdfTotal'),
         matchGroup: t('verification.exportPdfMatchGroup'),
         decisionGroup: t('verification.exportPdfDecisionGroup'),
+        reviewNotice: t('verification.exportPdfReviewNotice'),
       },
     })
 
