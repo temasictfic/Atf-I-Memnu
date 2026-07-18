@@ -284,8 +284,9 @@ function measureTop(src: ReportSource, rf: PDFFont, bf: PDFFont): TopMeasure {
 
   const firstRowH = Math.max(badgeH, SMALL_SIZE * LH)
   const restH = refLines.length > 1 ? (refLines.length - 1) * SMALL_SIZE * LH : 0
+  const googleLinksH = (src.scholarUrl || src.googleUrl) ? 2 + (TINY_SIZE * LH) : 0
 
-  return { badgeW, badgeH, badgeGap, refLines, height: firstRowH + restH }
+  return { badgeW, badgeH, badgeGap, refLines, height: firstRowH + restH + googleLinksH }
 }
 
 interface TagItem {
@@ -439,8 +440,6 @@ function measureCard(m: ReportBestMatch, src: ReportSource, labels: ReportData['
     for (const lines of extraLines) h += lines.length * tlh
   }
   if (urlLine) h += 4 + tlh
-  // Google Scholar + Google Search links (side by side, one row)
-  if (src.scholarUrl || src.googleUrl) h += 2 + tlh
   h += CARD_PAD
 
   return { titleLines, authorLines, journalLines, metaLine, urlLine, totalHeight: h, extras, extraLines }
@@ -865,6 +864,30 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
       for (let i = 1; i < top.refLines.length; i++) {
         w.text(top.refLines[i], textX, SMALL_SIZE, rf, COLOR_TEXT)
       }
+
+      // Google Scholar + Google Search links sit at the end of the citation
+      // block so they are visually above the divider and the match section.
+      {
+        const gLinks = [
+          { label: 'Google Scholar', url: src.scholarUrl },
+          { label: 'Google Search', url: src.googleUrl },
+        ].filter(l => l.url)
+        if (gLinks.length) {
+          w.skip(2)
+          const uy = w.y - TINY_SIZE
+          const gap = 12
+          let gx = textX
+          for (const link of gLinks) {
+            const lt = san(link.label)
+            const lw = bf.widthOfTextAtSize(lt, TINY_SIZE)
+            w.pg.drawText(lt, { x: gx, y: uy, size: TINY_SIZE, font: bf, color: COLOR_LINK })
+            w.pg.drawLine({ start: { x: gx, y: uy - 1 }, end: { x: gx + lw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
+            w.addLink(link.url!, gx, uy - 1, lw, TINY_SIZE + 2)
+            gx += lw + gap
+          }
+          w.skip(TINY_SIZE * LH)
+        }
+      }
     }
 
     // Advance to divider
@@ -990,8 +1013,8 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
         }
       }
 
-      // URL (underlined, clickable) — truncated to a single line, sits just
-      // above the Google search links.
+      // URL (underlined, clickable) — truncated to a single line in the
+      // lower metadata area of the card.
       if (m.url) {
         w.skip(4)
         const displayUrl = truncateToWidth(san(m.url), rf, TINY_SIZE, CARD_INNER_W)
@@ -1001,28 +1024,6 @@ export async function generateVerificationReport(data: ReportData): Promise<Uint
         w.pg.drawLine({ start: { x: ccx, y: uy - 1 }, end: { x: ccx + uw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
         w.skip(TINY_SIZE * LH)
         w.addLink(m.url, ccx, w.y, uw, TINY_SIZE * LH)
-      }
-
-      // Google Scholar + Google Search links side by side (clickable)
-      {
-        const gLinks = [
-          { label: 'Google Scholar', url: src.scholarUrl },
-          { label: 'Google Search', url: src.googleUrl },
-        ].filter(l => l.url)
-        if (gLinks.length) {
-          const uy = w.y - TINY_SIZE
-          const gap = 12
-          let gx = ccx
-          for (const link of gLinks) {
-            const lt = san(link.label)
-            const lw = bf.widthOfTextAtSize(lt, TINY_SIZE)
-            w.pg.drawText(lt, { x: gx, y: uy, size: TINY_SIZE, font: bf, color: COLOR_LINK })
-            w.pg.drawLine({ start: { x: gx, y: uy - 1 }, end: { x: gx + lw, y: uy - 1 }, thickness: 0.4, color: COLOR_LINK })
-            w.addLink(link.url!, gx, uy - 1, lw, TINY_SIZE + 2)
-            gx += lw + gap
-          }
-          w.skip(TINY_SIZE * LH)
-        }
       }
 
       // Ensure cursor past card bottom
