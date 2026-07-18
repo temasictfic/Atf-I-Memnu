@@ -171,10 +171,14 @@ export default function VerificationPage() {
   // after selectPdf swaps the card list.
   const pendingJumpRef = useRef<{ pdfId: string; sourceId: string } | null>(null)
   const currentSummary = useMemo(() => (effectivePdfId ? summaries[effectivePdfId] : undefined), [summaries, effectivePdfId])
-  // `completed` flips to false synchronously inside startVerification (verification-store.ts ~L455)
-  // and back to true only on done/stop (~L881/L938), so this disables the export button instantly
-  // — `in_progress` counter doesn't bump until the first polling event arrives.
-  const isVerificationRunning = currentSummary?.completed === false
+  // Selected-PDF running state for the top export button. Summary completion
+  // flips immediately on start, and the live results scan catches any PDF that
+  // is already showing in_progress rows.
+  const isVerificationRunning = useMemo(() => {
+    if (!effectivePdfId) return false
+    const pdfResults = resultsByPdf[effectivePdfId] ?? {}
+    return Object.values(pdfResults).some(r => r.status === 'in_progress')
+  }, [effectivePdfId, resultsByPdf])
   const orderedSourceIds = useMemo(() => (effectivePdfId ? (sourceOrder[effectivePdfId] ?? []) : []), [sourceOrder, effectivePdfId])
 
   // Sort-dropdown open state + click-outside wiring
