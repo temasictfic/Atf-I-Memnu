@@ -89,6 +89,7 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     const muafReasons = {
       userDisabled: i18n.t('verification.excluded.userDisabled'),
       nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+      yearBefore: i18n.t('verification.excluded.yearBefore'),
     }
 
     const selected = sources.filter((s) => {

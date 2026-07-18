@@ -22,14 +22,48 @@ from models.settings import AppSettings
 # freely edit the resulting file via the Settings page's "Open" button —
 # we only write this content when the destination doesn't yet exist.
 _DEFAULT_EXCLUSION_CONTENT = """# Varsayılan muaf listesi
-# Her satır: kelime | sebep
-# # ile başlayan satırlar yok sayılır. Eşleşme büyük/küçük harfe duyarsızdır.
-# @non-doi-url satırı silinirse DOI olmayan bağlantı kuralı devre dışı kalır.
 
+# # ile başlayan satırlar yok sayılır. Eşleşme büyük/küçük harfe duyarsızdır.
+# @year-before satırı silinirse yayın yılı filtresi devre dışı kalır.
+# @non-doi-url satırı silinirse DOI olmayan bağlantı filtresi devre dışı kalır.
+# DOI olmayan bağlantı istisnaları alan adı olarak tek başına yazılır, alt alan adları da eşleşir.
+
+@year-before 2000 | 2000 öncesi yayın
 @non-doi-url | DOI olmayan bağlantı
+
+# DOI olmayan bağlantı istisnaları (Muaf olmayan bağlantılar. Her satır: alan adı)
+nature.com
+
+# Her satır: kelime | sebep
 arXiv | arXiv ön baskı, hakemli değil
-Proceedings | Konferans bildirisi
-OECD | Ekonomik İşbirliği ve Kalkınma Örgütü raporu
+Karayolları Genel Müdürlüğü | Diğer
+OECD | Diğer
+TÜİK | Diğer
+Cumhurbaşkanlığı Strateji ve Bütçe Başkanlığı | Diğer
+National Institute of Standards and Technology | Diğer
+European Commission | Diğer
+World Economic Forum | Diğer
+European Food Safety Authority | Diğer
+Food and Agricultural Organization | Diğer
+European Union Aviation Safety Agency | Diğer
+International Air Transport Association | Diğer
+International Civil Aviation Organization | Diğer
+Türkiye Cumhuriyeti Strateji ve Bütçe Başkanlığı | Diğer
+Yüksek Lisans Tezi | Tez
+Master Thesis | Tez
+Master's thesis | Tez
+Master Dissertation | Tez
+Doktora Tezi | Tez
+PhD Thesis | Tez
+PhD's Thesis | Tez
+PhD Dissertation | Tez
+Doctoral dissertation | Tez
+Proceeding | Bildiri
+Conference | Bildiri
+Konferans | Bildiri
+Book Chapter | Kitap Bölümü
+Kitap Bölümü | Kitap Bölümü
+CST Studio Suite | Diğer
 """
 
 

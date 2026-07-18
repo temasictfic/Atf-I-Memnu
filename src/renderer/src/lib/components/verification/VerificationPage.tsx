@@ -149,6 +149,7 @@ export default function VerificationPage() {
     () => ({
       userDisabled: t('verification.excluded.userDisabled'),
       nonDoiUrl: t('verification.excluded.nonDoiUrl'),
+      yearBefore: t('verification.excluded.yearBefore'),
     }),
     [t],
   )
@@ -310,6 +311,7 @@ export default function VerificationPage() {
       const muafReasons = {
         userDisabled: t('verification.excluded.userDisabled'),
         nonDoiUrl: t('verification.excluded.nonDoiUrl'),
+        yearBefore: t('verification.excluded.yearBefore'),
       }
       const verifyTextsSnapshot = useVerificationStore.getState().verifyTexts
       const enabledSourcesSnapshot = useVerificationStore.getState().enabledSources
@@ -777,13 +779,14 @@ export default function VerificationPage() {
   // entry (the completion effect waits on `summary.completed === true`,
   // which never arrives if no source ever flips to in_progress).
   const hasVerifiableSource = useCallback(
-    (pdfId: string, mode: 'all' | 'nonHigh') => {
+    async (pdfId: string, mode: 'all' | 'nonHigh') => {
       const sources = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
       if (sources.length === 0) return false
       const exclusionEntries = useSettingsStore.getState().exclusionEntries
       const reasons = {
         userDisabled: t('verification.excluded.userDisabled'),
         nonDoiUrl: t('verification.excluded.nonDoiUrl'),
+        yearBefore: t('verification.excluded.yearBefore'),
       }
       const verifyTextsSnap = useVerificationStore.getState().verifyTexts
       const enabledSnap = useVerificationStore.getState().enabledSources
@@ -815,7 +818,7 @@ export default function VerificationPage() {
       pendingVerifyPdfIdsRef.current.delete(pdfId)
       await useVerificationStore.getState().cancelPdf(pdfId)
     } else {
-      if (!hasVerifiableSource(pdfId, 'all')) return
+      if (!await hasVerifiableSource(pdfId, 'all')) return
       useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
       autoGsPdfIdsRef.current.add(pdfId)
       pendingVerifyPdfIdsRef.current.add(pdfId)
@@ -838,7 +841,7 @@ export default function VerificationPage() {
     }
     useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
     await loadSourcesFn(pdfId)
-    if (!hasVerifiableSource(pdfId, 'nonHigh')) return
+    if (!await hasVerifiableSource(pdfId, 'nonHigh')) return
     const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
     useVerificationStore.getState().initSourceVerifyState(pdfId, src)
     pendingVerifyPdfIdsRef.current.add(pdfId)
@@ -908,6 +911,7 @@ export default function VerificationPage() {
     const reportMuafReasons = {
       userDisabled: i18n.t('verification.excluded.userDisabled'),
       nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+      yearBefore: i18n.t('verification.excluded.yearBefore'),
     }
 
     const cards = sourcesForPdf.map(source => {

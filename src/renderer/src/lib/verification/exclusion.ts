@@ -1,21 +1,58 @@
 import type { ExclusionEntry } from '../utils/exclusion-list'
 
 export type ExclusionInfo =
-  | { excluded: true; reason: string; kind: 'user' | 'word' | 'non-doi-url' }
+  | { excluded: true; reason: string; kind: 'user' | 'word' | 'non-doi-url' | 'year-before' }
   | { excluded: false }
 
-// Mirrors backend/models/source.py `_DOI_FROM_URL`. We keep matching loose
-// (anywhere in the string, not just at the start) so a citation that reads
-// "...available at https://doi.org/10.1234/abcd" still counts as DOI-bearing.
-const DOI_URL_RE = /https?:\/\/(?:dx\.)?doi\.org\//i
+const URL_RE = /https?:\/\/[^\s<>()]+/gi
+const DOI_RE = /\b10\.\d{4,9}\/\S+/gi
+const YEAR_RE = /(?:19|20)\d{2}/
 
-// Any URL anywhere in the text. Used as the "is there a URL at all?" probe
-// so we can tell "no URL" (not Muaf) from "URL but it isn't a DOI" (Muaf).
-const ANY_URL_RE = /https?:\/\/\S+/i
+/**
+ * Find a publication-year-shaped value without invoking the citation NER
+ * service. We intentionally accept only conventional bibliography positions
+ * (parenthesized, Vancouver `YYYY;volume`, or punctuation-delimited years),
+ * and mask URLs/DOIs first so identifier digits cannot become a year.
+ */
+export function extractCitationYear(sourceText: string): number | undefined {
+  const masked = sourceText
+    .replace(URL_RE, match => ' '.repeat(match.length))
+    .replace(DOI_RE, match => ' '.repeat(match.length))
+  const patterns = [
+    /\((?:[A-Za-zÀ-ɏ]+\.?\s+)?((?:19|20)\d{2})[a-z]?\s*(?:[,)]|$)/i,
+    /\b((?:19|20)\d{2})[a-z]?\s*;\s*\d{1,4}(?:\s*\(|\s*:|\b)/,
+    /(?:^|[.,]\s*)((?:19|20)\d{2})[a-z]?(?=\s*(?:[,.;)]|$))/,
+  ]
+  for (const pattern of patterns) {
+    const match = masked.match(pattern)
+    if (!match) continue
+    const year = Number(match[1])
+    if (YEAR_RE.test(match[1]) && year >= 1900 && year <= 2099) return year
+  }
+  return undefined
+}
 
 interface Reasons {
   userDisabled: string
   nonDoiUrl: string
+  yearBefore: string
+}
+
+function urlHostname(rawUrl: string): string | null {
+  try {
+    // Citation punctuation often immediately follows a URL.
+    return new URL(rawUrl.replace(/[.,;:)}\]"']+$/, '')).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+function isDoiHostname(hostname: string | null): boolean {
+  return hostname === 'doi.org' || hostname === 'dx.doi.org'
+}
+
+function isAllowedHostname(hostname: string | null, allowedDomains: string[]): boolean {
+  return hostname !== null && allowedDomains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`))
 }
 
 /**
@@ -28,11 +65,12 @@ interface Reasons {
  * Priority (first match wins):
  *   1. `override === true` → user override beats every other rule. Not Muaf.
  *   2. Word from the exclusion file appears in the text → file's reason.
- *   3. The exclusion file declares `@non-doi-url` AND the text contains a
- *      URL that isn't a DOI link → directive's reason. Removing the
- *      `@non-doi-url` line from the file disables this rule.
- *   4. `override === false` → "User excluded it".
- *   5. Otherwise → not Muaf.
+ *   3. A citation-style publication year is below the configured `@year-before`
+ *      threshold → directive's reason.
+ *   4. The exclusion file declares `@non-doi-url` AND one of the text's
+ *      non-DOI URLs is not a bare-domain allowlist entry.
+ *   5. `override === false` → "User excluded it".
+ *   6. Otherwise → not Muaf.
  *
  * The "user excluded it" reason only surfaces when no automatic rule
  * applies — clicking the ref-badge on an auto-Muaf card and then clicking
@@ -48,6 +86,8 @@ export function computeExclusion(
 
   const lower = sourceText.toLowerCase()
   let nonDoiUrlEntry: ExclusionEntry | null = null
+  let yearBeforeEntry: ExclusionEntry | null = null
+  const allowedDomains: string[] = []
   for (const entry of exclusionEntries) {
     if (entry.kind === 'non-doi-url') {
       // Remember it so step 3 can consult it after the word loop, but
@@ -55,14 +95,35 @@ export function computeExclusion(
       nonDoiUrlEntry = entry
       continue
     }
+    if (entry.kind === 'non-doi-domain') {
+      if (entry.domain) allowedDomains.push(entry.domain)
+      continue
+    }
+    if (entry.kind === 'year-before') {
+      yearBeforeEntry ??= entry
+      continue
+    }
     if (entry.word && lower.includes(entry.word)) {
       return { excluded: true, reason: entry.reason || entry.word, kind: 'word' }
     }
   }
+  const citationYear = extractCitationYear(sourceText)
+  if (
+    yearBeforeEntry?.yearBefore !== undefined
+    && citationYear !== undefined
+    && citationYear < yearBeforeEntry.yearBefore
+  ) {
+    return {
+      excluded: true,
+      reason: yearBeforeEntry.reason || reasons.yearBefore,
+      kind: 'year-before',
+    }
+  }
+  const nonDoiUrls = (sourceText.match(URL_RE) ?? [])
+    .filter(url => !isDoiHostname(urlHostname(url)))
   if (
     nonDoiUrlEntry !== null
-    && ANY_URL_RE.test(sourceText)
-    && !DOI_URL_RE.test(sourceText)
+    && nonDoiUrls.some(url => !isAllowedHostname(urlHostname(url), allowedDomains))
   ) {
     return {
       excluded: true,

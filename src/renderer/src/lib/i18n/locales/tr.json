@@ -290,7 +290,8 @@
     "muaf": "Muaf",
     "excluded": {
       "userDisabled": "Kullanıcı tarafından muaf tutuldu",
-      "nonDoiUrl": "DOI olmayan bağlantı"
+      "nonDoiUrl": "DOI olmayan bağlantı",
+      "yearBefore": "2000 öncesi yayın"
     },
     "verifyNonHigh": "Yüksek harici doğrula",
     "scholarScanNonHigh": "Bulunamayanlar için Google Scholar taraması",

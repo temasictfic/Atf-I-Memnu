@@ -301,6 +301,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           {
             userDisabled: i18n.t('verification.excluded.userDisabled'),
             nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+            yearBefore: i18n.t('verification.excluded.yearBefore'),
           },
         )
         next = info.excluded
@@ -478,6 +479,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const muafReasons = {
         userDisabled: i18n.t('verification.excluded.userDisabled'),
         nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+        yearBefore: i18n.t('verification.excluded.yearBefore'),
       }
       const sourcesByPdf = useSourcesStore.getState().sourcesByPdf
       const excludedSet = new Set<string>()
@@ -663,6 +665,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       const muafReasons = {
         userDisabled: i18n.t('verification.excluded.userDisabled'),
         nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+        yearBefore: i18n.t('verification.excluded.yearBefore'),
       }
       const sourcesByPdf = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
       const sourceTextById = new Map(sourcesByPdf.map(s => [s.id, s.text]))
@@ -805,6 +808,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         {
           userDisabled: i18n.t('verification.excluded.userDisabled'),
           nonDoiUrl: i18n.t('verification.excluded.nonDoiUrl'),
+          yearBefore: i18n.t('verification.excluded.yearBefore'),
         },
       )
       if (info.excluded) return

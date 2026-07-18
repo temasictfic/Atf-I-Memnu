@@ -290,7 +290,8 @@
     "muaf": "Excluded",
     "excluded": {
       "userDisabled": "User excluded it",
-      "nonDoiUrl": "Non-DOI URL"
+      "nonDoiUrl": "Non-DOI URL",
+      "yearBefore": "Publication before 2000"
     },
     "verifyNonHigh": "Verify only non-High sources",
     "scholarScanNonHigh": "Google Scholar scan for non-High sources",
