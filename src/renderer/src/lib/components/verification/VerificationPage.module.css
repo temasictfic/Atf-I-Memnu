@@ -98,10 +98,10 @@
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  color: #78716c;
+  color: #d97706;
   text-align: left;
 }
-.start-menu button:hover { background: #fef3c7; color: #d97706; }
+.start-menu button:hover { background: #d97706; color: white; }
 
 .verify-sort-bar {
   display: flex;
