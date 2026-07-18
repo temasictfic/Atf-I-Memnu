@@ -11,13 +11,13 @@
 
 (() => {
   // Pull both the major and the full build out of the UA. Main builds the UA
-  // from process.versions.chrome (e.g. "146.0.7480.65"), so the full string is
+  // from process.versions.chrome (e.g. "150.0.7871.114"), so the full string is
   // available here even though we can't reach `process` from a frame preload.
   // brands/sec-ch-ua want the major only; uaFullVersion/fullVersionList need
   // the real build — emitting "X.0.0.0" there is a Cloudflare giveaway because
   // real Chrome always has meaningful sub-version digits.
   const fullMatch = navigator.userAgent.match(/Chrome\/([\d.]+)/)
-  const chromeFullVersion = fullMatch ? fullMatch[1] : '148.0.7778.96'
+  const chromeFullVersion = fullMatch ? fullMatch[1] : '150.0.7871.114'
   const chromeVersion = chromeFullVersion.split('.')[0]
 
   const fakeBrands = [
