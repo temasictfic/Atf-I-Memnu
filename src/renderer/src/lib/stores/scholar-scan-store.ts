@@ -29,9 +29,19 @@ interface ScholarScanState {
 }
 
 export const useScholarScanStore = create<ScholarScanState>((set, get) => {
+  type PendingScan = { pdfId: string; sourceIds?: string[] }
+  const pendingScans: PendingScan[] = []
+  let preparingScan = false
+  let scanGeneration = 0
+
   // Wire up scanner callbacks
   scholarScanner.setCallbacks({
-    onStatusChange: (status) => set({ status }),
+    onStatusChange: (status) => {
+      set({ status })
+      // Verify All can finish another PDF while the current Scholar scan is
+      // still running. Start its queued scan only after the scanner is free.
+      if (status === 'done') queueMicrotask(() => void runNextScan())
+    },
     onProgress: (current, total, foundCount) =>
       set({ currentIndex: current, totalInQueue: total, foundCount }),
     onCaptcha: (url) => set({ captchaUrl: url }),
@@ -126,6 +136,51 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     )
   }
 
+  async function runNextScan(): Promise<void> {
+    if (preparingScan) return
+    const scannerStatus = scholarScanner.getStatus()
+    if (scannerStatus === 'scanning' || scannerStatus === 'captcha') return
+
+    const request = pendingScans.shift()
+    if (!request) return
+
+    preparingScan = true
+    const generation = scanGeneration
+    set({
+      status: 'scanning',
+      queue: [],
+      totalInQueue: 0,
+      currentIndex: 0,
+      foundCount: 0,
+      captchaUrl: null,
+      lastDoneSourceId: null,
+      lastDoneUpdated: null,
+    })
+
+    const queue = await buildQueue(request.pdfId, request.sourceIds)
+    preparingScan = false
+    if (generation !== scanGeneration) return
+
+    if (queue.length === 0) {
+      // Keep draining queued PDFs even when one has no non-high sources.
+      set({ status: 'done' })
+      queueMicrotask(() => void runNextScan())
+      return
+    }
+
+    set({ queue, totalInQueue: queue.length })
+    await scholarScanner.startScan(queue)
+  }
+
+  function enqueueScan(request: PendingScan): void {
+    const duplicate = pendingScans.some(
+      pending => pending.pdfId === request.pdfId
+        && JSON.stringify(pending.sourceIds) === JSON.stringify(request.sourceIds),
+    )
+    if (!duplicate) pendingScans.push(request)
+    void runNextScan()
+  }
+
   return {
     status: 'idle',
     queue: [],
@@ -139,53 +194,17 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     closeOverlayFn: null,
 
     startScanForPdf: async (pdfId) => {
-      // Show the banner immediately while we build the queue. NER field
-      // extraction runs one HTTP call per non-high source, and for PDFs with
-      // many sources the wait before status flips to 'scanning' is
-      // user-visible — so flip it now and let the banner render a
-      // "Preparing…" state until the queue is ready.
-      set({
-        status: 'scanning',
-        queue: [],
-        totalInQueue: 0,
-        currentIndex: 0,
-        foundCount: 0,
-        captchaUrl: null,
-        lastDoneSourceId: null,
-        lastDoneUpdated: null,
-      })
-      const queue = await buildQueue(pdfId)
-      if (queue.length === 0) {
-        // Use 'done' (not 'idle') so the deferred verification-complete toast
-        // still fires when there are no non-high sources to scan.
-        set({ status: 'done' })
-        return
-      }
-      set({ queue, totalInQueue: queue.length })
-      scholarScanner.startScan(queue)
+      enqueueScan({ pdfId })
     },
 
     startScanForSource: async (pdfId, sourceId) => {
-      set({
-        status: 'scanning',
-        queue: [],
-        totalInQueue: 0,
-        currentIndex: 0,
-        foundCount: 0,
-        captchaUrl: null,
-        lastDoneSourceId: null,
-        lastDoneUpdated: null,
-      })
-      const queue = await buildQueue(pdfId, [sourceId])
-      if (queue.length === 0) {
-        set({ status: 'done' })
-        return
-      }
-      set({ queue, totalInQueue: queue.length })
-      scholarScanner.startScan(queue)
+      enqueueScan({ pdfId, sourceIds: [sourceId] })
     },
 
     cancelScan: () => {
+      pendingScans.length = 0
+      scanGeneration++
+      preparingScan = false
       scholarScanner.cancel()
     },
 

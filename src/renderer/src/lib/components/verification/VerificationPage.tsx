@@ -263,13 +263,12 @@ export default function VerificationPage() {
 
       if (forceGsPdfIdsRef.current.has(pdfId)) {
         forceGsPdfIdsRef.current.delete(pdfId)
-        const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
-        if (autoGs) {
-          willRunScholar = true
-          setTimeout(() => {
-            useScholarScanStore.getState().startScanForPdf(pdfId)
-          }, 500)
-        }
+        // The explicit non-high action promises a Scholar pass regardless of
+        // the automatic-after-verify preference.
+        willRunScholar = true
+        setTimeout(() => {
+          useScholarScanStore.getState().startScanForPdf(pdfId)
+        }, 500)
       }
 
       if (willRunScholar) {
