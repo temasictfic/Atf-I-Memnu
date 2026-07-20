@@ -20,7 +20,6 @@ from models.verification_result import (
     DecisionTag,
     MatchResult,
     TagKey,
-    VerificationResult,
 )
 from services.cache_store import (
     _validate_pdf_id,
@@ -30,7 +29,7 @@ from services.cache_store import (
 )
 from services.job_store import verify_jobs, verify_results
 from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
-from services.search_urls import build_google_urls, build_search_url
+from services.search_urls import build_search_url
 
 router = APIRouter()
 
@@ -201,7 +200,7 @@ async def reverify_source(pdf_id: str, source_id: str, request: VerifySourceRequ
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
 
-    from services.verification_orchestrator import verify_single_source, _register_task
+    from services.verification_orchestrator import _register_task
 
     # Mint a job_id for this single-source run so WS broadcasts can be tagged
     # and the renderer can drop late events from a superseded run.
@@ -210,9 +209,39 @@ async def reverify_source(pdf_id: str, source_id: str, request: VerifySourceRequ
 
     # Use updated text if provided
     text = request.text if request.text is not None else source.text
-    task = asyncio.create_task(verify_single_source(pdf_id, source_id, text, verify_results, job_id))
+    task = asyncio.create_task(
+        _reverify_source_job(job_id, pdf_id, source_id, text)
+    )
     _register_task(source_id, task)
     return {"job_id": job_id}
+
+
+async def _reverify_source_job(
+    job_id: str,
+    pdf_id: str,
+    source_id: str,
+    text: str,
+) -> None:
+    """Run a single-source job with the same terminal lifecycle as PDF jobs."""
+    from services.verification_orchestrator import verify_single_source
+
+    try:
+        await verify_single_source(
+            pdf_id, source_id, text, verify_results, job_id
+        )
+        verify_jobs[job_id]["status"] = "done"
+    except asyncio.CancelledError:
+        verify_jobs[job_id]["status"] = "cancelled"
+        raise
+    except Exception as e:
+        verify_jobs[job_id]["status"] = "failed"
+        verify_jobs[job_id]["error"] = str(e)
+        await manager.send_log(
+            "error",
+            f"Source verification failed for {source_id}: {e}",
+            pdf_id=pdf_id,
+            source_id=source_id,
+        )
 
 
 def _persist_settled_for_pdf(pdf_id: str) -> None:

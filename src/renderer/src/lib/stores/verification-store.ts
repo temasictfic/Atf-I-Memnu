@@ -68,9 +68,9 @@ interface VerificationState {
   toggleCardSort: (key: CardSortKey) => void
   togglePdfSort: (key: PdfSortKey) => void
   initSourceVerifyState: (pdfId: string, sources: SourceRectangle[]) => void
-  startVerification: (pdfIds: string[]) => Promise<void>
-  startVerificationNonHighForPdf: (pdfId: string) => Promise<void>
-  reverifySource: (pdfId: string, sourceId: string, text?: string) => Promise<void>
+  startVerification: (pdfIds: string[]) => Promise<boolean>
+  startVerificationNonHighForPdf: (pdfId: string) => Promise<boolean>
+  reverifySource: (pdfId: string, sourceId: string, text?: string) => Promise<boolean>
   reverifyPdf: (pdfId: string) => Promise<void>
   overrideStatus: (pdfId: string, sourceId: string, status: 'high' | 'medium' | 'low') => Promise<void>
   toggleTag: (pdfId: string, sourceId: string, tag: 'authors' | 'year' | 'title' | 'journal' | 'doi/arXiv') => Promise<void>
@@ -118,6 +118,7 @@ function startPolling(pdfIds: string[], jobId: string): void {
         return vals.length > 0 && vals.every(r => r.status !== 'in_progress')
       })
       if (localDone) {
+        if (polling !== current) return
         // Mark summaries as completed and stop
         useVerificationStore.setState(state => {
           const next = { ...state.summaries }
@@ -128,11 +129,12 @@ function startPolling(pdfIds: string[], jobId: string): void {
           }
           return { summaries: next }
         })
-        stopPolling()
+        if (polling === current) stopPolling()
         return
       }
 
       const statusResp = await api.verifyStatus(current.jobId)
+      if (polling !== current) return
       useVerificationStore.setState(state => {
         const next = { ...state.summaries }
         for (const s of statusResp.pdfs) {
@@ -154,6 +156,7 @@ function startPolling(pdfIds: string[], jobId: string): void {
       for (const pdfId of current.pdfIds) {
         try {
           const resultResp = await api.verifyResults(pdfId)
+          if (polling !== current) return
           const newResults = resultResp.results
           const prevResults = useVerificationStore.getState().resultsByPdf[pdfId] ?? {}
 
@@ -193,22 +196,21 @@ function startPolling(pdfIds: string[], jobId: string): void {
         Object.values(useVerificationStore.getState().resultsByPdf[pdfId] ?? {})
           .every(result => result.status !== 'in_progress')
       )
-      if (allDone && localResultsDone) stopPolling()
-      // Successful tick — reset the consecutive-error counter (guarding
-      // against a concurrent stopPolling between awaits)
-      if (polling) polling.errors = 0
+      if (allDone && localResultsDone && polling === current) stopPolling()
+      // Successful tick — reset only this job's consecutive-error counter.
+      if (polling === current) current.errors = 0
     } catch (e) {
-      if (!polling) return
-      polling.errors++
+      if (polling !== current) return
+      current.errors++
       console.error(
-        `[Poll] Polling error (${polling.errors}/${MAX_POLLING_CONSECUTIVE_ERRORS}):`,
+        `[Poll] Polling error (${current.errors}/${MAX_POLLING_CONSECUTIVE_ERRORS}):`,
         e,
       )
       // Backend is probably down (restart, crash, network hiccup). Don't
       // spin forever hammering a dead endpoint — stop after a few failures.
-      if (polling.errors >= MAX_POLLING_CONSECUTIVE_ERRORS) {
+      if (current.errors >= MAX_POLLING_CONSECUTIVE_ERRORS) {
         console.warn('[Poll] Too many consecutive errors, stopping poll loop')
-        stopPolling()
+        if (polling === current) stopPolling()
       }
     }
   }, POLL_INTERVAL_MS)
@@ -648,9 +650,11 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       })
 
       startPolling(pdfIds, response.job_id)
+      return true
     } catch (e) {
       console.error('Failed to start verification:', e)
       set(rollback)
+      return false
     }
   },
 
@@ -680,7 +684,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         ? orderedIds
         : knownResultIds
 
-      if (sourceIds.length === 0) return
+      if (sourceIds.length === 0) return false
 
       // Filter out Muaf sources alongside user-disabled and already-high
       // ones. Without this, "verify non-High" would still queue auto-Muaf
@@ -708,7 +712,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         return !info.excluded
       })
 
-      if (includeIds.length === 0) return
+      if (includeIds.length === 0) return false
 
       const includeSet = new Set(includeIds)
       const excludedIds = sourceIds.filter(sourceId => !includeSet.has(sourceId))
@@ -811,9 +815,11 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
       })
 
       startPolling([pdfId], response.job_id)
+      return true
     } catch (e) {
       console.error('Failed to start non-high PDF verification:', e)
       set(rollback)
+      return false
     }
   },
 
@@ -836,7 +842,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           yearBefore: i18n.t('verification.excluded.yearBefore'),
         },
       )
-      if (info.excluded) return
+      if (info.excluded) return false
     }
     const rollback = (() => {
       const s = get()
@@ -909,11 +915,15 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
         if (state.activeJobIdBySource[sourceId] !== pendingJobId) return state
         return {
           activeJobIdBySource: { ...state.activeJobIdBySource, [sourceId]: response.job_id },
+          activeJobIdByPdf: { ...state.activeJobIdByPdf, [pdfId]: response.job_id },
         }
       })
+      startPolling([pdfId], response.job_id)
+      return true
     } catch (e) {
       console.error('Failed to verify source:', e)
       set(rollback)
+      return false
     }
   },
 
@@ -1671,6 +1681,7 @@ export function initVerificationListeners(): () => void {
 
     wsClient.on('verify_pdf_updated', (data) => {
       const pdfId = data.pdf_id as string
+      if (isStalePdfEvent(data, pdfId)) return
       useVerificationStore.setState(state => {
         if (!state.summaries[pdfId]) return state
         const high = (data.high as number | undefined) ?? state.summaries[pdfId].high

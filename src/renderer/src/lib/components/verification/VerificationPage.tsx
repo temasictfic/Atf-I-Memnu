@@ -230,6 +230,9 @@ export default function VerificationPage() {
   const verifyAllQueueRef = useRef<string[]>([])
   const verifyAllCurrentRef = useRef<string | null>(null)
   const verifyAllActiveRef = useRef(false)
+  // Invalidates queue continuations suspended in source/result loading when
+  // the user stops a run or starts a replacement run.
+  const verifyAllGenerationRef = useRef(0)
   const verifyAllModeRef = useRef<'all' | 'nonHigh'>('all')
   const [verifyAllActive, setVerifyAllActive] = useState(false)
   const [exportingReport, setExportingReport] = useState(false)
@@ -293,7 +296,11 @@ export default function VerificationPage() {
   // call it without becoming a dependency cycle.
   const processNextInQueueRef = useRef<(() => Promise<void>) | null>(null)
   const processNextInQueue = useCallback(async () => {
-    while (verifyAllActiveRef.current) {
+    const generation = verifyAllGenerationRef.current
+    const isCurrentRun = () =>
+      verifyAllActiveRef.current && verifyAllGenerationRef.current === generation
+
+    while (isCurrentRun()) {
       const next = verifyAllQueueRef.current.shift()
       if (!next) {
         verifyAllActiveRef.current = false
@@ -302,6 +309,7 @@ export default function VerificationPage() {
         return
       }
       await loadSourcesFn(next)
+      if (!isCurrentRun()) return
       const src = useSourcesStore.getState().sourcesByPdf[next] ?? []
       if (src.length === 0) continue
 
@@ -335,6 +343,7 @@ export default function VerificationPage() {
         // hasn't opened this session may have empty resultsByPdf, racing the
         // passive auto-load effect.
         await store.loadResults(next)
+        if (!isCurrentRun()) return
         const { resultsByPdf } = useVerificationStore.getState()
         const pdfResults = resultsByPdf[next] ?? {}
         const hasNonHigh = src.some(s => {
@@ -343,12 +352,19 @@ export default function VerificationPage() {
         })
         if (!hasNonHigh) continue
 
+        if (!isCurrentRun()) return
         store.initSourceVerifyState(next, src)
         verifyAllCurrentRef.current = next
         selectPdf(next)
         pendingVerifyPdfIdsRef.current.add(next)
         forceGsPdfIdsRef.current.add(next)
-        await useVerificationStore.getState().startVerificationNonHighForPdf(next)
+        const started = await useVerificationStore.getState().startVerificationNonHighForPdf(next)
+        if (!started) {
+          pendingVerifyPdfIdsRef.current.delete(next)
+          forceGsPdfIdsRef.current.delete(next)
+          if (verifyAllCurrentRef.current === next) verifyAllCurrentRef.current = null
+          if (isCurrentRun()) continue
+        }
         return
       }
 
@@ -359,13 +375,20 @@ export default function VerificationPage() {
       // startVerification's optimistic in_progress setup runs (without
       // this, sourceOrder is empty for fresh PDFs and progress dots never
       // appear until WS events arrive).
+      if (!isCurrentRun()) return
       useVerificationStore.getState().initSourceVerifyState(next, src)
 
       verifyAllCurrentRef.current = next
       selectPdf(next)
       pendingVerifyPdfIdsRef.current.add(next)
       autoGsPdfIdsRef.current.add(next)
-      await useVerificationStore.getState().startVerification([next])
+      const started = await useVerificationStore.getState().startVerification([next])
+      if (!started) {
+        pendingVerifyPdfIdsRef.current.delete(next)
+        autoGsPdfIdsRef.current.delete(next)
+        if (verifyAllCurrentRef.current === next) verifyAllCurrentRef.current = null
+        if (isCurrentRun()) continue
+      }
       return
     }
   }, [selectPdf, t])
@@ -743,6 +766,7 @@ export default function VerificationPage() {
   async function handleStartOrCancel(mode: 'all' | 'nonHigh' = 'all') {
     if (verifyAllActiveRef.current || isAnyVerifying) {
       // Stop the queue and cancel the in-flight PDF (if any).
+      verifyAllGenerationRef.current++
       verifyAllActiveRef.current = false
       verifyAllQueueRef.current = []
       setVerifyAllActive(false)
@@ -751,6 +775,7 @@ export default function VerificationPage() {
       if (cur) {
         autoGsPdfIdsRef.current.delete(cur)
         forceGsPdfIdsRef.current.delete(cur)
+        deferredToastNamesRef.current.delete(cur)
         pendingVerifyPdfIdsRef.current.delete(cur)
         await useVerificationStore.getState().cancelPdf(cur)
       } else {
@@ -767,6 +792,7 @@ export default function VerificationPage() {
       const ids = sortedPdfs.slice(0, cutoff).map(p => p.id)
       if (ids.length > 0) {
         useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
+        verifyAllGenerationRef.current++
         verifyAllModeRef.current = mode
         verifyAllQueueRef.current = [...ids]
         verifyAllActiveRef.current = true
@@ -813,44 +839,62 @@ export default function VerificationPage() {
       // tear down the whole queue so the main button flips back to Verify All
       // and the completion effect doesn't advance to the next PDF.
       if (verifyAllActiveRef.current && verifyAllCurrentRef.current === pdfId) {
+        verifyAllGenerationRef.current++
         verifyAllActiveRef.current = false
         verifyAllQueueRef.current = []
         verifyAllCurrentRef.current = null
         setVerifyAllActive(false)
       }
       autoGsPdfIdsRef.current.delete(pdfId)
+      forceGsPdfIdsRef.current.delete(pdfId)
+      deferredToastNamesRef.current.delete(pdfId)
       pendingVerifyPdfIdsRef.current.delete(pdfId)
       await useVerificationStore.getState().cancelPdf(pdfId)
     } else {
+      await loadSourcesFn(pdfId)
+      const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
+      useVerificationStore.getState().initSourceVerifyState(pdfId, src)
       if (!await hasVerifiableSource(pdfId, 'all')) return
       useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
       autoGsPdfIdsRef.current.add(pdfId)
       pendingVerifyPdfIdsRef.current.add(pdfId)
-      await useVerificationStore.getState().startVerification([pdfId])
+      const started = await useVerificationStore.getState().startVerification([pdfId])
+      if (!started) {
+        autoGsPdfIdsRef.current.delete(pdfId)
+        pendingVerifyPdfIdsRef.current.delete(pdfId)
+      }
     }
   }
 
   async function handleVerifyOrCancelNonHighPdf(pdfId: string) {
     if (isPdfVerifying(pdfId)) {
       if (verifyAllActiveRef.current && verifyAllCurrentRef.current === pdfId) {
+        verifyAllGenerationRef.current++
         verifyAllActiveRef.current = false
         verifyAllQueueRef.current = []
         verifyAllCurrentRef.current = null
         setVerifyAllActive(false)
       }
       autoGsPdfIdsRef.current.delete(pdfId)
+      forceGsPdfIdsRef.current.delete(pdfId)
+      deferredToastNamesRef.current.delete(pdfId)
       pendingVerifyPdfIdsRef.current.delete(pdfId)
       await useVerificationStore.getState().cancelPdf(pdfId)
       return
     }
     useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
     await loadSourcesFn(pdfId)
-    if (!await hasVerifiableSource(pdfId, 'nonHigh')) return
+    await useVerificationStore.getState().loadResults(pdfId)
     const src = useSourcesStore.getState().sourcesByPdf[pdfId] ?? []
     useVerificationStore.getState().initSourceVerifyState(pdfId, src)
+    if (!await hasVerifiableSource(pdfId, 'nonHigh')) return
     pendingVerifyPdfIdsRef.current.add(pdfId)
     forceGsPdfIdsRef.current.add(pdfId)
-    await useVerificationStore.getState().startVerificationNonHighForPdf(pdfId)
+    const started = await useVerificationStore.getState().startVerificationNonHighForPdf(pdfId)
+    if (!started) {
+      pendingVerifyPdfIdsRef.current.delete(pdfId)
+      forceGsPdfIdsRef.current.delete(pdfId)
+    }
   }
 
   async function handleReverifyOrCancelSource() {
@@ -871,7 +915,8 @@ export default function VerificationPage() {
       useVerificationStore.getState().freezePdfOrder(sortedPdfs.map(p => p.id))
       const text = useVerificationStore.getState().verifyTexts[selectedSourceId]
       pendingSingleSourceGsRef.current.set(selectedSourceId, effectivePdfId)
-      await useVerificationStore.getState().reverifySource(effectivePdfId, selectedSourceId, text)
+      const started = await useVerificationStore.getState().reverifySource(effectivePdfId, selectedSourceId, text)
+      if (!started) pendingSingleSourceGsRef.current.delete(selectedSourceId)
     }
   }
 
@@ -882,6 +927,7 @@ export default function VerificationPage() {
       const r = resultsByPdf[pdfId]?.[sourceId]
       if (!r || r.status === 'in_progress') continue
       pendingSingleSourceGsRef.current.delete(sourceId)
+      if (r.status === 'high') continue
       const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
       if (autoGs) {
         setTimeout(() => {

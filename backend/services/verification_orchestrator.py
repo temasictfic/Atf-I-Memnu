@@ -61,6 +61,10 @@ _DB_ID_TO_HOST = {
 # Maps key (pdf_id or source_id) to list of asyncio.Task objects.
 # Cancelling = calling .cancel() on the tasks for immediate interruption.
 _active_tasks: dict[str, list[asyncio.Task]] = {}
+# Latest run allowed to mutate each source's shared result entry. This prevents
+# a cancelled/obsolete run from overwriting a replacement run that started
+# before the old task reached its finally block.
+_active_source_jobs: dict[tuple[str, str], str] = {}
 
 
 def request_cancel(key: str) -> None:
@@ -80,8 +84,17 @@ def _register_task(key: str, task: asyncio.Task) -> None:
     _active_tasks.setdefault(key, []).append(task)
 
 
-def _unregister_key(key: str) -> None:
-    _active_tasks.pop(key, None)
+def _unregister_tasks(key: str, tasks: list[asyncio.Task]) -> None:
+    """Remove only this run's tasks without unregistering overlapping work."""
+    registered = _active_tasks.get(key)
+    if not registered:
+        return
+    removed = set(tasks)
+    remaining = [task for task in registered if task not in removed]
+    if remaining:
+        _active_tasks[key] = remaining
+    else:
+        _active_tasks.pop(key, None)
 
 
 def _query_for(parsed: ParsedSource) -> str:
@@ -192,10 +205,10 @@ async def verify_pdf_sources(
         # Cancel all child tasks on cancellation
         for t in asyncio_tasks:
             t.cancel()
-        # Wait for children to finish their finally blocks (finalize partial results)
+        # Wait for children to restore/remove their transient in-progress rows.
         await asyncio.gather(*asyncio_tasks, return_exceptions=True)
     finally:
-        _unregister_key(pdf_id)
+        _unregister_tasks(pdf_id, asyncio_tasks)
 
         # Calculate final counts (works for both normal and cancelled runs)
         results = results_store.get(pdf_id, {})
@@ -244,7 +257,9 @@ async def verify_single_source(
     except asyncio.CancelledError:
         pass
     finally:
-        _unregister_key(source_id)
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            _unregister_tasks(source_id, [current_task])
 
     # Recalculate counts
     results = results_store.get(pdf_id, {})
@@ -257,6 +272,7 @@ async def verify_single_source(
         "high": high,
         "medium": medium,
         "low": low,
+        "job_id": job_id,
     })
 
     # Persist updated results to disk cache
@@ -275,6 +291,9 @@ async def _verify_source(
 ):
     """Verify a single source against all databases."""
     source_id = source.id
+    source_key = (pdf_id, source_id)
+    previous_result = results_store[pdf_id].get(source_id)
+    _active_source_jobs[source_key] = job_id
 
     # Initialize result
     results_store[pdf_id][source_id] = VerificationResult(
@@ -298,6 +317,7 @@ async def _verify_source(
     # Tracked here (not inside `try`) so the `finally` block can reach it
     # even if cancellation lands before we assign inside the try.
     url_check_task: asyncio.Task | None = None
+    cancelled = False
 
     try:
         # Load settings for API keys and enabled databases
@@ -418,6 +438,7 @@ async def _verify_source(
                 url_liveness = {u: False for u in urls_to_check}
 
     except asyncio.CancelledError:
+        cancelled = True
         await manager.send_log("info", f"Source {source_id} verification cancelled",
                               pdf_id=pdf_id, source_id=source_id)
     except Exception as e:
@@ -435,11 +456,28 @@ async def _verify_source(
             except (asyncio.CancelledError, Exception):
                 pass
 
-        # Always finalize — guarantees verify_source_done is sent
+        # A replacement run may already own this source. Never let the older
+        # task overwrite its in-progress or settled result.
+        if _active_source_jobs.get(source_key) != job_id:
+            return
+
+        if cancelled:
+            # Cancellation is not a bibliographic judgment. Restore the prior
+            # settled row, or remove a first-run placeholder, instead of
+            # finalizing partial work as Low/Fabricated and caching it.
+            if previous_result is not None and previous_result.status != "in_progress":
+                results_store[pdf_id][source_id] = previous_result
+            else:
+                results_store[pdf_id].pop(source_id, None)
+            _active_source_jobs.pop(source_key, None)
+            return
+
         await _finalize_result(
             results_store, pdf_id, source_id, parsed, all_matches,
             databases_searched, url_liveness, job_id=job_id,
         )
+        if _active_source_jobs.get(source_key) == job_id:
+            _active_source_jobs.pop(source_key, None)
 
 
 async def _run_tier1_apis(
