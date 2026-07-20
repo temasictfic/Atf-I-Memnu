@@ -78,7 +78,7 @@ rem -s silent body, -S show errors, -v verbose to capture TLS handshake,
 rem -o NUL discard body, -w summary line, --max-time 20s
 "%CURL%" -sS -v -o nul ^
     --max-time 20 ^
-    -A "AtfiMemnu/2.13 (diagnostic)" ^
+    -A "AtfiMemnu/2.14 (diagnostic)" ^
     -w "HTTP_STATUS=%%{http_code}  TIME=%%{time_total}s  IP=%%{remote_ip}  SSL_VERIFY=%%{ssl_verify_result}\n" ^
     "%URL%" >> "%LOG%" 2>&1
 
