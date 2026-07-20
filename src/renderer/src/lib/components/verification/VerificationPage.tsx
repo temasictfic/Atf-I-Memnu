@@ -223,9 +223,9 @@ export default function VerificationPage() {
   // Single-source reverify runs awaiting completion to trigger a per-source GS scan.
   // Maps sourceId -> pdfId.
   const pendingSingleSourceGsRef = useRef<Map<string, string>>(new Map())
-  // Deferred toast: when Scholar scan will run after verification, hold the
-  // toast until the scan finishes so the user sees one final notification.
-  const deferredToastNameRef = useRef<string | null>(null)
+  // Deferred toasts are keyed by PDF because Verify All can queue several
+  // Scholar scans before the first one finishes.
+  const deferredToastNamesRef = useRef<Map<string, string>>(new Map())
   // Sequential "Verify All" queue state
   const verifyAllQueueRef = useRef<string[]>([])
   const verifyAllCurrentRef = useRef<string | null>(null)
@@ -272,8 +272,8 @@ export default function VerificationPage() {
       }
 
       if (willRunScholar) {
-        // Defer the toast until Scholar scan finishes
-        deferredToastNameRef.current = name
+        // Defer this PDF's toast until its own Scholar scan finishes.
+        deferredToastNamesRef.current.set(pdfId, name)
       } else {
         if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
         setVerifyToast(t('verification.verificationComplete', { name }))
@@ -758,7 +758,7 @@ export default function VerificationPage() {
         autoGsPdfIdsRef.current.clear()
         forceGsPdfIdsRef.current.clear()
         pendingVerifyPdfIdsRef.current.clear()
-        deferredToastNameRef.current = null
+        deferredToastNamesRef.current.clear()
         await useVerificationStore.getState().cancelAll()
       }
     } else {
@@ -1209,6 +1209,8 @@ export default function VerificationPage() {
   const scholarQueue = useScholarScanStore(s => s.queue)
   const scholarLastDoneSourceId = useScholarScanStore(s => s.lastDoneSourceId)
   const scholarLastDoneUpdated = useScholarScanStore(s => s.lastDoneUpdated)
+  const scholarCompletedPdfId = useScholarScanStore(s => s.completedPdfId)
+  const scholarCompletionSequence = useScholarScanStore(s => s.completionSequence)
 
   // Derive human-readable scan context for the bottom banner.
   const scholarBannerInfo = useMemo(() => {
@@ -1232,16 +1234,17 @@ export default function VerificationPage() {
     }
   }, [scholarQueue, scholarCurrentIndex, scholarLastDoneSourceId, scholarLastDoneUpdated, allPdfs, sourcesByPdf])
 
-  // Show deferred verification-complete toast after Scholar scan finishes.
+  // Show each deferred verification-complete toast only after the Scholar
+  // scan for that same PDF has finished (including an empty scan queue).
   useEffect(() => {
-    if ((scholarStatus === 'done' || scholarStatus === 'cancelled') && deferredToastNameRef.current) {
-      const name = deferredToastNameRef.current
-      deferredToastNameRef.current = null
-      if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
-      setVerifyToast(t('verification.verificationComplete', { name }))
-      verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), VERIFY_TOAST_DURATION_MS)
-    }
-  }, [scholarStatus])
+    if (!scholarCompletedPdfId || scholarCompletionSequence === 0) return
+    const name = deferredToastNamesRef.current.get(scholarCompletedPdfId)
+    if (!name) return
+    deferredToastNamesRef.current.delete(scholarCompletedPdfId)
+    if (verifyToastTimerRef.current) clearTimeout(verifyToastTimerRef.current)
+    setVerifyToast(t('verification.verificationComplete', { name }))
+    verifyToastTimerRef.current = setTimeout(() => setVerifyToast(null), VERIFY_TOAST_DURATION_MS)
+  }, [scholarCompletedPdfId, scholarCompletionSequence, t])
 
   // Wire the hidden webview to the scanner via callback ref
   const scholarScanWebviewRef = useCallback((node: any) => {

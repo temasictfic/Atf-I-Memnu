@@ -19,6 +19,8 @@ interface ScholarScanState {
   currentSourceId: string | null
   lastDoneSourceId: string | null
   lastDoneUpdated: boolean | null
+  completedPdfId: string | null
+  completionSequence: number
   closeOverlayFn: (() => void) | null
 
   startScanForPdf: (pdfId: string) => Promise<void>
@@ -33,14 +35,25 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
   const pendingScans: PendingScan[] = []
   let preparingScan = false
   let scanGeneration = 0
+  let activeScanPdfId: string | null = null
 
   // Wire up scanner callbacks
   scholarScanner.setCallbacks({
     onStatusChange: (status) => {
+      if (status === 'done' && activeScanPdfId) {
+        const completedPdfId = activeScanPdfId
+        activeScanPdfId = null
+        set(state => ({
+          status,
+          completedPdfId,
+          completionSequence: state.completionSequence + 1,
+        }))
+        // Verify All can finish another PDF while the current Scholar scan is
+        // still running. Start its queued scan only after the scanner is free.
+        queueMicrotask(() => void runNextScan())
+        return
+      }
       set({ status })
-      // Verify All can finish another PDF while the current Scholar scan is
-      // still running. Start its queued scan only after the scanner is free.
-      if (status === 'done') queueMicrotask(() => void runNextScan())
     },
     onProgress: (current, total, foundCount) =>
       set({ currentIndex: current, totalInQueue: total, foundCount }),
@@ -145,6 +158,7 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     if (!request) return
 
     preparingScan = true
+    activeScanPdfId = request.pdfId
     const generation = scanGeneration
     set({
       status: 'scanning',
@@ -162,8 +176,13 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     if (generation !== scanGeneration) return
 
     if (queue.length === 0) {
-      // Keep draining queued PDFs even when one has no non-high sources.
-      set({ status: 'done' })
+      // An empty queue is still a completed Scholar pass for this PDF.
+      activeScanPdfId = null
+      set(state => ({
+        status: 'done',
+        completedPdfId: request.pdfId,
+        completionSequence: state.completionSequence + 1,
+      }))
       queueMicrotask(() => void runNextScan())
       return
     }
@@ -191,6 +210,8 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
     currentSourceId: null,
     lastDoneSourceId: null,
     lastDoneUpdated: null,
+    completedPdfId: null,
+    completionSequence: 0,
     closeOverlayFn: null,
 
     startScanForPdf: async (pdfId) => {
@@ -205,6 +226,7 @@ export const useScholarScanStore = create<ScholarScanState>((set, get) => {
       pendingScans.length = 0
       scanGeneration++
       preparingScan = false
+      activeScanPdfId = null
       scholarScanner.cancel()
     },
 
