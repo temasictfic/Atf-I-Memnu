@@ -921,13 +921,12 @@ export default function VerificationPage() {
   }
 
   // When a single-source reverify finishes, trigger a per-source Scholar scan
-  // if the final status is not 'high'.
+  // for every settled status when the automatic Scholar setting is enabled.
   useEffect(() => {
     for (const [sourceId, pdfId] of Array.from(pendingSingleSourceGsRef.current)) {
       const r = resultsByPdf[pdfId]?.[sourceId]
       if (!r || r.status === 'in_progress') continue
       pendingSingleSourceGsRef.current.delete(sourceId)
-      if (r.status === 'high') continue
       const autoGs = useSettingsStore.getState().settings.auto_scholar_after_verify ?? true
       if (autoGs) {
         setTimeout(() => {
