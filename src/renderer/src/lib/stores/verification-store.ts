@@ -136,7 +136,17 @@ function startPolling(pdfIds: string[], jobId: string): void {
       useVerificationStore.setState(state => {
         const next = { ...state.summaries }
         for (const s of statusResp.pdfs) {
-          next[s.pdf_id] = { ...s }
+          const localInProgress = Object.values(state.resultsByPdf[s.pdf_id] ?? {})
+            .filter(result => result.status === 'in_progress').length
+          // A completed backend summary is not enough to advance Verify All:
+          // a dropped verify_source_done event can leave a local row running.
+          // Keep the PDF pending until the authoritative results fetch below
+          // has reconciled every source.
+          next[s.pdf_id] = {
+            ...s,
+            in_progress: Math.max(s.in_progress, localInProgress),
+            completed: s.completed && localInProgress === 0,
+          }
         }
         return { summaries: next }
       })
@@ -158,8 +168,19 @@ function startPolling(pdfIds: string[], jobId: string): void {
             })
 
           if (hasChanges) {
+            const backendSummary = statusResp.pdfs.find(s => s.pdf_id === pdfId)
             useVerificationStore.setState(state => ({
               resultsByPdf: { ...state.resultsByPdf, [pdfId]: newResults },
+              summaries: backendSummary
+                ? {
+                    ...state.summaries,
+                    [pdfId]: {
+                      ...backendSummary,
+                      completed: backendSummary.completed
+                        && Object.values(newResults).every(r => r.status !== 'in_progress'),
+                    },
+                  }
+                : state.summaries,
             }))
           }
         } catch {
@@ -168,7 +189,11 @@ function startPolling(pdfIds: string[], jobId: string): void {
       }
 
       const allDone = statusResp.pdfs.length > 0 && statusResp.pdfs.every(s => s.completed)
-      if (allDone) stopPolling()
+      const localResultsDone = current.pdfIds.every(pdfId =>
+        Object.values(useVerificationStore.getState().resultsByPdf[pdfId] ?? {})
+          .every(result => result.status !== 'in_progress')
+      )
+      if (allDone && localResultsDone) stopPolling()
       // Successful tick — reset the consecutive-error counter (guarding
       // against a concurrent stopPolling between awaits)
       if (polling) polling.errors = 0
@@ -1566,6 +1591,10 @@ export function initVerificationListeners(): () => void {
       const high = (data.high as number | undefined) ?? 0
       const medium = (data.medium as number | undefined) ?? 0
       const low = (data.low as number | undefined) ?? 0
+      const localInProgress = Object.values(
+        useVerificationStore.getState().resultsByPdf[pdfId] ?? {},
+      ).filter(result => result.status === 'in_progress').length
+
       useVerificationStore.setState(state => ({
         summaries: {
           ...state.summaries,
@@ -1574,17 +1603,59 @@ export function initVerificationListeners(): () => void {
             high,
             medium,
             low,
-            in_progress: 0,
-            total: high + medium + low,
-            completed: true,
+            in_progress: localInProgress,
+            total: Math.max(high + medium + low, Object.keys(state.resultsByPdf[pdfId] ?? {}).length),
+            completed: localInProgress === 0,
           },
         },
       }))
 
-      // Stop polling if all polled PDFs are now complete
-      if (polling) {
-        const sums = useVerificationStore.getState().summaries
-        if (polling.pdfIds.every(id => sums[id]?.completed)) stopPolling()
+      if (localInProgress > 0) {
+        // The PDF-level event can arrive even when an individual source event
+        // was dropped during a WebSocket reconnect. Pull the authoritative
+        // rows before completing the PDF so no card is stranded as running.
+        void api.verifyResults(pdfId).then(response => {
+          if (isStalePdfEvent(data, pdfId)) return
+          const results = response.results
+          const stillInProgress = Object.values(results)
+            .filter(result => result.status === 'in_progress').length
+          useVerificationStore.setState(state => ({
+            resultsByPdf: { ...state.resultsByPdf, [pdfId]: results },
+            summaries: {
+              ...state.summaries,
+              [pdfId]: {
+                pdf_id: pdfId,
+                high: Object.values(results).filter(r => r.status === 'high').length,
+                medium: Object.values(results).filter(r => r.status === 'medium').length,
+                low: Object.values(results).filter(r => r.status === 'low').length,
+                in_progress: stillInProgress,
+                total: Object.keys(results).length,
+                completed: stillInProgress === 0,
+              },
+            },
+          }))
+
+          if (polling) {
+            const state = useVerificationStore.getState()
+            const allReconciled = polling.pdfIds.every(id =>
+              state.summaries[id]?.completed
+              && Object.values(state.resultsByPdf[id] ?? {})
+                .every(result => result.status !== 'in_progress')
+            )
+            if (allReconciled) stopPolling()
+          }
+        }).catch(error => {
+          // Leave polling active; its next tick will retry reconciliation.
+          console.error(`[Verify] Failed to reconcile completed PDF ${pdfId}:`, error)
+        })
+      } else if (polling) {
+        const state = useVerificationStore.getState()
+        const allReconciled = polling.pdfIds.every(id =>
+          state.summaries[id]?.completed
+          && Object.values(state.resultsByPdf[id] ?? {})
+            .every(result => result.status !== 'in_progress')
+        )
+        if (allReconciled) stopPolling()
       }
 
       // Flush buffered log for this PDF
