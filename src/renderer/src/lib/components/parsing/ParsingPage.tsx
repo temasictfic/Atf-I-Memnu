@@ -275,6 +275,7 @@ export default function ParsingPage() {
   const pendingFitRef = useRef(false);
   const suppressPageClickRef = useRef(false);
   const dragIntentRef = useRef<{
+    pdfId: string;
     sourceId: string;
     startX: number;
     startY: number;
@@ -282,6 +283,7 @@ export default function ParsingPage() {
   } | null>(null);
   const dragStartedRef = useRef(false);
   const resizingRef = useRef<{
+    pdfId: string;
     sourceId: string;
     handle: string;
     startX: number;
@@ -289,6 +291,7 @@ export default function ParsingPage() {
     origBbox: { x0: number; y0: number; x1: number; y1: number; page: number };
   } | null>(null);
   const drawingRef = useRef<{
+    pdfId: string;
     page: number;
     startX: number;
     startY: number;
@@ -1027,8 +1030,10 @@ export default function ParsingPage() {
     e.stopPropagation();
     suppressPageClickRef.current = true;
     setSelectedSourceId(source.id);
-    if (!selectedPdfIdRef.current) return;
+    const pdfId = selectedPdfIdRef.current;
+    if (!pdfId) return;
     dragIntentRef.current = {
+      pdfId,
       sourceId: source.id,
       startX: e.clientX,
       startY: e.clientY,
@@ -1038,10 +1043,10 @@ export default function ParsingPage() {
   }
 
   const onMouseMove = useCallback((e: React.MouseEvent) => {
-    const pdfId = selectedPdfIdRef.current;
     const currentScale = scaleRef.current;
 
-    if (dragIntentRef.current && pdfId) {
+    if (dragIntentRef.current) {
+      const pdfId = dragIntentRef.current.pdfId;
       const dx = e.clientX - dragIntentRef.current.startX;
       const dy = e.clientY - dragIntentRef.current.startY;
       if (!dragStartedRef.current && Math.abs(dx) + Math.abs(dy) > 3) {
@@ -1062,7 +1067,8 @@ export default function ParsingPage() {
           },
         });
       }
-    } else if (resizingRef.current && pdfId) {
+    } else if (resizingRef.current) {
+      const pdfId = resizingRef.current.pdfId;
       const dx = (e.clientX - resizingRef.current.startX) / currentScale;
       const dy = (e.clientY - resizingRef.current.startY) / currentScale;
       const ob = resizingRef.current.origBbox;
@@ -1088,13 +1094,17 @@ export default function ParsingPage() {
   const onMouseUp = useCallback((e: React.MouseEvent) => {
     // Drawing (right-click hold) should only finish on right-button release
     if (drawingRef.current && e.button !== 2) return;
-    const pdfId = selectedPdfIdRef.current;
     const currentScale = scaleRef.current;
     const currentPageOffsets = pageOffsetsRef.current;
     const hadDrag = dragIntentRef.current && dragStartedRef.current;
     const hadResize = resizingRef.current;
+    const interactionPdfId =
+      dragIntentRef.current?.pdfId ??
+      resizingRef.current?.pdfId ??
+      drawingRef.current?.pdfId ??
+      selectedPdfIdRef.current;
 
-    if (drawingRef.current && pdfId) {
+    if (drawingRef.current && interactionPdfId) {
       const docEl = viewerRef.current?.querySelector(
         "[data-viewer-document]",
       ) as HTMLElement | null;
@@ -1126,7 +1136,7 @@ export default function ParsingPage() {
         if (pdfX1 - pdfX0 > 5 && pdfY1 - pdfY0 > 5) {
           const counter = manualCounter + 1;
           setManualCounter(counter);
-          const newId = `${pdfId}_ref_manual_${counter}`;
+          const newId = `${interactionPdfId}_ref_manual_${counter}`;
           const newBbox = {
             x0: pdfX0,
             y0: pageY0,
@@ -1134,20 +1144,20 @@ export default function ParsingPage() {
             y1: pageY1,
             page: targetPage,
           };
-          const addedId = addRectangle(pdfId, {
+          const addedId = addRectangle(interactionPdfId, {
             id: newId,
-            pdf_id: pdfId,
+            pdf_id: interactionPdfId,
             bbox: newBbox,
             text: "",
             ref_number: undefined,
             status: "edited",
           });
           setSelectedSourceId(addedId);
-          saveSources(pdfId);
+          saveSources(interactionPdfId);
           // extractAndSetText returns the post-renumber id; without
           // re-selecting it the freshly drawn box loses selection and
           // the user has to left-click it to re-select.
-          void extractAndSetText(pdfId, addedId, newBbox).then((finalId) => {
+          void extractAndSetText(interactionPdfId, addedId, newBbox).then((finalId) => {
             if (finalId) setSelectedSourceId(finalId);
           });
         }
@@ -1159,7 +1169,8 @@ export default function ParsingPage() {
     // surfaces. If a future change wants to keep the dragged/resized box
     // selected through extraction, capture the returned id like the
     // right-click draw above.
-    if (hadDrag && pdfId && dragIntentRef.current) {
+    if (hadDrag && dragIntentRef.current) {
+      const pdfId = dragIntentRef.current.pdfId;
       const draggedId = dragIntentRef.current.sourceId;
       void saveSources(pdfId).catch((e) => {
         console.error("Drag save failed:", e);
@@ -1170,7 +1181,8 @@ export default function ParsingPage() {
       if (movedSource)
         void extractAndSetText(pdfId, draggedId, movedSource.bbox);
     }
-    if (hadResize && pdfId) {
+    if (hadResize) {
+      const pdfId = resizingRef.current!.pdfId;
       void saveSources(pdfId).catch((e) => {
         console.error("Resize save failed:", e);
       });
@@ -1201,6 +1213,7 @@ export default function ParsingPage() {
     if (!selectedPdfId) return;
     beginEdit(selectedPdfId);
     resizingRef.current = {
+      pdfId: selectedPdfId,
       sourceId: source.id,
       handle,
       startX: e.clientX,
@@ -1230,6 +1243,7 @@ export default function ParsingPage() {
       break;
     }
     const d = {
+      pdfId: selectedPdfId,
       page: targetPage,
       startX: e.clientX,
       startY: e.clientY,
