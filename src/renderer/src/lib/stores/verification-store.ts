@@ -1007,6 +1007,7 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
     const wasOn = effectiveTagOn(current, tag)
     const next = !wasOn
     const prevOverrides = current.tag_overrides ?? {}
+    const prevDecisionOverride = current.decision_tag_override ?? null
     const newOverrides = { ...prevOverrides, [tag]: next }
 
     set(state => {
@@ -1017,7 +1018,11 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
           ...state.resultsByPdf,
           [pdfId]: {
             ...state.resultsByPdf[pdfId],
-            [sourceId]: { ...prev, tag_overrides: newOverrides },
+            [sourceId]: {
+              ...prev,
+              tag_overrides: newOverrides,
+              decision_tag_override: null,
+            },
           },
         },
       }
@@ -1035,7 +1040,11 @@ export const useVerificationStore = create<VerificationState>()((set, get) => ({
             ...state.resultsByPdf,
             [pdfId]: {
               ...state.resultsByPdf[pdfId],
-              [sourceId]: { ...prev, tag_overrides: prevOverrides },
+              [sourceId]: {
+                ...prev,
+                tag_overrides: prevOverrides,
+                decision_tag_override: prevDecisionOverride,
+              },
             },
           },
         }

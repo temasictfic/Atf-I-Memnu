@@ -1038,10 +1038,12 @@ export default function VerificationPage() {
     })
 
     const baseSummary = summaries[pdfId] ?? { high: 0, medium: 0, low: 0, total: sortedSourcesForExport.length }
-    const effectiveDecision = (r: typeof reportSources[number]) => r.decisionTagOverride ?? r.decisionTag
-    const validCount = reportSources.filter(r => effectiveDecision(r) === 'valid').length
-    const citationCount = reportSources.filter(r => effectiveDecision(r) === 'citation').length
-    const fabricatedCount = reportSources.filter(r => effectiveDecision(r) === 'fabricated').length
+    const effectiveDecisions = sortedSourcesForExport.map(source =>
+      effectiveDecisionTag(pdfResults[source.id]),
+    )
+    const validCount = effectiveDecisions.filter(decision => decision === 'valid').length
+    const citationCount = effectiveDecisions.filter(decision => decision === 'citation').length
+    const fabricatedCount = effectiveDecisions.filter(decision => decision === 'fabricated').length
 
     const includeBibliographic = useSettingsStore.getState().settings.report_include_bibliographic ?? true
     const { generateVerificationReport } = await import('../../pdf/verification-report-writer')

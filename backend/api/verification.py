@@ -388,6 +388,9 @@ async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequ
     state=True  → force ON
     state=False → force OFF
     state=None  → clear override (revert to default-derived state)
+
+    Changing a field tag returns decision classification to automatic mode, so
+    the updated tags can determine the source's decision again.
     """
     # Pydantic's Literal[TagKey] already validates request.tag at parse time;
     # an unknown tag yields a 422 before this handler runs.
@@ -399,6 +402,7 @@ async def set_tag_override(pdf_id: str, source_id: str, request: TagOverrideRequ
         existing.tag_overrides.pop(request.tag, None)
     else:
         existing.tag_overrides[request.tag] = request.state
+    existing.decision_tag_override = None
 
     save_verify_cache(pdf_id, verify_results[pdf_id])
 
