@@ -43,16 +43,14 @@ for _stream in (sys.stdout, sys.stderr):
     if isinstance(_stream, TextIOWrapper):
         try:
             _stream.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
-from rapidfuzz import fuzz  # noqa: E402
-
-from models.source import ParsedSource  # noqa: E402
-from services.ner_extractor import extract_fields_ner  # noqa: E402
-from services.source_extractor import _extract_source_fields_regex  # noqa: E402
-from utils.text_cleaning import strip_source_noise  # noqa: E402
-
+from models.source import ParsedSource
+from rapidfuzz import fuzz
+from services.ner_extractor import extract_fields_ner
+from services.source_extractor import _extract_source_fields_regex
+from utils.text_cleaning import strip_source_noise
 
 TITLE_SIM_THRESHOLD = 90
 JOURNAL_SIM_THRESHOLD = 85
@@ -276,7 +274,9 @@ async def run(args: argparse.Namespace) -> int:
     csv_writer = None
     csv_handle = None
     if args.csv:
-        csv_handle = open(args.csv, "w", newline="", encoding="utf-8")
+        csv_handle = open(  # noqa: ASYNC230, SIM115
+            args.csv, "w", newline="", encoding="utf-8"
+        )
         csv_writer = csv.writer(csv_handle)
         csv_writer.writerow([
             "pdf_id", "ref", "source_id",
@@ -293,7 +293,7 @@ async def run(args: argparse.Namespace) -> int:
     for cache_path in cache_files:
         try:
             cache = json.loads(cache_path.read_text(encoding="utf-8"))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"[skip] {cache_path.name}: {type(e).__name__}: {e}")
             continue
 

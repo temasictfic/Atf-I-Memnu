@@ -29,11 +29,11 @@ from typing import Any
 from urllib.parse import quote
 
 import aiohttp
-
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
+
 from verifiers._http import (
     UnauthorizedError,
     UpstreamError,

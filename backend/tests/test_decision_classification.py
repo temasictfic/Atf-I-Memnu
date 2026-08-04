@@ -13,9 +13,9 @@ _BACKEND = _HERE.parent.parent
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from models.source import ParsedSource  # noqa: E402
-from models.verification_result import MatchDetails, MatchResult  # noqa: E402
-from services.match_scorer import (  # noqa: E402
+from models.source import ParsedSource
+from models.verification_result import MatchDetails, MatchResult
+from services.match_scorer import (
     TITLE_MATCH_THRESHOLD,
     classify_decision,
     determine_verification_status,

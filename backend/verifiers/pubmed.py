@@ -13,13 +13,13 @@ import time
 from urllib.parse import quote
 
 import aiohttp
-
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
 from services.search_settings import get_polite_pool_email
+
 from verifiers._http import (
     UnauthorizedError,
     check_parked_url,

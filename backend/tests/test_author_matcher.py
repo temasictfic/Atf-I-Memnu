@@ -16,7 +16,7 @@ _BACKEND = _HERE.parent.parent
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from services.author_matcher import (  # noqa: E402
+from services.author_matcher import (
     author_score,
     authors_match,
     normalize_name,

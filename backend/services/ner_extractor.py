@@ -6,7 +6,7 @@ import re
 from collections import defaultdict
 
 from models.source import ParsedSource
-from utils.doi_extractor import extract_doi, extract_arxiv_id
+from utils.doi_extractor import extract_arxiv_id, extract_doi
 from utils.url_cleaner import clean_extracted_url, find_best_url
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ async def extract_fields_ner(raw_text: str) -> ParsedSource | None:
         return await loop.run_in_executor(
             get_inference_executor(), _extract, pipeline, raw_text
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         # Exception messages from ONNX Runtime can contain non-UTF8 bytes
         # (Windows system error text in the local codepage). Use repr() +
         # type name to guarantee the log message is a safe ASCII/UTF8

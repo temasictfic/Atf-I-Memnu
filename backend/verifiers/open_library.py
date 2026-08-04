@@ -9,12 +9,13 @@ field the schema doesn't expose. Article-DOI sources should match against
 Crossref / OpenAlex / Europe PMC instead.
 """
 
-import aiohttp
 from urllib.parse import quote
 
+import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
+
 from verifiers._http import (
     check_parked_url,
     check_rate_limit,

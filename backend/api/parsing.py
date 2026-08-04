@@ -16,10 +16,8 @@ verification cycle that this module used to be half of.
 """
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-
-from api.websocket import manager
 from models.source import SourceRectangle
+from pydantic import BaseModel
 from services.cache_store import (
     _validate_pdf_id,
     clean_verify_cache,
@@ -31,10 +29,12 @@ from services.cache_store import (
 )
 from services.job_store import verify_results
 
+from api.websocket import manager
+
 # Backwards-compatible re-export: `load_sources_for_pdf` used to live here and
 # was imported from `api.parsing` by other code. Re-exporting keeps that
 # import path working while the canonical home is now cache_store.
-__all__ = ["router", "load_sources_for_pdf"]
+__all__ = ["load_sources_for_pdf", "router"]
 
 router = APIRouter()
 

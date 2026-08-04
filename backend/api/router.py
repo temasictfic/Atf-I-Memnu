@@ -1,17 +1,17 @@
+from config import settings as app_config
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-
-from api.parsing import router as parsing_router
-from api.verification import router as verification_router
-from api.settings import router as settings_router
-from api.websocket import router as ws_router
 from services.ner_model_manager import (
-    is_model_ready,
-    is_loading,
     get_load_error,
+    is_loading,
+    is_model_ready,
     is_preload_complete,
 )
-from config import settings as app_config
+
+from api.parsing import router as parsing_router
+from api.settings import router as settings_router
+from api.verification import router as verification_router
+from api.websocket import router as ws_router
 
 api_router = APIRouter()
 

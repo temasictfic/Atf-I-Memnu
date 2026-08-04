@@ -2,9 +2,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
-
 from models.settings import AppSettings, DatabaseConfig
+from pydantic import BaseModel
 from services.openaire_token_manager import (
     exchange_refresh_token,
     get_runtime_status,
@@ -17,7 +16,7 @@ router = APIRouter()
 # Re-export the public accessor for any external caller still importing
 # `get_current_settings` from `api.settings`. The canonical home is now
 # `services.settings_store` — this module is just the FastAPI router.
-__all__ = ["router", "get_current_settings"]
+__all__ = ["get_current_settings", "router"]
 
 
 @router.get("/settings")
@@ -60,7 +59,7 @@ async def update_settings(patch: dict[str, Any]):
             continue
         try:
             AppSettings.model_validate({key: value})
-        except Exception:
+        except Exception:  # noqa: BLE001, S112
             continue
         updates[key] = value
 
@@ -83,7 +82,7 @@ async def update_settings(patch: dict[str, Any]):
                 "openaire", ""
             ):
                 invalidate_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     save_settings(new_settings)

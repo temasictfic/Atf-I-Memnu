@@ -31,7 +31,10 @@ except ModuleNotFoundError:
     repo_root = Path(__file__).resolve().parents[3]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    from backend.training.scripts.validate_labels import CANONICAL_LABELS, validate_line  # type: ignore
+    from backend.training.scripts.validate_labels import (  # type: ignore
+        CANONICAL_LABELS,
+        validate_line,
+    )
 
 
 TO_LABEL = Path("backend/training/data/kaynaklar/to_label.jsonl")

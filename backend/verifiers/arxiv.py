@@ -14,11 +14,11 @@ import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 import aiohttp
-
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
 from utils.doi_extractor import extract_arxiv_id
+
 from verifiers._http import (
     UpstreamError,
     acquire_or_rate_limited,

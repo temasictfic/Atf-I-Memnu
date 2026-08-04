@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-
 # Verifier-assigned outcome of a source. "pending"/"in_progress" are
 # transient (orchestrator lifecycle); "high"/"medium"/"low" are the three
 # settled bands set by `determine_verification_status`.

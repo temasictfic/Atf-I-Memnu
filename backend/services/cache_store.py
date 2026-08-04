@@ -19,13 +19,12 @@ import json
 import re
 from pathlib import Path
 
-from fastapi import HTTPException
-
 from config import settings
+from fastapi import HTTPException
 from models.source import SourceRectangle, SourceStatus
 from models.verification_result import MatchResult, VerificationResult
-from services.search_urls import build_google_urls, build_search_url
 
+from services.search_urls import build_google_urls, build_search_url
 
 # ---------------------------------------------------------------------------
 # pdf_id validation (defends every cache-file build site against traversal)
@@ -143,7 +142,7 @@ def load_sources_cache(
         except (TypeError, ValueError):
             page_count = None
         return sources, raw.get("numbered", False), page_count
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -161,7 +160,7 @@ def delete_sources_cache(pdf_id: str) -> None:
         if cache_file.exists():
             try:
                 cache_file.unlink()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print(f"[delete_sources_cache] failed to delete {cache_file}: {e}", flush=True)
 
 
@@ -262,7 +261,7 @@ def load_verify_cache(pdf_id: str) -> dict[str, VerificationResult] | None:
     try:
         data = json.loads(cache_file.read_text(encoding="utf-8"))
         return {sid: _hydrate_result(sid, payload) for sid, payload in data.items()}
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -277,5 +276,5 @@ def clean_verify_cache(pdf_id: str, current_source_ids: set[str]) -> None:
         cleaned = {k: v for k, v in data.items() if k in current_source_ids}
         if len(cleaned) != len(data):
             cache_file.write_text(json.dumps(cleaned, ensure_ascii=False), encoding="utf-8")
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass

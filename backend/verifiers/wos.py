@@ -16,7 +16,6 @@ from typing import Any
 from urllib.parse import quote
 
 import aiohttp
-
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
@@ -24,6 +23,7 @@ from services.daily_quota import daily_quota
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
 from services.settings_store import get_current_settings
+
 from verifiers._http import (
     RateLimitedError,
     UnauthorizedError,
@@ -84,7 +84,7 @@ def _wos_tier() -> str:
     """Read the user-selected WoS tier from settings, defaulting to the free cap."""
     try:
         tier = (get_current_settings().api_keys.get("wos_tier") or "").strip()
-    except Exception:
+    except Exception:  # noqa: BLE001
         tier = ""
     return tier if tier in _DAILY_CAPS else _DEFAULT_TIER
 

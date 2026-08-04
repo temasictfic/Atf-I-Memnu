@@ -17,12 +17,10 @@ collapsed into ~280 actual writes.
 import json
 import os
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from config import settings as app_config
-
 
 _STATE_FILENAME = "quota_state.json"
 _FLUSH_INTERVAL_SECONDS = 5.0
@@ -130,7 +128,7 @@ class DailyQuota:
             while not self._stop_flush.wait(_FLUSH_INTERVAL_SECONDS):
                 try:
                     self.flush()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
 
         self._flush_thread = threading.Thread(

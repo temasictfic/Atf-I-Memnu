@@ -8,13 +8,12 @@ across calls, and a shutdown hook the FastAPI app can wire into lifespan.
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
-from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import TypeVar
 from urllib.parse import urlparse
 
 import aiohttp
-
 from scrapers.rate_limiter import rate_limiter
 from services.search_settings import get_client_timeout, get_polite_pool_email
 

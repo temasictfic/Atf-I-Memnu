@@ -1,12 +1,13 @@
 """Europe PMC API verifier - free biomedical and life sciences literature."""
 
-import aiohttp
 from urllib.parse import quote
 
+import aiohttp
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from services.match_scorer import score_match
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
+
 from verifiers._http import (
     check_parked_url,
     check_rate_limit,

@@ -3,7 +3,6 @@
 import re
 import unicodedata
 
-
 # Matches exactly the source-number prefixes used by source detection.
 REF_NUMBER_PREFIX_PATTERNS = [
     re.compile(r"^\s*\[(\d{1,3})\]\s*"),   # [1] Text...

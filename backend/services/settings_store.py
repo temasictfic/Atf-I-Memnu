@@ -14,7 +14,6 @@ from pathlib import Path
 from config import settings as app_config
 from models.settings import AppSettings
 
-
 # Default exclusion list written on first launch when the user has no
 # exclusion file path set. Kept inline (rather than read from a bundled
 # resource) so the backend works identically in dev and packaged builds
@@ -88,7 +87,7 @@ def _load_settings() -> AppSettings:
 
     try:
         data = json.loads(settings_path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception:  # noqa: BLE001
         data = {}
     if not isinstance(data, dict):
         data = {}
@@ -103,12 +102,12 @@ def _load_settings() -> AppSettings:
         try:
             AppSettings.model_validate({key: value})
             valid[key] = value
-        except Exception:
+        except Exception:  # noqa: BLE001, S112
             continue
 
     try:
         _current_settings = AppSettings(**valid)
-    except Exception:
+    except Exception:  # noqa: BLE001
         _current_settings = AppSettings.default()
     _current_settings = _migrate_databases(_current_settings)
     _current_settings = _bootstrap_exclusion_file(_current_settings)
@@ -131,7 +130,7 @@ def _bootstrap_exclusion_file(s: AppSettings) -> AppSettings:
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(_DEFAULT_EXCLUSION_CONTENT, encoding="utf-8")
-    except Exception:
+    except Exception:  # noqa: BLE001
         # If we can't write the file (read-only volume, perms), leave the
         # path empty and let the renderer handle the missing-file case.
         return s

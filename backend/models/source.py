@@ -3,7 +3,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-
 SourceStatus = Literal["detected", "edited", "approved"]
 
 

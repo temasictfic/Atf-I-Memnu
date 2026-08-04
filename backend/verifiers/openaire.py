@@ -10,13 +10,13 @@ from typing import Any
 from urllib.parse import quote
 
 import aiohttp
-
 from models.source import ParsedSource
 from models.verification_result import MatchResult
 from scrapers.rate_limiter import rate_limiter
 from services.match_scorer import score_match
 from services.openaire_token_manager import get_access_token
 from services.scoring_constants import DOI_MATCH_MIN_SCORE
+
 from verifiers._http import (
     RateLimitedError,
     UnauthorizedError,
@@ -85,7 +85,7 @@ def _openaire_pace_seconds() -> float | None:
         from services.settings_store import get_current_settings
         if (get_current_settings().api_keys.get("openaire", "") or "").strip():
             return _AUTHENTICATED_PACE_SECONDS
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
     return None
 

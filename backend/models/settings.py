@@ -1,6 +1,5 @@
-from pydantic import BaseModel
-
 from config import settings as app_config
+from pydantic import BaseModel
 
 
 class DatabaseConfig(BaseModel):

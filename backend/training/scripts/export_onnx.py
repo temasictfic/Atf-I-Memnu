@@ -11,7 +11,6 @@ import argparse
 import sys
 from pathlib import Path
 
-
 DEFAULT_FINETUNED = Path("backend/training/models/finetuned")
 DEFAULT_ONNX_FP32 = Path("backend/training/models/finetuned-onnx")
 DEFAULT_ONNX_INT8 = Path("backend/training/models/finetuned-onnx-int8")

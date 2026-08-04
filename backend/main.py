@@ -1,13 +1,11 @@
 import argparse
-import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
+from config import settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from config import settings
 
 
 @asynccontextmanager
@@ -18,14 +16,15 @@ async def lifespan(app: FastAPI):
 
     # Preload NER model in the background so the first extraction is instant
     import asyncio
+
     from services.ner_model_manager import preload_pipeline
     asyncio.create_task(preload_pipeline())
 
     yield
     # Shutdown
     print("Atf-ı Memnu backend shutting down")
-    from verifiers._http import close_session
     from services.ner_model_manager import shutdown_inference_executor
+    from verifiers._http import close_session
     await close_session()
     shutdown_inference_executor()
 
@@ -43,6 +42,7 @@ app.add_middleware(
 
 # Import and include routers
 from api.router import api_router
+
 app.include_router(api_router, prefix="/api")
 
 

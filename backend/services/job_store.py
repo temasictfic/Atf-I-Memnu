@@ -14,6 +14,5 @@ Two dicts:
 
 from models.verification_result import VerificationResult
 
-
 verify_jobs: dict[str, dict] = {}
 verify_results: dict[str, dict[str, VerificationResult]] = {}

@@ -17,7 +17,6 @@ import logging
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
-
 from verifiers._http import build_headers
 
 logger = logging.getLogger(__name__)
@@ -55,7 +54,7 @@ async def _is_url_safe(url: str) -> bool:
     multicast / reserved / unspecified address."""
     try:
         parsed = urlparse(url)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
     if parsed.scheme not in _ALLOWED_SCHEMES:
         return False
@@ -145,7 +144,7 @@ async def _check_url_with_session(session: aiohttp.ClientSession, url: str) -> b
     except asyncio.TimeoutError:
         logger.debug("URL liveness timeout: %s", url)
         return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.debug("URL liveness error for %s: %s", url, e)
         return False
 
