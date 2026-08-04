@@ -20,8 +20,8 @@ import random
 import re
 import sys
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 try:
     from backend.training.scripts.validate_labels import (
@@ -142,8 +142,8 @@ def split_by_source_pdf(
     rng.shuffle(pdfs)
 
     n = len(pdfs)
-    n_train = max(1, int(round(n * ratios[0])))
-    n_val = max(1, int(round(n * ratios[1])))
+    n_train = max(1, round(n * ratios[0]))
+    n_val = max(1, round(n * ratios[1]))
     if n_train + n_val >= n:
         n_val = max(1, n - n_train - 1) if n - n_train > 1 else 0
     train_pdfs = set(pdfs[:n_train])

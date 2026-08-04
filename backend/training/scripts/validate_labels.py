@@ -9,9 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 CANONICAL_LABELS: frozenset[str] = frozenset({
     "TITLE",
@@ -41,7 +41,7 @@ class ValidationError:
 def _iter_entities(raw: dict) -> list[dict]:
     ents = raw.get("entities")
     if not isinstance(ents, list):
-        raise ValueError("missing or non-list 'entities'")
+        raise TypeError("missing or non-list 'entities'")
     return ents
 
 

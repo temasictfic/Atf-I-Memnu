@@ -12,15 +12,13 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-
-from api.websocket import manager
 from models.source import SourceRectangle
 from models.verification_result import (
     DecisionTag,
     MatchResult,
     TagKey,
 )
+from pydantic import BaseModel
 from services.cache_store import (
     _validate_pdf_id,
     load_sources_for_pdf,
@@ -30,6 +28,8 @@ from services.cache_store import (
 from services.job_store import verify_jobs, verify_results
 from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
 from services.search_urls import build_search_url
+
+from api.websocket import manager
 
 router = APIRouter()
 
@@ -94,16 +94,16 @@ async def _verify_batch(job_id: str, pdf_ids: list[str], texts: dict[str, str], 
                 await verify_pdf_sources_filtered(
                     pid, sources, verify_results, texts, excluded_ids, job_id=job_id,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 await manager.send_log("error", f"Verification failed for {pid}: {e}")
 
         # Save results to disk cache (best-effort; cache write failure must
         # not strand the job in `running`).
         for pdf_id in pdf_ids:
-            if pdf_id in verify_results and verify_results[pdf_id]:
+            if verify_results.get(pdf_id):
                 try:
                     save_verify_cache(pdf_id, verify_results[pdf_id])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     await manager.send_log("error", f"Cache write failed for {pdf_id}: {e}")
 
         verify_jobs[job_id]["status"] = "done"
@@ -136,14 +136,14 @@ async def _verify_all_pdfs(job_id: str, pdf_ids: list[str]):
                 continue
             try:
                 await verify_pdf_sources(pid, sources, verify_results, job_id=job_id)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 await manager.send_log("error", f"Verification failed for {pid}: {e}")
 
         for pdf_id in pdf_ids:
-            if pdf_id in verify_results and verify_results[pdf_id]:
+            if verify_results.get(pdf_id):
                 try:
                     save_verify_cache(pdf_id, verify_results[pdf_id])
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     await manager.send_log("error", f"Cache write failed for {pdf_id}: {e}")
 
         verify_jobs[job_id]["status"] = "done"
@@ -177,10 +177,10 @@ async def _reverify_pdf_job(job_id: str, pdf_id: str, sources: list[SourceRectan
 
     try:
         await verify_pdf_sources(pdf_id, sources, verify_results, job_id=job_id)
-        if pdf_id in verify_results and verify_results[pdf_id]:
+        if verify_results.get(pdf_id):
             try:
                 save_verify_cache(pdf_id, verify_results[pdf_id])
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 await manager.send_log("error", f"Cache write failed for {pdf_id}: {e}")
         verify_jobs[job_id]["status"] = "done"
     except Exception as e:
@@ -233,7 +233,7 @@ async def _reverify_source_job(
     except asyncio.CancelledError:
         verify_jobs[job_id]["status"] = "cancelled"
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         verify_jobs[job_id]["status"] = "failed"
         verify_jobs[job_id]["error"] = str(e)
         await manager.send_log(
@@ -268,7 +268,7 @@ def _persist_settled_for_pdf(pdf_id: str) -> None:
     if merged:
         try:
             save_verify_cache(pdf_id, merged)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
 
@@ -487,10 +487,14 @@ class ScoreScholarRequest(BaseModel):
 @router.post("/verify/score-scholar")
 async def score_scholar(request: ScoreScholarRequest):
     """Score Google Scholar candidates against a source and merge into results."""
-    from services.source_extractor import extract_source_fields
-    from services.match_scorer import score_match, determine_verification_status, classify_decision
     from services.author_matcher import clean_scholar_authors
+    from services.match_scorer import (
+        classify_decision,
+        determine_verification_status,
+        score_match,
+    )
     from services.ner_extractor import extract_fields_ner
+    from services.source_extractor import extract_source_fields
 
     # request.source_text is the title-only search query used to hit Scholar.
     # SIRIS NER was trained on full citations and mislabels bare titles — it

@@ -3,10 +3,16 @@
 import re
 from typing import Any
 
-from rapidfuzz import fuzz
-
 from models.source import ParsedSource
-from models.verification_result import DecisionTag, MatchDetails, MatchResult, VerifyStatus
+from models.verification_result import (
+    DecisionTag,
+    MatchDetails,
+    MatchResult,
+    VerifyStatus,
+)
+from rapidfuzz import fuzz
+from utils.doi_extractor import extract_arxiv_id, normalize_doi
+
 from services.author_matcher import author_score, authors_match
 from services.scoring_constants import (
     COMPOSITE_AUTHOR_WEIGHT,
@@ -23,7 +29,6 @@ from services.scoring_constants import (
     YEAR_EXACT_SCORE,
     YEAR_OFF_BY_ONE_SCORE,
 )
-from utils.doi_extractor import extract_arxiv_id, normalize_doi
 
 __all__ = [
     "DOI_MATCH_MIN_SCORE",
@@ -143,9 +148,8 @@ def _urls_match(source: ParsedSource, candidate: dict[str, Any]) -> bool:
     # DOI match (use computed property on ParsedSource for backward compat)
     src_doi = source.doi
     cand_doi = candidate.get("doi")
-    if src_doi and cand_doi:
-        if normalize_doi(src_doi) == normalize_doi(cand_doi):
-            return True
+    if src_doi and cand_doi and normalize_doi(src_doi) == normalize_doi(cand_doi):
+        return True
 
     # URL identifier matching (arXiv ID with version-suffix tolerance, DOI URL)
     return _url_match_score(source, candidate) >= 1.0
@@ -412,9 +416,12 @@ def _venue_similarity_score(source_venue: str, cand_journal: str) -> float:
     # Initialism: short/all-caps acronym vs expanded title
     short, long = (src_raw, cand_raw) if len(src_raw) <= len(cand_raw) else (cand_raw, src_raw)
     short_clean = re.sub(r"[^A-Za-z]", "", short)
-    if 2 <= len(short_clean) <= 8 and short_clean.isupper():
-        if short_clean.lower() == _initials(long).lower():
-            return 1.0
+    if (
+        2 <= len(short_clean) <= 8
+        and short_clean.isupper()
+        and short_clean.lower() == _initials(long).lower()
+    ):
+        return 1.0
 
     # token_sort_ratio only. token_set_ratio is deliberately omitted (along
     # with partial_ratio) because both share the same inflation problem:

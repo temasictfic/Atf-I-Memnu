@@ -88,11 +88,11 @@ def _refresh_window_cap(*, authenticated: bool) -> None:
     """
     try:
         from verifiers.openaire import update_window_for_auth_state
-    except Exception:
+    except Exception:  # noqa: BLE001
         return
     try:
         update_window_for_auth_state(authenticated=authenticated)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
 
@@ -118,24 +118,23 @@ async def exchange_refresh_token(
     try:
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=timeout)
-        ) as session:
-            async with session.get(REFRESH_ENDPOINT, params=params) as resp:
-                if resp.status == 401 or resp.status == 403:
-                    raise RuntimeError(
-                        "OpenAIRE rejected the refresh token "
-                        "(expired or mistyped)."
-                    )
-                if resp.status != 200:
-                    body = (await resp.text())[:200]
-                    raise RuntimeError(
-                        f"OpenAIRE returned HTTP {resp.status}: {body}"
-                    )
-                data = await resp.json(content_type=None)
-                if not isinstance(data, dict) or "access_token" not in data:
-                    raise RuntimeError(
-                        "OpenAIRE response missing access_token field."
-                    )
-                return data
+        ) as session, session.get(REFRESH_ENDPOINT, params=params) as resp:
+            if resp.status == 401 or resp.status == 403:
+                raise RuntimeError(
+                    "OpenAIRE rejected the refresh token "
+                    "(expired or mistyped)."
+                )
+            if resp.status != 200:
+                body = (await resp.text())[:200]
+                raise RuntimeError(
+                    f"OpenAIRE returned HTTP {resp.status}: {body}"
+                )
+            data = await resp.json(content_type=None)
+            if not isinstance(data, dict) or "access_token" not in data:
+                raise RuntimeError(
+                    "OpenAIRE response missing access_token field."
+                )
+            return data
     except asyncio.TimeoutError as exc:
         raise RuntimeError("Timed out contacting OpenAIRE.") from exc
     except aiohttp.ClientError as exc:
@@ -214,7 +213,7 @@ async def _refresh_and_cache(refresh_token: str) -> str | None:
             # freshly persisted refresh token right after this write doesn't
             # treat our just-cached access token as stale and re-exchange.
             _cached_refresh_fingerprint = _fingerprint_of(new_refresh)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             # Persistence failure is non-fatal: we still have a valid access
             # token in memory. The worst case is the user re-paste next month.
             pass
@@ -234,7 +233,7 @@ async def get_access_token() -> str | None:
         refresh_token = (
             get_current_settings().api_keys.get("openaire", "") or ""
         ).strip()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
     if not refresh_token:

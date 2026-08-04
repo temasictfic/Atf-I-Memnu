@@ -8,9 +8,7 @@ Implements rule-based parsing guided by Kurallar.xlsx:
 import re
 
 from models.source import ParsedSource
-from services.citation_format_detector import CitationFormat, detect_format
-from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
-from utils.doi_extractor import extract_doi, extract_arxiv_id
+from utils.doi_extractor import extract_arxiv_id, extract_doi
 from utils.text_cleaning import (
     YEAR_PATTERN,
     is_valid_year,
@@ -18,6 +16,9 @@ from utils.text_cleaning import (
     strip_source_noise,
 )
 from utils.url_cleaner import find_best_url
+
+from services.citation_format_detector import CitationFormat, detect_format
+from services.scoring_constants import LOW_PARSE_CONFIDENCE_THRESHOLD
 
 # Leading inline parenthetical citation that some refs duplicate before the
 # real author list, e.g. "(Jenkins vd., 2024) Jenkins, A., ve diğerleri (2024)".
@@ -77,7 +78,7 @@ def _extract_source_fields_regex(raw_text: str) -> ParsedSource:
         result.url = find_best_url(text)
 
     # Detect citation format
-    fmt, fmt_confidence = detect_format(text)
+    fmt, _fmt_confidence = detect_format(text)
     result.citation_format = fmt.value if fmt else None
 
     # Find author boundary using Kurallar rules
@@ -500,7 +501,7 @@ def _extract_title_journal_apa_harvard(
     if year_end < 0:
         return _extract_title_journal_unknown_format(text, author_end, year_start, year_end)
 
-    after_year = text[year_end:].strip().lstrip(".)].").strip()
+    after_year = text[year_end:].strip().lstrip(".)]").strip()
     if not after_year:
         return "", None
 

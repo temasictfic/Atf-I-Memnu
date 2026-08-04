@@ -23,7 +23,6 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
-
 PARTICLES: frozenset[str] = frozenset({
     "van", "von", "de", "der", "den", "del", "della", "di", "da", "du",
     "le", "la", "el", "bin", "ibn", "af", "av", "zu", "ten", "ter",
@@ -243,12 +242,11 @@ def _last_names_match(a: str, b: str) -> bool:
         return True
     # Multi-word surname salvage: handles "van der berg" vs "berg"
     # or "de la cruz" vs "cruz".
-    if " " in a or " " in b:
-        if fuzz.token_set_ratio(a, b) >= 90:
-            a_tokens = {t for t in a.split() if len(t) >= 3}
-            b_tokens = {t for t in b.split() if len(t) >= 3}
-            if a_tokens & b_tokens:
-                return True
+    if (" " in a or " " in b) and fuzz.token_set_ratio(a, b) >= 90:
+        a_tokens = {t for t in a.split() if len(t) >= 3}
+        b_tokens = {t for t in b.split() if len(t) >= 3}
+        if a_tokens & b_tokens:
+            return True
     return False
 
 
@@ -270,39 +268,39 @@ def _name_pair_matches(s: ParsedName, c: ParsedName) -> bool:
     """True when two parsed names refer to the same person (best effort)."""
     last_ok = _last_names_match(s.last, c.last)
     compound_fallback = False
-    if not last_ok:
-        # Compound-surname fallback: some APIs return the "primary" family
-        # name only, with the rest of the surname in the given-name field
-        # (e.g. Crossref "Sorkhabi, Majid Memarian" vs source "M. Memarian",
-        #  or "Gao, Bo-cai" vs wrongly-cited "G. Bo-Cai").
-        # Accept when one side's surname appears as a whole token (or token
-        # sequence) in the other side's given-name string.
-        if (
-            _contains_whole_token(c.given_full, s.last)
-            or _contains_whole_token(s.given_full, c.last)
-        ):
-            last_ok = True
-            compound_fallback = True
-    if not last_ok:
-        # Typo tolerance: accepted when both sides carry overlapping
-        # initials (very unlikely to be a different person).  Two
-        # flavors:
-        #   1. Near-match: fuzz.ratio >= 78 ("Dewor" vs "Devor")
-        #   2. Shared prefix >= 4 chars for longer names ("Akalin" vs
-        #      "Akalm" — OCR error on Turkish diacritics)
-        if (
-            s.first_initials
-            and c.first_initials
-            and (set(s.first_initials) & set(c.first_initials))
-        ):
-            if fuzz.ratio(s.last, c.last) >= 78:
-                last_ok = True
-            elif (
+    # Compound-surname fallback: some APIs return the "primary" family
+    # name only, with the rest of the surname in the given-name field
+    # (e.g. Crossref "Sorkhabi, Majid Memarian" vs source "M. Memarian",
+    #  or "Gao, Bo-cai" vs wrongly-cited "G. Bo-Cai").
+    # Accept when one side's surname appears as a whole token (or token
+    # sequence) in the other side's given-name string.
+    if not last_ok and (
+        _contains_whole_token(c.given_full, s.last)
+        or _contains_whole_token(s.given_full, c.last)
+    ):
+        last_ok = True
+        compound_fallback = True
+    # Typo tolerance: accepted when both sides carry overlapping
+    # initials (very unlikely to be a different person).  Two
+    # flavors:
+    #   1. Near-match: fuzz.ratio >= 78 ("Dewor" vs "Devor")
+    #   2. Shared prefix >= 4 chars for longer names ("Akalin" vs
+    #      "Akalm" — OCR error on Turkish diacritics)
+    if (
+        not last_ok
+        and s.first_initials
+        and c.first_initials
+        and (set(s.first_initials) & set(c.first_initials))
+        and (
+            fuzz.ratio(s.last, c.last) >= 78
+            or (
                 len(s.last) >= 5
                 and len(c.last) >= 5
                 and s.last[:4] == c.last[:4]
-            ):
-                last_ok = True
+            )
+        )
+    ):
+        last_ok = True
     if not last_ok:
         return False
     # Initial disambiguation: skip when we matched via the compound-surname
@@ -311,10 +309,7 @@ def _name_pair_matches(s: ParsedName, c: ParsedName) -> bool:
     # initials.
     if compound_fallback:
         return True
-    if s.first_initials and c.first_initials:
-        if not (set(s.first_initials) & set(c.first_initials)):
-            return False
-    return True
+    return not (s.first_initials and c.first_initials and not set(s.first_initials) & set(c.first_initials))
 
 
 def _parse_nonempty(authors: list[str]) -> list[ParsedName]:

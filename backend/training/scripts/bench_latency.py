@@ -14,10 +14,9 @@ import json
 import statistics
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
-
 
 DEFAULT_MERGED_DIR = Path("backend/training/data/merged")
 DEFAULT_REPORTS_DIR = Path("backend/training/reports")
@@ -42,6 +41,8 @@ def build_hf_pipeline(model_id_or_path: str | Path):
     from transformers import (
         AutoModelForTokenClassification,
         AutoTokenizer,
+    )
+    from transformers import (
         pipeline as hf_pipeline,
     )
 
@@ -52,7 +53,8 @@ def build_hf_pipeline(model_id_or_path: str | Path):
 
 def build_ort_pipeline(model_path: Path):
     from optimum.onnxruntime import ORTModelForTokenClassification
-    from transformers import AutoTokenizer, pipeline as hf_pipeline
+    from transformers import AutoTokenizer
+    from transformers import pipeline as hf_pipeline
 
     tokenizer = AutoTokenizer.from_pretrained(str(model_path))
     onnx_files = sorted(model_path.glob("*.onnx"))
@@ -170,7 +172,7 @@ def main() -> int:
         print(f"\n=== {name} ===")
         try:
             pipeline_obj = builder()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f"  ! failed to load: {exc}", file=sys.stderr)
             continue
 

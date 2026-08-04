@@ -97,7 +97,7 @@ def _detect_ort_provider() -> str:
         if "CUDAExecutionProvider" in available:
             logger.info("GPU detected: using CUDA execution provider")
             return "CUDAExecutionProvider"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("Could not query ONNX Runtime providers: %s", exc)
     logger.info("No GPU provider found; using CPU execution provider")
     return "CPUExecutionProvider"
@@ -184,7 +184,7 @@ def _aggregate_simple(tokens: list[dict]) -> list[dict]:
                 current = None
             continue
 
-        if label.startswith("B-") or label.startswith("I-"):
+        if label.startswith(("B-", "I-")):
             prefix = label[0]
             entity_type = label[2:]
         else:
@@ -312,7 +312,7 @@ async def get_pipeline() -> Any | None:
             loop = asyncio.get_running_loop()
             _pipeline = await loop.run_in_executor(None, _load_pipeline_sync)
             return _pipeline
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             _load_error = str(e)
             logger.error("Failed to load NER pipeline: %s", e)
             return None
@@ -332,7 +332,7 @@ async def preload_pipeline() -> None:
     to clear that window without adding meaningful startup latency to a
     successful cold-start.
     """
-    global _preload_complete, _load_error
+    global _preload_complete
     if not settings.ner_enabled:
         logger.info("NER disabled, skipping model preload")
         _preload_complete = True

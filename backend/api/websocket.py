@@ -31,7 +31,7 @@ class ConnectionManager:
             for ws in self.connections:
                 try:
                     await ws.send_text(message)
-                except Exception as e:
+                except Exception:  # noqa: BLE001
                     # print(f"[WS Broadcast] Send failed: {type(e).__name__}: {e}", flush=True)
                     disconnected.append(ws)
         for ws in disconnected:
@@ -58,11 +58,11 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             try:
-                msg = json.loads(data)
+                json.loads(data)
             except json.JSONDecodeError:
                 pass
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"[WS] Endpoint error: {type(e).__name__}: {e}", flush=True)
         manager.disconnect(websocket)

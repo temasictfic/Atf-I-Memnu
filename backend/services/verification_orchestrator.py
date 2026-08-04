@@ -6,10 +6,18 @@ from typing import Any
 
 from api.websocket import manager
 from models.settings import DatabaseConfig
-from models.source import SourceRectangle, ParsedSource
-from models.verification_result import VerificationResult, MatchResult
+from models.source import ParsedSource, SourceRectangle
+from models.verification_result import MatchResult, VerificationResult
+from scrapers.rate_limiter import rate_limiter
+from utils.text_cleaning import strip_source_noise
+from verifiers._http import RateLimitedError, UnauthorizedError
+
 from services.cache_store import save_verify_cache
-from services.match_scorer import classify_decision, determine_verification_status, score_to_band
+from services.match_scorer import (
+    classify_decision,
+    determine_verification_status,
+    score_to_band,
+)
 from services.scoring_constants import (
     LOW_PARSE_CONFIDENCE_THRESHOLD,
     STATUS_MEDIUM_THRESHOLD,
@@ -22,12 +30,8 @@ from services.search_settings import (
 )
 from services.search_urls import build_google_urls, build_search_url
 from services.settings_store import get_current_settings
-from scrapers.rate_limiter import rate_limiter
 from services.source_extractor import extract_source_fields
 from services.url_checker import check_urls, is_doi_or_arxiv_url
-from utils.text_cleaning import strip_source_noise
-from verifiers._http import RateLimitedError, UnauthorizedError
-
 
 # Short-timeout retry pass: DBs that timed out on the main pass get one more
 # shot with a tight ceiling. 5 s is long enough for a healthy API to respond
@@ -227,7 +231,7 @@ async def verify_pdf_sources(
         # Persist results to disk cache
         try:
             save_verify_cache(pdf_id, results)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
 
@@ -278,7 +282,7 @@ async def verify_single_source(
     # Persist updated results to disk cache
     try:
         save_verify_cache(pdf_id, results)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
 
@@ -434,14 +438,14 @@ async def _verify_source(
         if url_check_task is not None:
             try:
                 url_liveness = await asyncio.wait_for(url_check_task, timeout=12.0)
-            except (asyncio.TimeoutError, Exception):
+            except (asyncio.TimeoutError, Exception):  # noqa: BLE001
                 url_liveness = {u: False for u in urls_to_check}
 
     except asyncio.CancelledError:
         cancelled = True
         await manager.send_log("info", f"Source {source_id} verification cancelled",
                               pdf_id=pdf_id, source_id=source_id)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         await manager.send_log("error", f"Source {source_id} verification error: {e}",
                               pdf_id=pdf_id, source_id=source_id)
     finally:
@@ -453,31 +457,28 @@ async def _verify_source(
             url_check_task.cancel()
             try:
                 await url_check_task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                 pass
 
         # A replacement run may already own this source. Never let the older
         # task overwrite its in-progress or settled result.
-        if _active_source_jobs.get(source_key) != job_id:
-            return
-
-        if cancelled:
-            # Cancellation is not a bibliographic judgment. Restore the prior
-            # settled row, or remove a first-run placeholder, instead of
-            # finalizing partial work as Low/Fabricated and caching it.
-            if previous_result is not None and previous_result.status != "in_progress":
-                results_store[pdf_id][source_id] = previous_result
-            else:
-                results_store[pdf_id].pop(source_id, None)
-            _active_source_jobs.pop(source_key, None)
-            return
-
-        await _finalize_result(
-            results_store, pdf_id, source_id, parsed, all_matches,
-            databases_searched, url_liveness, job_id=job_id,
-        )
         if _active_source_jobs.get(source_key) == job_id:
-            _active_source_jobs.pop(source_key, None)
+            if cancelled:
+                # Cancellation is not a bibliographic judgment. Restore the prior
+                # settled row, or remove a first-run placeholder, instead of
+                # finalizing partial work as Low/Fabricated and caching it.
+                if previous_result is not None and previous_result.status != "in_progress":
+                    results_store[pdf_id][source_id] = previous_result
+                else:
+                    results_store[pdf_id].pop(source_id, None)
+                _active_source_jobs.pop(source_key, None)
+            else:
+                await _finalize_result(
+                    results_store, pdf_id, source_id, parsed, all_matches,
+                    databases_searched, url_liveness, job_id=job_id,
+                )
+                if _active_source_jobs.get(source_key) == job_id:
+                    _active_source_jobs.pop(source_key, None)
 
 
 async def _run_tier1_apis(
@@ -501,16 +502,16 @@ async def _run_tier1_apis(
     main-pass search raised ``TimeoutError`` — so callers can drive the
     retry phase without re-deriving that state from event logs.
     """
-    from verifiers.crossref import search as crossref_search
-    from verifiers.openalex import search as openalex_search
-    from verifiers.openaire import search as openaire_search
     from verifiers.arxiv import search as arxiv_search
-    from verifiers.semantic_scholar import search as semantic_search
-    from verifiers.europe_pmc import search as europe_pmc_search
-    from verifiers.trdizin import search as trdizin_search
-    from verifiers.pubmed import search as pubmed_search
-    from verifiers.open_library import search as open_library_search
     from verifiers.base import search as base_search
+    from verifiers.crossref import search as crossref_search
+    from verifiers.europe_pmc import search as europe_pmc_search
+    from verifiers.open_library import search as open_library_search
+    from verifiers.openaire import search as openaire_search
+    from verifiers.openalex import search as openalex_search
+    from verifiers.pubmed import search as pubmed_search
+    from verifiers.semantic_scholar import search as semantic_search
+    from verifiers.trdizin import search as trdizin_search
     from verifiers.wos import search as wos_search
 
     # Map database id → (display name, search function)
@@ -660,7 +661,7 @@ async def _run_tier1_apis(
                         "search_url": fallback_url,
                         "job_id": job_id,
                     })
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     searched.append(name)
                     await manager.send_log("warning", f"{name} search failed: {e}",
                                           pdf_id=pdf_id, source_id=source_id, database=name)
@@ -694,7 +695,7 @@ async def _run_tier1_apis(
                         "search_url": fallback_url,
                         "job_id": job_id,
                     }))
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
             raise
 
@@ -718,7 +719,7 @@ async def _run_tier1_apis(
                 # emitted the "skipped" event. Swallow here so the
                 # as_completed loop keeps progressing.
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 # Other exceptions are already handled inside run_verifier
                 # (they broadcast their own error/timeout/rate_limited
                 # events). Don't let them break the as_completed walk.

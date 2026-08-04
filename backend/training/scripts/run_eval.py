@@ -14,10 +14,9 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
-
 
 DEFAULT_MERGED_DIR = Path("backend/training/data/merged")
 DEFAULT_REPORTS_DIR = Path("backend/training/reports")
@@ -40,6 +39,8 @@ def build_hf_pipeline(model_id_or_path: str | Path):
     from transformers import (
         AutoModelForTokenClassification,
         AutoTokenizer,
+    )
+    from transformers import (
         pipeline as hf_pipeline,
     )
 
@@ -55,7 +56,8 @@ def build_hf_pipeline(model_id_or_path: str | Path):
 
 def build_ort_pipeline(model_path: Path):
     from optimum.onnxruntime import ORTModelForTokenClassification
-    from transformers import AutoTokenizer, pipeline as hf_pipeline
+    from transformers import AutoTokenizer
+    from transformers import pipeline as hf_pipeline
 
     tokenizer = AutoTokenizer.from_pretrained(str(model_path))
     # Quantized dirs have `model_quantized.onnx`, plain dirs have `model.onnx`.
@@ -156,7 +158,7 @@ def downstream_match_rate(
         total += 1
         try:
             parsed = extract_fn(pipeline_obj, raw_text)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112
             continue
         title = getattr(parsed, "title", None)
         authors = getattr(parsed, "authors", None) or []
@@ -245,7 +247,7 @@ def main() -> int:
         t0 = time.perf_counter()
         try:
             pipeline_obj = builder()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f"  ! failed to load: {exc}", file=sys.stderr)
             continue
 

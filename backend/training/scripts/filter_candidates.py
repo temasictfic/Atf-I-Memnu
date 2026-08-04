@@ -11,8 +11,8 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 try:
     from backend.utils.text_cleaning import strip_source_noise
