@@ -22,7 +22,7 @@ const isDev = !app.isPackaged
 // for containing the literal "Electron/..." token. Uses the real bundled Chrome
 // version so the string stays current across Electron upgrades.
 function buildChromeUserAgent(): string {
-  const chromeVersion = process.versions.chrome || '150.0.7871.129'
+  const chromeVersion = process.versions.chrome || '150.0.7871.212'
   return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
 }
 
