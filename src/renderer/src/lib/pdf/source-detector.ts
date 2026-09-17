@@ -16,14 +16,15 @@ import { makeSourceId } from '../utils/source-id'
 // Strict header patterns — must match the whole line.
 const HEADER_PATTERNS_STRICT: RegExp[] = [
   /^\s*(?:EK[-\s]?\d*\s*[A-Z]?[:.\s]*)?\s*(?:KAYNAKLAR|KAYNAK[CÇ]A)\s*$/i,
-  /^\s*(?:SOURCES?|BIBLIOGRAPHY|WORKS?\s+CITED)\s*$/i,
+  /^\s*(?:APPENDIX\s+[\dA-Z]+\s*[:.\-–—]?\s*)?(?:REFERENCES?|SOURCES?|BIBLIOGRAPHY|WORKS?\s+CITED)\s*$/i,
+  /^\s*(?:[IVXLC]+|\d+)\s*[.):\-–—]\s*(?:REFERENCES?|SOURCES?|BIBLIOGRAPHY|WORKS?\s+CITED)\s*$/i,
   /^\s*LITERAT[UÜ]R\s*$/i,
 ]
 
 // Looser patterns for short lines that might have trailing punctuation.
 const HEADER_PATTERNS_LOOSE: RegExp[] = [
   /(?:EK[-\s]?\d*\s*[A-Z]?[:.\s]*)?\s*(?:KAYNAKLAR|KAYNAK[CÇ]A)/i,
-  /^(?:SOURCES?|BIBLIOGRAPHY)\s*[:.]*\s*$/i,
+  /(?:APPENDIX\s+[\dA-Z]+\s*[:.\-–—]?\s*)?(?:REFERENCES?|SOURCES?|BIBLIOGRAPHY)/i,
 ]
 
 // Individual source-number patterns, matched at start-of-line.
