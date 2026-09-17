@@ -42,7 +42,6 @@ class AppSettings(BaseModel):
     # verifiers as soon as one of them returns a saturated composite score
     # (>= 1.0) with a plausible title. Off → every enabled DB is always
     # queried, even when an early result already proves the citation.
-    strong_match_enabled: bool = True
     strong_match_enabled: bool = False
     # Persisted only — frontend-driven. The renderer decides whether to render
     # the "Bibliographic details" block in best-match cards on the verification
