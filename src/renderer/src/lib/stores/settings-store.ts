@@ -151,6 +151,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     search_timeout: 30,
     max_concurrent_apis: 5,
     max_concurrent_sources_per_pdf: 3,
+    strong_match_enabled: false,
     language: 'tr',
     auto_callout_text_fabricated: 'Literatürde bulunmamaktadır.',
     auto_callout_text_citation:
