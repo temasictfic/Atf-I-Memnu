@@ -2708,7 +2708,13 @@ export default function VerificationPage() {
                               ? t('verification.status.searchingDb', { db: card.progress.currentDb })
                               : card.result?.status === 'in_progress'
                                 ? t('verification.status.waiting')
-                                : t('verification.status.searchedCount', { count: card.progress.checkedDbs.length })}
+                                : (() => {
+                                    const actuallySearched = card.progress!.checkedDbs.filter((d: DbCheckEntry) => d.status !== 'skipped').length
+                                    const skippedCount = card.progress!.checkedDbs.filter((d: DbCheckEntry) => d.status === 'skipped').length
+                                    return skippedCount > 0
+                                      ? t('verification.status.searchedCountWithSkipped', { count: actuallySearched, skipped: skippedCount })
+                                      : t('verification.status.searchedCount', { count: actuallySearched })
+                                  })()}
                           </span>
                           <div className={styles['progress-dots']}>
                             {enabledDatabases.map(db => {

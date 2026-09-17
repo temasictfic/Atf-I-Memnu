@@ -380,7 +380,8 @@
       "in_progress": "Aranıyor…",
       "searchingDb": "{{db}} aranıyor…",
       "waiting": "Bekleniyor…",
-      "searchedCount": "{{count}} arandı"
+      "searchedCount": "{{count}} arandı",
+      "searchedCountWithSkipped": "{{count}} arandı, {{skipped}} atlandı"
     },
     "titleShort": "başlık",
     "validTag": "Geçerli",

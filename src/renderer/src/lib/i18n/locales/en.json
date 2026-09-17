@@ -380,7 +380,8 @@
       "in_progress": "Searching…",
       "searchingDb": "Searching {{db}}…",
       "waiting": "Waiting…",
-      "searchedCount": "{{count}} searched"
+      "searchedCount": "{{count}} searched",
+      "searchedCountWithSkipped": "{{count}} searched, {{skipped}} skipped"
     },
     "titleShort": "title",
     "validTag": "Valid",
