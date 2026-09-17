@@ -4,7 +4,7 @@ export type ExclusionInfo =
   | { excluded: true; reason: string; kind: 'user' | 'word' | 'non-doi-url' | 'year-before' }
   | { excluded: false }
 
-const URL_RE = /https?:\/\/[^\s<>()]+/gi
+const URL_RE = /(?:https?:\/\/|www\.)[^\s<>()]+/gi
 const DOI_RE = /\b10\.\d{4,9}\/\S+/gi
 const YEAR_RE = /(?:19|20)\d{2}/
 
@@ -41,7 +41,12 @@ interface Reasons {
 function urlHostname(rawUrl: string): string | null {
   try {
     // Citation punctuation often immediately follows a URL.
-    return new URL(rawUrl.replace(/[.,;:)}\]"']+$/, '')).hostname.toLowerCase()
+    let cleaned = rawUrl.replace(/[.,;:)}\]"']+$/, '')
+    // Handle URLs without a protocol prefix (e.g. www.example.org).
+    if (!/^https?:\/\//i.test(cleaned)) {
+      cleaned = 'https://' + cleaned
+    }
+    return new URL(cleaned).hostname.toLowerCase()
   } catch {
     return null
   }
