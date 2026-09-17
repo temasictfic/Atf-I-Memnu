@@ -27,7 +27,7 @@ _DEFAULT_EXCLUSION_CONTENT = """# Varsayılan muaf listesi
 # @non-doi-url satırı silinirse DOI olmayan bağlantı filtresi devre dışı kalır.
 # DOI olmayan bağlantı istisnaları alan adı olarak tek başına yazılır, alt alan adları da eşleşir.
 
-@year-before 2000 | 2000 öncesi yayın
+@year-before 2001 | 2000 öncesi yayın
 @non-doi-url | DOI olmayan bağlantı
 
 # DOI olmayan bağlantı istisnaları (Muaf olmayan bağlantılar. Her satır: alan adı)
@@ -63,6 +63,13 @@ Konferans | Bildiri
 Book Chapter | Kitap Bölümü
 Kitap Bölümü | Kitap Bölümü
 CST Studio Suite | Diğer
+preprint | ön baskı
+ISBN | Kitap
+Patent No | Patent
+Patent Number | Patent
+T.C. Sağlık Bakanlığı | Diğer
+T.C. Milli Eğitim Bakanlığı | Diğer
+Savunma Sanayi Başkanlığı | Diğer
 """
 
 
