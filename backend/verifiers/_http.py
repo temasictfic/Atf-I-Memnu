@@ -228,9 +228,9 @@ def build_headers() -> dict[str, str]:
     """
     email = get_polite_pool_email()
     if email:
-        ua = f"AtfiMemnu/2.15 (Reference Search and Verification; mailto:{email})"
+        ua = f"AtfiMemnu/2.16 (Reference Search and Verification; mailto:{email})"
     else:
-        ua = "AtfiMemnu/2.15 (Reference Search and Verification)"
+        ua = "AtfiMemnu/2.16 (Reference Search and Verification)"
     return {"User-Agent": ua}
 
 
