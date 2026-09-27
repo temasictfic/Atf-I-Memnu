@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, net } from 'electron'
 import { mkdirSync } from 'fs'
 import { readdir, readFile, stat, writeFile } from 'fs/promises'
 import { extname, join } from 'path'
@@ -325,19 +325,59 @@ ipcMain.handle('dialog:selectPdfs', async () => {
   return result.canceled ? [] : result.filePaths
 })
 
-ipcMain.handle('dialog:selectTextFile', async (_event, defaultPath?: string) => {
-  if (!mainWindow) return null
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
-    title: 'Select Text File',
-    filters: [
-      { name: 'Text', extensions: ['txt'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-    defaultPath: typeof defaultPath === 'string' && defaultPath.length > 0 ? defaultPath : undefined,
-  })
-  return result.canceled ? null : result.filePaths[0]
-})
+// ---------- Exclusion list fetch (online URL with offline cache) ----------
+
+function getExclusionCachePath(): string {
+  return join(app.getPath('userData'), 'output', 'exclusion-cache.txt')
+}
+
+ipcMain.handle(
+  'exclusion:fetch',
+  async (_event, url: string): Promise<{ text: string | null; fromCache: boolean; error?: string }> => {
+    if (typeof url !== 'string' || url.length === 0) {
+      return { text: null, fromCache: false, error: 'No URL provided' }
+    }
+
+    const cachePath = getExclusionCachePath()
+
+    try {
+      const response = await net.fetch(url, {
+        headers: { 'Cache-Control': 'no-cache' },
+      })
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+      const text = await response.text()
+
+      // Save to cache for offline use
+      try {
+        const dir = join(app.getPath('userData'), 'output')
+        mkdirSync(dir, { recursive: true })
+        await writeFile(dir + '/exclusion-cache.txt', text, 'utf-8')
+      } catch {
+        // Cache write failure is non-fatal
+      }
+
+      return { text, fromCache: false }
+    } catch (fetchErr) {
+      // Fetch failed — try cache
+      try {
+        const cached = await readFile(cachePath, 'utf-8')
+        return {
+          text: cached,
+          fromCache: true,
+          error: `Fetch failed, using cached version: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+        }
+      } catch {
+        return {
+          text: null,
+          fromCache: false,
+          error: `Fetch failed and no cache available: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`,
+        }
+      }
+    }
+  }
+)
 
 ipcMain.handle('fs:readTextFile', async (_event, filePath: string): Promise<string | null> => {
   if (typeof filePath !== 'string' || filePath.length === 0) return null

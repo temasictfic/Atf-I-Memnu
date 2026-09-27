@@ -16,11 +16,11 @@ const electronAPI = {
   selectPdfs: (): Promise<string[]> => {
     return ipcRenderer.invoke('dialog:selectPdfs')
   },
-  selectTextFile: (defaultPath?: string): Promise<string | null> => {
-    return ipcRenderer.invoke('dialog:selectTextFile', defaultPath)
-  },
   readTextFile: (filePath: string): Promise<string | null> => {
     return ipcRenderer.invoke('fs:readTextFile', filePath)
+  },
+  fetchExclusionList: (url: string): Promise<{ text: string | null; fromCache: boolean; error?: string }> => {
+    return ipcRenderer.invoke('exclusion:fetch', url)
   },
   openPath: (filePath: string): Promise<{ ok: boolean; error: string | null }> => {
     return ipcRenderer.invoke('shell:openPath', filePath)

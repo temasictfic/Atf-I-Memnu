@@ -22,20 +22,28 @@ function bareDomain(value: string): string | null {
   return BARE_DOMAIN_RE.test(domain) ? domain : null
 }
 
-export function parseExclusionList(text: string): ExclusionEntry[] {
+/**
+ * Parse a Google-Sheets-published TSV into ExclusionEntry[]. 
+ * 
+ * TSV format: Column A = word/phrase/@directive, Column B = reason.
+ * Lines where Column A starts with '#' are comments (skipped).
+ * Empty rows are skipped.
+ */
+export function parseExclusionList(tsv: string): ExclusionEntry[] {
   const out: ExclusionEntry[] = []
-  for (const rawLine of text.split(/\r?\n/)) {
+  for (const rawLine of tsv.split(/\r?\n/)) {
     const line = rawLine.trim()
     if (!line || line.startsWith('#')) continue
-    const sepIdx = line.indexOf('|')
+    // Tab-separated: split into at most 2 parts
+    const tabIdx = line.indexOf('\t')
     let word: string
     let reason: string
-    if (sepIdx === -1) {
+    if (tabIdx === -1) {
       word = line
       reason = ''
     } else {
-      word = line.slice(0, sepIdx).trim()
-      reason = line.slice(sepIdx + 1).trim()
+      word = line.slice(0, tabIdx).trim()
+      reason = line.slice(tabIdx + 1).trim()
     }
     if (!word) continue
     const [directive, argument] = word.toLowerCase().split(/\s+/, 2)
@@ -50,7 +58,7 @@ export function parseExclusionList(text: string): ExclusionEntry[] {
       // Directives are opt-in syntax. Ignore unknown or malformed ones
       // rather than accidentally treating them as a literal exclusion word.
       continue
-    } else if (sepIdx === -1 && bareDomain(word)) {
+    } else if (!reason && bareDomain(word)) {
       const domain = bareDomain(word)
       // A bare hostname is an allowlist entry, never a text exclusion.
       out.push({ word: domain!, reason: '', kind: 'non-doi-domain', domain: domain! })

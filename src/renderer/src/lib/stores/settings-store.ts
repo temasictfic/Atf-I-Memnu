@@ -38,11 +38,14 @@ interface SettingsState {
   // autosave normally.
   settingsLoaded: boolean
   saveStatus: 'idle' | 'saving' | 'saved' | 'error'
-  // Parsed contents of the exclusion-words file (renderer-only — not
-  // persisted to backend). Re-loaded on startup, when the file path
-  // changes, and on explicit reload from the settings page.
+  // Parsed contents of the exclusion list (renderer-only — not persisted
+  // to backend). Fetched from the configured URL on startup and on
+  // explicit update from the settings page. Falls back to local cache
+  // when the URL is unreachable.
   exclusionEntries: ExclusionEntry[]
   exclusionLoadError: string | null
+  exclusionFromCache: boolean
+  exclusionLastUpdated: string | null
   loadSettings: () => Promise<void>
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   toggleDatabase: (dbId: string) => void
@@ -52,7 +55,7 @@ interface SettingsState {
   updateApiKey: (key: string, value: string) => void
   connectOpenaire: (refreshToken: string) => Promise<{ ok: boolean; error?: string }>
   disconnectOpenaire: () => Promise<void>
-  reloadExclusionFile: () => Promise<void>
+  reloadExclusionList: () => Promise<void>
 }
 
 // Auto-save debounce. Two durations: a short one for cheap, idempotent
@@ -142,9 +145,11 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   settingsLoaded: false,
   exclusionEntries: [],
   exclusionLoadError: null,
+  exclusionFromCache: false,
+  exclusionLastUpdated: null,
   settings: {
     exported_pdf_dir: '',
-    exclusion_words_file_path: '',
+    exclusion_list_url: '',
     databases: defaultDatabases,
     api_keys: {},
     polite_pool_email: '',
@@ -169,10 +174,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       if (s.language && i18n.language !== s.language) {
         i18n.changeLanguage(s.language)
       }
-      // Pull the exclusion file off disk now that we know its path. Any
-      // failure is non-fatal — the renderer just treats the list as empty
-      // and surfaces the error in the settings page.
-      void get().reloadExclusionFile()
+      // Fetch the exclusion list from the configured URL (or default).
+      // Any failure is non-fatal — the renderer just treats the list as
+      // empty and surfaces the error in the settings page.
+      void get().reloadExclusionList()
     } catch {
       // Don't flip settingsLoaded on failure. While the renderer doesn't
       // know the on-disk state we MUST NOT autosave — a save with the
@@ -188,29 +193,40 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       i18n.changeLanguage(value)
     }
     _debouncedSave(get, key)
-    // Re-read the exclusion file whenever its path changes so word/reason
-    // matches stay in sync without needing an explicit Reload click.
-    if (key === 'exclusion_words_file_path') {
-      void get().reloadExclusionFile()
+    // Re-fetch the exclusion list whenever its URL changes so word/reason
+    // matches stay in sync without needing an explicit Update click.
+    if (key === 'exclusion_list_url') {
+      void get().reloadExclusionList()
     }
   },
 
-  reloadExclusionFile: async () => {
-    const path = get().settings.exclusion_words_file_path
-    if (!path) {
-      set({ exclusionEntries: [], exclusionLoadError: null })
+  reloadExclusionList: async () => {
+    const url = get().settings.exclusion_list_url
+    if (!url) {
+      set({ exclusionEntries: [], exclusionLoadError: null, exclusionFromCache: false })
       return
     }
     try {
-      const text = await window.electronAPI.readTextFile(path)
-      if (text === null) {
-        set({ exclusionEntries: [], exclusionLoadError: 'not_found' })
-        return
+      const result = await window.electronAPI.fetchExclusionList(url)
+      if (result.text !== null) {
+        set({
+          exclusionEntries: parseExclusionList(result.text),
+          exclusionLoadError: result.error || null,
+          exclusionFromCache: result.fromCache,
+          exclusionLastUpdated: result.fromCache
+            ? get().exclusionLastUpdated
+            : new Date().toISOString(),
+        })
+      } else {
+        set({
+          exclusionEntries: [],
+          exclusionLoadError: result.error || 'fetch_failed',
+          exclusionFromCache: false,
+        })
       }
-      set({ exclusionEntries: parseExclusionList(text), exclusionLoadError: null })
     } catch (err) {
-      console.error('Failed to read exclusion file:', err)
-      set({ exclusionEntries: [], exclusionLoadError: 'read_error' })
+      console.error('Failed to fetch exclusion list:', err)
+      set({ exclusionEntries: [], exclusionLoadError: 'fetch_failed', exclusionFromCache: false })
     }
   },
 

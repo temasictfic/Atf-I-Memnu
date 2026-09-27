@@ -124,15 +124,16 @@
     },
     "exclusionList": {
       "label": "Muaf Listesi",
-      "desc": "Listedeki herhangi bir kelimeyi içeren kaynaklar Muaf olur",
+      "desc": "Listedeki herhangi bir kelimeyi içeren kaynaklar Muaf olur. Çevrimiçi belgeden yüklenir.",
       "entriesLoaded": "{{count}} kayıt yüklendi",
-      "notFound": "Belirtilen yolda muaf dosyası bulunamadı.",
-      "readError": "Muaf dosyası okunamadı.",
-      "openFailed": "Muaf dosyası açılamadı.",
-      "placeholder": "Muaf .txt dosyasının yolu",
-      "reload": "Yeniden yükle",
-      "reloading": "Yükleniyor…",
-      "reloaded": "Yüklendi"
+      "fetchFailed": "Muaf listesi URL'den yüklenemedi.",
+      "fetchFailedCached": "Yükleme başarısız — önbellek kullanılıyor.",
+      "placeholder": "Google Sheets yayınlanmış TSV URL'si",
+      "update": "Güncelle",
+      "updating": "Güncelleniyor…",
+      "updated": "Güncellendi",
+      "cachedIndicator": "çevrimdışı önbellek",
+      "lastUpdated": "Güncelleme: {{date}} {{time}}"
     },
     "cache": {
       "title": "Muafiyet | Kayıtlar | Önbellek",

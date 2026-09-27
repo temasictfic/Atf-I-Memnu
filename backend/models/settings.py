@@ -13,13 +13,14 @@ class AppSettings(BaseModel):
     # written to. Blank means "prompt me each time" via the renderer's
     # native file-save dialog.
     exported_pdf_dir: str = ""
-    # Path to a user-editable .txt file listing words/phrases that mark a
-    # source as "Muaf" (excluded from verification). Format: one entry per
-    # line, `word | reason`; lines starting with `#` are comments. Empty
-    # string means "not yet bootstrapped" — `_bootstrap_exclusion_file()`
-    # writes a default file alongside settings.json on first launch and
-    # populates this path.
-    exclusion_words_file_path: str = ""
+    # URL to a published Google Sheets TSV (or any text URL) listing
+    # words/phrases that mark a source as "Muaf" (excluded from
+    # verification). Format: TSV with two columns (word/phrase, reason).
+    # Lines starting with `#` in the first column are comments. Empty
+    # string means "use the hardcoded default URL". The Electron main
+    # process fetches this URL on startup and caches the result locally
+    # for offline use.
+    exclusion_list_url: str = ""
     databases: list[DatabaseConfig] = []
     api_keys: dict[str, str] = {}
     # Contact email advertised to Crossref / arXiv / OpenAlex polite pools.

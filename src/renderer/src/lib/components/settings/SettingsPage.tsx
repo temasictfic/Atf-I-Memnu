@@ -95,6 +95,8 @@ export default function SettingsPage() {
   const saveStatus = useSettingsStore(s => s.saveStatus)
   const exclusionEntries = useSettingsStore(s => s.exclusionEntries)
   const exclusionLoadError = useSettingsStore(s => s.exclusionLoadError)
+  const exclusionFromCache = useSettingsStore(s => s.exclusionFromCache)
+  const exclusionLastUpdated = useSettingsStore(s => s.exclusionLastUpdated)
   const {
     toggleDatabase,
     updateSetting,
@@ -103,7 +105,7 @@ export default function SettingsPage() {
     updateApiKey,
     connectOpenaire,
     disconnectOpenaire,
-    reloadExclusionFile,
+    reloadExclusionList,
   } = useSettingsStore.getState()
   const [cacheOpenMessage, setCacheOpenMessage] = useState<string | null>(null)
   const [scholarSessionMessage, setScholarSessionMessage] = useState<string | null>(null)
@@ -144,41 +146,20 @@ export default function SettingsPage() {
     }
   }
 
-  const handleBrowseExclusionFile = async () => {
-    setExclusionMessage(null)
-    try {
-      const path = await window.electronAPI.selectTextFile(settings.exclusion_words_file_path ?? '')
-      if (path) updateSetting('exclusion_words_file_path', path)
-    } catch (error) {
-      console.error('Failed to pick exclusion file:', error)
-      setExclusionMessage(t('settings.exclusionList.openFailed'))
-    }
-  }
-
-  const handleOpenExclusionFile = async () => {
-    setExclusionMessage(null)
-    const path = settings.exclusion_words_file_path
-    if (!path) return
-    try {
-      const result = await window.electronAPI.openPath(path)
-      if (!result.ok) {
-        setExclusionMessage(t('settings.exclusionList.openFailed'))
-        if (result.error) console.error('shell.openPath error:', result.error)
+  const handleUpdateExclusionList = async () => {
+    setExclusionMessage(t('settings.exclusionList.updating'))
+    await reloadExclusionList()
+    const state = useSettingsStore.getState()
+    if (state.exclusionLoadError) {
+      if (state.exclusionFromCache) {
+        setExclusionMessage(t('settings.exclusionList.fetchFailedCached'))
+      } else {
+        setExclusionMessage(t('settings.exclusionList.fetchFailed'))
       }
-    } catch (error) {
-      console.error('Failed to open exclusion file:', error)
-      setExclusionMessage(t('settings.exclusionList.openFailed'))
+    } else {
+      setExclusionMessage(t('settings.exclusionList.updated'))
     }
-  }
-
-  const handleReloadExclusionFile = async () => {
-    setExclusionMessage(t('settings.exclusionList.reloading'))
-    await reloadExclusionFile()
-    const err = useSettingsStore.getState().exclusionLoadError
-    if (err === 'not_found') setExclusionMessage(t('settings.exclusionList.notFound'))
-    else if (err === 'read_error') setExclusionMessage(t('settings.exclusionList.readError'))
-    else setExclusionMessage(t('settings.exclusionList.reloaded'))
-    setTimeout(() => setExclusionMessage(null), 2000)
+    setTimeout(() => setExclusionMessage(null), 3000)
   }
 
   const handleOpenCacheFolder = async () => {
@@ -759,28 +740,28 @@ export default function SettingsPage() {
               <input
                 type="text"
                 className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
-                value={settings.exclusion_words_file_path ?? ''}
+                value={settings.exclusion_list_url ?? ''}
                 placeholder={t('settings.exclusionList.placeholder')}
-                onChange={e => updateSetting('exclusion_words_file_path', e.target.value)}
+                onChange={e => updateSetting('exclusion_list_url', e.target.value)}
               />
-              <button
-                type="button"
-                className={styles['action-button']}
-                onClick={handleBrowseExclusionFile}
-              >
-                {t('common.browse')}
-              </button>
             </div>
           </div>
 
           <div className={styles['setting-row']} style={{ paddingTop: 4 }}>
             <div className={styles['setting-info']}>
               <span className={styles['setting-desc']}>
-                {exclusionLoadError === 'not_found'
-                  ? t('settings.exclusionList.notFound')
-                  : exclusionLoadError === 'read_error'
-                    ? t('settings.exclusionList.readError')
-                    : t('settings.exclusionList.entriesLoaded', { count: exclusionEntries.length })}
+                {exclusionLoadError && !exclusionFromCache
+                  ? t('settings.exclusionList.fetchFailed')
+                  : t('settings.exclusionList.entriesLoaded', { count: exclusionEntries.length })}
+                {exclusionFromCache && (
+                  <> · <span style={{ color: '#b45309' }}>{t('settings.exclusionList.cachedIndicator')}</span></>
+                )}
+                {exclusionLastUpdated && (
+                  <> · {t('settings.exclusionList.lastUpdated', {
+                    date: new Date(exclusionLastUpdated).toLocaleDateString(),
+                    time: new Date(exclusionLastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  })}</>
+                )}
               </span>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -788,18 +769,9 @@ export default function SettingsPage() {
               <button
                 type="button"
                 className={styles['action-button']}
-                onClick={handleReloadExclusionFile}
-                disabled={!settings.exclusion_words_file_path}
+                onClick={handleUpdateExclusionList}
               >
-                {t('settings.exclusionList.reload')}
-              </button>
-              <button
-                type="button"
-                className={styles['action-button']}
-                onClick={handleOpenExclusionFile}
-                disabled={!settings.exclusion_words_file_path}
-              >
-                {t('common.open')}
+                {t('settings.exclusionList.update')}
               </button>
             </div>
           </div>

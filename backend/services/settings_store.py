@@ -14,64 +14,6 @@ from pathlib import Path
 from config import settings as app_config
 from models.settings import AppSettings
 
-# Default exclusion list written on first launch when the user has no
-# exclusion file path set. Kept inline (rather than read from a bundled
-# resource) so the backend works identically in dev and packaged builds
-# without depending on PyInstaller's data-file resolution. The user can
-# freely edit the resulting file via the Settings page's "Open" button —
-# we only write this content when the destination doesn't yet exist.
-_DEFAULT_EXCLUSION_CONTENT = """# Varsayılan muaf listesi
-
-# # ile başlayan satırlar yok sayılır. Eşleşme büyük/küçük harfe duyarsızdır.
-# @year-before satırı silinirse yayın yılı filtresi devre dışı kalır.
-# @non-doi-url satırı silinirse DOI olmayan bağlantı filtresi devre dışı kalır.
-# DOI olmayan bağlantı istisnaları alan adı olarak tek başına yazılır, alt alan adları da eşleşir.
-
-@year-before 2001 | 2000 öncesi yayın
-@non-doi-url | DOI olmayan bağlantı
-
-# DOI olmayan bağlantı istisnaları (Muaf olmayan bağlantılar. Her satır: alan adı)
-nature.com
-
-# Her satır: kelime | sebep
-arXiv | arXiv ön baskı, hakemli değil
-Karayolları Genel Müdürlüğü | Diğer
-OECD | Diğer
-TÜİK | Diğer
-Cumhurbaşkanlığı Strateji ve Bütçe Başkanlığı | Diğer
-National Institute of Standards and Technology | Diğer
-European Commission | Diğer
-World Economic Forum | Diğer
-European Food Safety Authority | Diğer
-Food and Agricultural Organization | Diğer
-European Union Aviation Safety Agency | Diğer
-International Air Transport Association | Diğer
-International Civil Aviation Organization | Diğer
-Türkiye Cumhuriyeti Strateji ve Bütçe Başkanlığı | Diğer
-Yüksek Lisans Tezi | Tez
-Master Thesis | Tez
-Master's thesis | Tez
-Master Dissertation | Tez
-Doktora Tezi | Tez
-PhD Thesis | Tez
-PhD's Thesis | Tez
-PhD Dissertation | Tez
-Doctoral dissertation | Tez
-Proceeding | Bildiri
-Conference | Bildiri
-Konferans | Bildiri
-Book Chapter | Kitap Bölümü
-Kitap Bölümü | Kitap Bölümü
-CST Studio Suite | Diğer
-preprint | ön baskı
-ISBN | Kitap
-Patent No | Patent
-Patent Number | Patent
-T.C. Sağlık Bakanlığı | Diğer
-T.C. Milli Eğitim Bakanlığı | Diğer
-Savunma Sanayi Başkanlığı | Diğer
-"""
-
 
 _current_settings: AppSettings | None = None
 
@@ -89,7 +31,6 @@ def _load_settings() -> AppSettings:
     settings_path = app_config.get_settings_path()
     if not settings_path.exists():
         _current_settings = AppSettings.default()
-        _current_settings = _bootstrap_exclusion_file(_current_settings)
         return _current_settings
 
     try:
@@ -117,35 +58,8 @@ def _load_settings() -> AppSettings:
     except Exception:  # noqa: BLE001
         _current_settings = AppSettings.default()
     _current_settings = _migrate_databases(_current_settings)
-    _current_settings = _bootstrap_exclusion_file(_current_settings)
     return _current_settings
 
-
-def _bootstrap_exclusion_file(s: AppSettings) -> AppSettings:
-    """Seed the exclusion-words file when no usable file exists.
-
-    Runs after settings load. Re-creates the default file (arXiv /
-    Proceedings / IEEE) whenever the configured path is empty *or* points
-    at a missing file — so deleting ``exclusion.txt`` and relaunching gets
-    the defaults back. A non-empty path that still resolves to an existing
-    file is left alone, preserving user edits and custom paths.
-    """
-    configured = Path(s.exclusion_words_file_path) if s.exclusion_words_file_path else None
-    if configured is not None and configured.is_file():
-        return s
-    target = configured if configured is not None else Path(app_config.output_dir) / "exclusion.txt"
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_DEFAULT_EXCLUSION_CONTENT, encoding="utf-8")
-    except Exception:  # noqa: BLE001
-        # If we can't write the file (read-only volume, perms), leave the
-        # path empty and let the renderer handle the missing-file case.
-        return s
-    new_path = str(target)
-    if s.exclusion_words_file_path != new_path:
-        s.exclusion_words_file_path = new_path
-        save_settings(s)
-    return s
 
 
 def _migrate_databases(s: AppSettings) -> AppSettings:

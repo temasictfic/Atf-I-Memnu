@@ -124,15 +124,16 @@
     },
     "exclusionList": {
       "label": "Exclusion List",
-      "desc": "Sources containing any listed word become Excluded",
+      "desc": "Sources containing any listed word become Excluded. Loaded from online document.",
       "entriesLoaded": "{{count}} entries loaded",
-      "notFound": "Exclusion file not found at the configured path.",
-      "readError": "Failed to read the exclusion file.",
-      "openFailed": "Failed to open the exclusion file.",
-      "placeholder": "Path to exclusion .txt file",
-      "reload": "Reload",
-      "reloading": "Reloading…",
-      "reloaded": "Reloaded"
+      "fetchFailed": "Failed to fetch the exclusion list from the URL.",
+      "fetchFailedCached": "Fetch failed — using cached version.",
+      "placeholder": "Google Sheets published TSV URL",
+      "update": "Update",
+      "updating": "Updating…",
+      "updated": "Updated",
+      "cachedIndicator": "offline cache",
+      "lastUpdated": "Updated: {{date}} {{time}}"
     },
     "cache": {
       "title": "Exclusion | Record | Cache",
