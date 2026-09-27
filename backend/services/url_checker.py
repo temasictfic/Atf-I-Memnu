@@ -17,7 +17,7 @@ import logging
 from urllib.parse import urljoin, urlparse
 
 import aiohttp
-from verifiers._http import build_headers
+from verifiers._http import build_headers, create_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,10 @@ async def check_urls(urls: list[str], timeout: float = 10.0) -> dict[str, bool]:
         return {}
 
     client_timeout = aiohttp.ClientTimeout(total=timeout)
-    async with aiohttp.ClientSession(timeout=client_timeout, headers=_build_headers()) as session:
+    connector = aiohttp.TCPConnector(ssl=create_ssl_context())
+    async with aiohttp.ClientSession(
+        timeout=client_timeout, headers=_build_headers(), connector=connector
+    ) as session:
         results = await asyncio.gather(
             *(_check_url_with_session(session, u) for u in targets),
             return_exceptions=True,

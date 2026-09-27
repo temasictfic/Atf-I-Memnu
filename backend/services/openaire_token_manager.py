@@ -27,6 +27,7 @@ from typing import Literal
 import aiohttp
 
 from services.settings_store import get_current_settings, save_settings
+from verifiers._http import create_ssl_context
 
 REFRESH_ENDPOINT = (
     "https://services.openaire.eu/uoa-user-management/api/users/getAccessToken"
@@ -116,8 +117,11 @@ async def exchange_refresh_token(
     """
     params = {"refreshToken": refresh_token}
     try:
+        ssl_ctx = create_ssl_context()
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=timeout)
+            timeout=aiohttp.ClientTimeout(total=timeout),
+            connector=connector,
         ) as session, session.get(REFRESH_ENDPOINT, params=params) as resp:
             if resp.status == 401 or resp.status == 403:
                 raise RuntimeError(

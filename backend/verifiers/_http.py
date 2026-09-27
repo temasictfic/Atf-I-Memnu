@@ -7,6 +7,7 @@ across calls, and a shutdown hook the FastAPI app can wire into lifespan.
 """
 
 import asyncio
+import ssl
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -20,6 +21,26 @@ from services.search_settings import get_client_timeout, get_polite_pool_email
 T = TypeVar("T")
 
 _session: aiohttp.ClientSession | None = None
+
+
+def create_ssl_context() -> ssl.SSLContext:
+    """Build an SSL context that trusts both OS and certifi CA certificates.
+
+    Corporate proxies with TLS inspection inject their own root CA into the
+    Windows certificate store.  The bundled certifi bundle doesn't include
+    those, so ``aiohttp`` raises ``SSLCertVerificationError``.  Loading the
+    OS store *first* (via ``ssl.create_default_context()``) and then layering
+    the certifi bundle on top covers both vanilla installs and corporate
+    environments without weakening security.
+    """
+    ctx = ssl.create_default_context()  # loads OS CA store
+    try:
+        import certifi
+
+        ctx.load_verify_locations(certifi.where())
+    except (ImportError, OSError):
+        pass
+    return ctx
 
 
 class RateLimitedError(Exception):
@@ -253,7 +274,10 @@ def get_session() -> aiohttp.ClientSession:
     """Return the process-wide verifier session, creating it on first use."""
     global _session
     if _session is None or _session.closed:
-        _session = aiohttp.ClientSession(timeout=get_client_timeout())
+        connector = aiohttp.TCPConnector(ssl=create_ssl_context())
+        _session = aiohttp.ClientSession(
+            timeout=get_client_timeout(), connector=connector
+        )
     return _session
 
 
