@@ -22,6 +22,8 @@ export function extractCitationYear(sourceText: string): number | undefined {
     /\((?:[A-Za-zÀ-ɏ]+\.?\s+)?((?:19|20)\d{2})[a-z]?\s*(?:[,)]|$)/i,
     /\b((?:19|20)\d{2})[a-z]?\s*;\s*\d{1,4}(?:\s*\(|\s*:|\b)/,
     /(?:^|[.,]\s*)((?:19|20)\d{2})[a-z]?(?=\s*(?:[,.;)]|$))/,
+    // IEEE-style: ", May 1997." — month name (abbreviated or full) before year
+    /(?:^|[.,]\s*)(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*\.?\s*((?:19|20)\d{2})[a-z]?(?=\s*(?:[,.;)]|$))/i,
   ]
   for (const pattern of patterns) {
     const match = masked.match(pattern)
