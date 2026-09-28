@@ -53,6 +53,11 @@ def _load_settings() -> AppSettings:
         except Exception:  # noqa: BLE001, S112
             continue
 
+    if not valid.get("exclusion_list_url"):
+        valid["exclusion_list_url"] = AppSettings.default().exclusion_list_url
+    if not valid.get("exclusion_edit_url"):
+        valid["exclusion_edit_url"] = AppSettings.default().exclusion_edit_url
+
     try:
         _current_settings = AppSettings(**valid)
     except Exception:  # noqa: BLE001

@@ -8,6 +8,11 @@ import {
 import i18n from '../i18n'
 import { parseExclusionList, type ExclusionEntry } from '../utils/exclusion-list'
 
+export const DEFAULT_EXCLUSION_LIST_URL =
+  'https://docs.google.com/spreadsheets/d/e/2PACX-1vS-DWUY4jAnn2b-DSVeLw7-kVT3pE77ZP-lnP47yt73WojeJJuUTmUPDoxLQQ3lIc0kvdUV8c87fWAY/pub?gid=355872624&single=true&output=tsv'
+export const DEFAULT_EXCLUSION_EDIT_URL =
+  'https://docs.google.com/spreadsheets/d/1-d9yoAdZJAD64XZOIPy2vMc314s9jsUGVwZV5uqnx1E/edit?usp=sharing'
+
 // Must mirror backend `AppSettings.default().databases` in
 // `backend/models/settings.py`. The backend is authoritative — these are
 // only the seed values shown until the initial /settings GET resolves.
@@ -56,6 +61,7 @@ interface SettingsState {
   connectOpenaire: (refreshToken: string) => Promise<{ ok: boolean; error?: string }>
   disconnectOpenaire: () => Promise<void>
   reloadExclusionList: () => Promise<void>
+  resetExclusionDefaults: () => void
 }
 
 // Auto-save debounce. Two durations: a short one for cheap, idempotent
@@ -149,7 +155,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   exclusionLastUpdated: null,
   settings: {
     exported_pdf_dir: '',
-    exclusion_list_url: '',
+    exclusion_list_url: DEFAULT_EXCLUSION_LIST_URL,
+    exclusion_edit_url: DEFAULT_EXCLUSION_EDIT_URL,
     databases: defaultDatabases,
     api_keys: {},
     polite_pool_email: '',
@@ -334,5 +341,18 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     } catch (err) {
       console.error('Failed to disconnect OpenAIRE:', err)
     }
+  },
+
+  resetExclusionDefaults: () => {
+    set(state => ({
+      settings: {
+        ...state.settings,
+        exclusion_list_url: DEFAULT_EXCLUSION_LIST_URL,
+        exclusion_edit_url: DEFAULT_EXCLUSION_EDIT_URL,
+      },
+    }))
+    _debouncedSave(get, 'exclusion_list_url')
+    _debouncedSave(get, 'exclusion_edit_url')
+    void get().reloadExclusionList()
   },
 }))

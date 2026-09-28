@@ -133,6 +133,7 @@ export interface DatabaseConfig {
 export interface AppSettings {
   exported_pdf_dir?: string
   exclusion_list_url?: string
+  exclusion_edit_url?: string
   databases: DatabaseConfig[]
   api_keys?: Record<string, string>
   polite_pool_email?: string

@@ -2,6 +2,14 @@ from config import settings as app_config
 from pydantic import BaseModel
 
 
+DEFAULT_EXCLUSION_LIST_URL = (
+    "https://docs.google.com/spreadsheets/d/e/2PACX-1vS-DWUY4jAnn2b-DSVeLw7-kVT3pE77ZP-lnP47yt73WojeJJuUTmUPDoxLQQ3lIc0kvdUV8c87fWAY/pub?gid=355872624&single=true&output=tsv"
+)
+DEFAULT_EXCLUSION_EDIT_URL = (
+    "https://docs.google.com/spreadsheets/d/1-d9yoAdZJAD64XZOIPy2vMc314s9jsUGVwZV5uqnx1E/edit?usp=sharing"
+)
+
+
 class DatabaseConfig(BaseModel):
     id: str
     name: str
@@ -13,14 +21,10 @@ class AppSettings(BaseModel):
     # written to. Blank means "prompt me each time" via the renderer's
     # native file-save dialog.
     exported_pdf_dir: str = ""
-    # URL to a published Google Sheets TSV (or any text URL) listing
-    # words/phrases that mark a source as "Muaf" (excluded from
-    # verification). Format: TSV with two columns (word/phrase, reason).
-    # Lines starting with `#` in the first column are comments. Empty
-    # string means "use the hardcoded default URL". The Electron main
-    # process fetches this URL on startup and caches the result locally
-    # for offline use.
-    exclusion_list_url: str = ""
+    # The Electron main process fetches this URL on startup
+    # and caches the result locally for offline use.
+    exclusion_list_url: str = DEFAULT_EXCLUSION_LIST_URL
+    exclusion_edit_url: str = DEFAULT_EXCLUSION_EDIT_URL
     databases: list[DatabaseConfig] = []
     api_keys: dict[str, str] = {}
     # Contact email advertised to Crossref / arXiv / OpenAlex polite pools.
@@ -58,6 +62,8 @@ class AppSettings(BaseModel):
     @classmethod
     def default(cls) -> "AppSettings":
         return cls(
+            exclusion_list_url=DEFAULT_EXCLUSION_LIST_URL,
+            exclusion_edit_url=DEFAULT_EXCLUSION_EDIT_URL,
             databases=[
                 DatabaseConfig(id="crossref", name="Crossref"),
                 DatabaseConfig(id="openalex", name="OpenAlex"),

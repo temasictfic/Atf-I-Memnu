@@ -1,7 +1,12 @@
 import { useState } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { defaultDatabaseIds, useSettingsStore } from '../../stores/settings-store'
+import {
+  defaultDatabaseIds,
+  useSettingsStore,
+  DEFAULT_EXCLUSION_LIST_URL,
+  DEFAULT_EXCLUSION_EDIT_URL,
+} from '../../stores/settings-store'
 import styles from './SettingsPage.module.css'
 import pkg from '../../../../../../package.json'
 
@@ -106,6 +111,7 @@ export default function SettingsPage() {
     connectOpenaire,
     disconnectOpenaire,
     reloadExclusionList,
+    resetExclusionDefaults,
   } = useSettingsStore.getState()
   const [cacheOpenMessage, setCacheOpenMessage] = useState<string | null>(null)
   const [scholarSessionMessage, setScholarSessionMessage] = useState<string | null>(null)
@@ -116,6 +122,9 @@ export default function SettingsPage() {
   const [dragDbId, setDragDbId] = useState<string | null>(null)
   const [dragOverDbId, setDragOverDbId] = useState<string | null>(null)
   const [exclusionMessage, setExclusionMessage] = useState<string | null>(null)
+  const [exclusionModalOpen, setExclusionModalOpen] = useState(false)
+  const [modalListUrl, setModalListUrl] = useState('')
+  const [modalEditUrl, setModalEditUrl] = useState('')
 
   const openaireConnected = !!settings.api_keys?.openaire
   const openaireDaysLeft = daysUntilOpenaireExpiry(settings.openaire_token_saved_at)
@@ -196,6 +205,23 @@ export default function SettingsPage() {
   const handleOpenExternalLink = (url: string) => (e: React.MouseEvent) => {
     e.preventDefault()
     window.electronAPI.openExternal(url).catch(err => console.error('Failed to open URL:', err))
+  }
+
+  const handleOpenExclusionModal = () => {
+    setModalListUrl(settings.exclusion_list_url ?? '')
+    setModalEditUrl(settings.exclusion_edit_url ?? '')
+    setExclusionModalOpen(true)
+  }
+
+  const handleApplyExclusionUrls = () => {
+    updateSetting('exclusion_list_url', modalListUrl)
+    updateSetting('exclusion_edit_url', modalEditUrl)
+    setExclusionModalOpen(false)
+  }
+
+  const handleModalDefaults = () => {
+    setModalListUrl(DEFAULT_EXCLUSION_LIST_URL)
+    setModalEditUrl(DEFAULT_EXCLUSION_EDIT_URL)
   }
 
   return (
@@ -737,13 +763,26 @@ export default function SettingsPage() {
               <span className={styles['setting-desc']}>{t('settings.exclusionList.desc')}</span>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input
-                type="text"
-                className={`${styles['setting-input']} ${styles['setting-input-wide']}`}
-                value={settings.exclusion_list_url ?? ''}
-                placeholder={t('settings.exclusionList.placeholder')}
-                onChange={e => updateSetting('exclusion_list_url', e.target.value)}
-              />
+              {settings.exclusion_edit_url && (
+                <a
+                  className={`${styles['request-key-link']} ${styles['exclusion-link']}`}
+                  href={settings.exclusion_edit_url}
+                  onClick={handleOpenExternalLink(settings.exclusion_edit_url)}
+                >
+                  {t('settings.exclusionList.editLink')}
+                  <svg viewBox="0 0 10 10" aria-hidden="true">
+                    <path d="M2 2h5v5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <path d="M7 2L2 7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </a>
+              )}
+              <button
+                type="button"
+                className={styles['action-button']}
+                onClick={handleOpenExclusionModal}
+              >
+                {t('settings.exclusionList.change')}
+              </button>
             </div>
           </div>
 
@@ -775,6 +814,87 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+
+          {/* Exclusion URL modal */}
+          {exclusionModalOpen && (
+            <div
+              className={styles['modal-overlay']}
+              onClick={() => setExclusionModalOpen(false)}
+              onKeyDown={e => {
+                if (e.key === 'Escape') setExclusionModalOpen(false)
+              }}
+            >
+              <div
+                className={styles['modal-card']}
+                onClick={e => e.stopPropagation()}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleApplyExclusionUrls()
+                }}
+              >
+                <div className={styles['modal-header']}>
+                  <h3 className={styles['modal-title']}>{t('settings.exclusionList.modalTitle')}</h3>
+                  <button
+                    type="button"
+                    className={styles['modal-close-btn']}
+                    onClick={() => setExclusionModalOpen(false)}
+                    title={t('settings.exclusionList.cancel')}
+                    aria-label={t('settings.exclusionList.cancel')}
+                  >
+                    &#10005;
+                  </button>
+                </div>
+
+                <div className={styles['modal-field']}>
+                  <label className={styles['modal-label']}>{t('settings.exclusionList.dataUrlLabel')}</label>
+                  <input
+                    type="text"
+                    className={styles['modal-input']}
+                    value={modalListUrl}
+                    placeholder={t('settings.exclusionList.placeholder')}
+                    onChange={e => setModalListUrl(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+
+                <div className={styles['modal-field']}>
+                  <label className={styles['modal-label']}>{t('settings.exclusionList.editUrlLabel')}</label>
+                  <input
+                    type="text"
+                    className={styles['modal-input']}
+                    value={modalEditUrl}
+                    placeholder={t('settings.exclusionList.editPlaceholder')}
+                    onChange={e => setModalEditUrl(e.target.value)}
+                  />
+                </div>
+
+                <div className={styles['modal-footer']}>
+                  <button
+                    type="button"
+                    className={styles['action-button']}
+                    onClick={handleModalDefaults}
+                  >
+                    {t('settings.exclusionList.default')}
+                  </button>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      className={styles['modal-cancel-btn']}
+                      onClick={() => setExclusionModalOpen(false)}
+                    >
+                      {t('settings.exclusionList.cancel')}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles['action-button-filled']}
+                      onClick={handleApplyExclusionUrls}
+                    >
+                      {t('settings.exclusionList.apply')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className={styles['setting-row']}>
             <div className={styles['setting-info']}>
