@@ -32,14 +32,14 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
     "autoprefixer": "^10.6.1",
-    "electron": "^44.4.5",
+    "electron": "^44.9.3",
     "electron-builder": "^26.17.0",
     "electron-vite": "^5.0.0",
     "postcss": "^8.5.28",
     "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^7.3.6"
+    "vite": "^7.3.7"
   },
   "allowScripts": {
     "esbuild@0.25.12": true,
